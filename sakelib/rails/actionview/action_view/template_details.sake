@@ -1,0 +1,48 @@
+# Port of actionview-8.1.3/lib/action_view/template_details.rb
+#
+# Rails' Requested keeps an index Hash per detail ([*arr, nil].each_with_index.to_h); ANY_HASH for variants: :any.
+
+module ActionView
+  class TemplateDetails
+    attr_reader locale, handler, format, variant
+
+    class Requested
+      attr_reader locale, handlers, formats, variants, any_variant
+      attr_reader locale_idx, handlers_idx, formats_idx, variants_idx
+
+      def make(locale:, handlers:, formats:, variants:, any_variant: false)
+        Requested.new(locale, handlers, formats, variants, any_variant, build_idx_hash(locale), build_idx_hash(handlers), build_idx_hash(formats), build_idx_hash(variants))
+      end
+
+      # Ruby: [*arr, nil].each_with_index.to_h (nil => arr.size: a detail the file does not give)
+      def build_idx_hash(arr)
+        h = Hash.new
+        Array.each_with_index(arr) { |x, i| h[x] = i }
+        h
+      end
+
+      def idx(h, x, size) = x == nil ? size : h[x]
+      def format_idx(r, f) = idx(@formats_idx, f, Array.size(@formats))
+      def locale_index(r, l) = idx(@locale_idx, l, Array.size(@locale))
+      def handler_idx(r, h) = idx(@handlers_idx, h, Array.size(@handlers))
+      # Ruby: ANY_HASH = Hash.new(1).merge(nil => 0) when variants are :any
+      def variant_idx(r, v)
+        return v == nil ? 0 : 1 if @any_variant
+        idx(@variants_idx, v, Array.size(@variants))
+      end
+    end
+
+    def matches?(d, requested)
+      Requested.format_idx(requested, @format) != nil && Requested.locale_index(requested, @locale) != nil &&
+        Requested.variant_idx(requested, @variant) != nil && Requested.handler_idx(requested, @handler) != nil
+    end
+
+    def sort_key_for(d, requested)
+      Integer[Requested.format_idx(requested, @format) || 0, Requested.locale_index(requested, @locale) || 0,
+              Requested.variant_idx(requested, @variant) || 0, Requested.handler_idx(requested, @handler) || 0]
+    end
+
+    # Ruby: format || handler_class.try(:default_format)
+    def format_or_default(d) = @format || Template::Handlers.default_format(@handler)
+  end
+end

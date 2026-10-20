@@ -1,0 +1,87 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/tags/{check_box,checkable,radio_button}.rb
+#
+# Checkable is a mixin of the two classes in Ruby; here a function both call (input_checked?).
+
+require "base"
+
+module ActionView
+  module Helpers
+    module Tags
+      module Checkable
+        module_function
+
+        # Ruby: input_checked?(options), with the class's checked?(value) given as `checked`
+        def input_checked?(options, checked)
+          if Hash.key?(options, "checked")
+            c = Hash.delete(options, "checked")
+            c == true || c == "checked"
+          else
+            checked
+          end
+        end
+      end
+
+      class CheckBox < Base
+        attr_accessor checked_value, unchecked_value
+
+        def render(t)
+          options = Hash.stringify_keys(@options)
+          options["type"] = "checkbox"
+          options["value"] = @checked_value
+          options["checked"] = "checked" if Checkable.input_checked?(options, checked?(t, value(t)))
+          if options["multiple"]
+            add_default_name_and_field_for_value(t, @checked_value, options)
+            Hash.delete(options, "multiple")
+          else
+            add_default_name_and_field(t, options)
+          end
+          include_hidden = Hash.key?(options, "include_hidden") ? Hash.delete(options, "include_hidden") : true
+          checkbox = tag(t, "input", options)
+          if include_hidden != nil && include_hidden != false
+            ActiveSupport::SafeBuffer.+(hidden_field_for_checkbox(t, options), checkbox)
+          else
+            checkbox
+          end
+        end
+
+        # private
+        def checked?(t, value)
+          case value
+          in true | false then value == (@checked_value != nil && @checked_value != false)
+          in nil then false
+          in String then value == @checked_value
+          in Array then Array.include?(value, @checked_value)
+          in Integer then value == String.to_i(Kernel.to_s(@checked_value))
+          else false
+          end
+        end
+
+        def hidden_field_for_checkbox(t, options)
+          if @unchecked_value != nil && @unchecked_value != false
+            tag_options = Hash.merge(Hash.slice(options, "name", "disabled", "form"), Hash.of("type" => "hidden", "value" => @unchecked_value))
+            tag_options["autocomplete"] = "off" unless FormTagHelper.remove_hidden_field_autocomplete(@template_object)
+            tag(t, "input", tag_options)
+          else
+            String.html_safe("")
+          end
+        end
+      end
+
+      class RadioButton < Base
+        attr_accessor tag_value
+
+        def render(t)
+          options = Hash.stringify_keys(@options)
+          options["type"] = "radio"
+          options["value"] = @tag_value
+          options["checked"] = "checked" if Checkable.input_checked?(options, checked?(t, value(t)))
+          add_default_name_and_field_for_value(t, @tag_value, options)
+          tag(t, "input", options)
+        end
+
+        # private
+        def checked?(t, value) = Kernel.to_s(value) == Kernel.to_s(@tag_value)
+      end
+    end
+  end
+end

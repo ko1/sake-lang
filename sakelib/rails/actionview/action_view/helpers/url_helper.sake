@@ -1,0 +1,303 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/url_helper.rb (partial: no ActionController::Parameters in button_to params:)
+#
+# A mixin of the view. url_for is the view's (RoutingUrlFor); Rails' `html_options` Hash is a positional Hash or
+# trailing keywords (`**html`), as content_tag. `link_to(v, "Show", post)`, `link_to(v, post) { "Show" }`.
+# content_exfiltration_prevention_helper.rb is the identity here (Rails' default: prepend nothing).
+
+require "tag_helper"
+require "controller_helper"
+require "../routing_url_for"
+require "../../../actionpack/action_dispatch/http/request"
+
+module ActionView
+  module Helpers
+    module UrlHelper
+      include TagHelper
+      include ControllerHelper
+
+      def url_for(v, options = nil) = raise(NotImplementedError)
+
+      def button_tag_method_verbs = String["patch", "put", "delete"]
+
+      # Ruby: mattr_accessor :button_to_generates_button_tag, default: false (load_defaults 7.0 sets true)
+      def button_to_generates_button_tag(v) = false
+
+      def _back_url(v) = _filtered_referrer(v) || "javascript:history.back()"
+
+      def _filtered_referrer(v)
+        req = request(v)
+        return nil unless req
+        referrer = ActionDispatch::Request.referer(req)
+        referrer && !String.start_with?(String.downcase(referrer), "javascript:") ? referrer : nil
+      end
+
+      def link_to(v, name = nil, options = nil, html_options = nil, **html)
+        if block_given?
+          url_options = name || Hash.new
+          attrs = convert_options_to_data_attributes(v, url_options, options || (Hash.empty?(html) ? nil : html))
+          url = url_for(v, url_options)
+          attrs["href"] ||= url
+          content_tag(v, "a", attrs) { yield }
+        else
+          opts = options || Hash.new
+          attrs = convert_options_to_data_attributes(v, opts, html_options || (Hash.empty?(html) ? nil : html))
+          url = url_target(v, name, opts)
+          attrs["href"] ||= url
+          content_tag(v, "a", name || url, attrs)
+        end
+      end
+
+      def button_to(v, name = nil, options = nil, html_options = nil, **html)
+        if block_given?
+          button_to_with(v, nil, name, options || (Hash.empty?(html) ? nil : html)) { yield }
+        else
+          button_to_with(v, name, options, html_options || (Hash.empty?(html) ? nil : html))
+        end
+      end
+
+      # (Sake only) button_to's body after Ruby's `html_options, options = options, name if block_given?`
+      def button_to_with(v, name, options, html_options)
+        html_options = Hash.stringify_keys(html_options || Hash.new)
+        url = options == false ? nil : url_for(v, options)
+        remote = Hash.delete(html_options, "remote")
+        params = Hash.delete(html_options, "params")
+        authenticity_token = Hash.delete(html_options, "authenticity_token")
+        m = Hash.delete(html_options, "method")
+        method = Kernel.to_s((m != nil && Object.present?(Kernel.to_s(m)) ? m : nil) || method_for_options(v, options))
+        method_tag = Array.include?(button_tag_method_verbs, method) ? method_tag(v, method) : String.html_safe("")
+        form_method = method == "get" ? "get" : "post"
+        fo = Hash.delete(html_options, "form")
+        form_options = (fo in Hash) ? Hash.transform_keys(fo) { |k| String.to_sym(Kernel.to_s(k)) } : Hash.new
+        form_options[:class] ||= Hash.delete(html_options, "form_class") || "button_to"
+        form_options[:method] = form_method
+        form_options[:action] = url
+        form_options[:"data-remote"] = true if remote
+        request_token_tag = if form_method == "post"
+                              request_method = String.empty?(method) ? "post" : method
+                              token_tag(v, authenticity_token, form_options: Hash.of(action: url, method: request_method))
+                            else
+                              String.html_safe("")
+                            end
+        html_options = convert_options_to_data_attributes(v, options, html_options)
+        html_options["type"] = "submit"
+        button = if block_given?
+                   content_tag(v, "button", html_options) { yield }
+                 elsif button_to_generates_button_tag(v)
+                   content_tag(v, "button", name || url, html_options)
+                 else
+                   html_options["value"] = name || url
+                   tag(v, "input", html_options)
+                 end
+        inner_tags = ActiveSupport::SafeBuffer.safe_concat(ActiveSupport::SafeBuffer.safe_concat(method_tag, button), request_token_tag)
+        if params
+          Array.each(UrlHelper.to_form_params(params)) do |param|
+            param => {name:, value:}
+            opts = Hash.of(type: "hidden", name: name, value: value)
+            opts[:autocomplete] = "off" unless remove_hidden_field_autocomplete(v)
+            ActiveSupport::SafeBuffer.safe_concat(inner_tags, tag(v, :input, opts))
+          end
+        end
+        content_tag(v, "form", inner_tags, form_options)
+      end
+
+      def remove_hidden_field_autocomplete(v) = false
+
+      def link_to_unless_current(v, name, options = nil, html_options = nil)
+        return link_to_unless(v, current_page?(v, options), name, options, html_options) { |n| yield(n) } if block_given?
+        link_to_unless(v, current_page?(v, options), name, options, html_options)
+      end
+
+      def link_to_unless(v, condition, name, options = nil, html_options = nil)
+        return link_to_if(v, !condition, name, options, html_options) { |n| yield(n) } if block_given?
+        link_to_if(v, !condition, name, options, html_options)
+      end
+
+      def link_to_if(v, condition, name, options = nil, html_options = nil)
+        if condition
+          link_to(v, name, options, html_options)
+        elsif block_given?
+          capture(v) { yield(name) }
+        else
+          ActiveSupport::CoreExt::ERBUtil.html_escape(name)
+        end
+      end
+
+      def mail_to(v, email_address, name = nil, html_options = nil, **html)
+        if name in Hash
+          html_options = name
+          name = nil
+        end
+        html_options = Hash.stringify_keys(html_options || html)
+        extras = Array.filter_map(String["cc", "bcc", "body", "subject", "reply_to"]) do |item|
+          option = Hash.delete(html_options, item)
+          option == nil || String.blank?(Kernel.to_s(option)) ? nil : "#{String.dasherize(item)}=#{ERB::Util.url_encode(option)}"
+        end
+        extras_s = Array.empty?(extras) ? "" : "?" + Array.join(extras, "&")
+        encoded_email_address = String.gsub(ERB::Util.url_encode(email_address), "%40", "@")
+        html_options["href"] = "mailto:#{encoded_email_address}#{extras_s}"
+        return content_tag(v, "a", html_options) { yield } if block_given?
+        content_tag(v, "a", name || email_address, html_options)
+      end
+
+      def current_page?(v, options = nil, check_parameters: false, method: :get, **options_as_kwargs)
+        req = request(v)
+        unless req
+          raise "You cannot use helpers that need to determine the current page unless your view context provides a Request object in a #request method"
+        end
+        if options in Hash
+          o = Hash.dup(options)
+          check_parameters = Hash.key?(o, :check_parameters) ? Hash.delete(o, :check_parameters) == true : check_parameters
+          method = Hash.delete(o, :method) || method if Hash.key?(o, :method)
+          options = o
+        end
+        options ||= options_as_kwargs
+        method_matches = case method
+                         in :get then ActionDispatch::Request.get?(req) || ActionDispatch::Request.head?(req)
+                         in Array then Array.include?(method, ActionDispatch::Request.method_symbol(req)) || (Array.include?(method, :get) && ActionDispatch::Request.head?(req))
+                         else method == ActionDispatch::Request.method_symbol(req)
+                         end
+        return false unless method_matches
+        url_string = CGI.unescapeURIComponent(url_for(v, options))
+        request_uri = String.index(url_string, "?") || check_parameters ? ActionDispatch::Request.fullpath(req) : ActionDispatch::Request.path(req)
+        request_uri = CGI.unescapeURIComponent(request_uri)
+        if String.match?(url_string, /^\w+:\/\//)
+          request_uri = "#{ActionDispatch::Request.protocol(req)}#{ActionDispatch::Request.host_with_port(req)}#{request_uri}"
+        end
+        UrlHelper.remove_trailing_slash(url_string) == UrlHelper.remove_trailing_slash(request_uri)
+      end
+
+      def sms_to(v, phone_number, name = nil, html_options = nil, **html)
+        if name in Hash
+          html_options = name
+          name = nil
+        end
+        html_options = Hash.stringify_keys(html_options || html)
+        cc = Hash.delete(html_options, "country_code")
+        country_code = cc != nil && Object.present?(Kernel.to_s(cc)) ? "+#{ERB::Util.url_encode(cc)}" : ""
+        b = Hash.delete(html_options, "body")
+        body = b != nil && Object.present?(Kernel.to_s(b)) ? "?&body=#{ERB::Util.url_encode(b)}" : ""
+        html_options["href"] = "sms:#{country_code}#{ERB::Util.url_encode(phone_number)};#{body}"
+        return content_tag(v, "a", html_options) { yield } if block_given?
+        content_tag(v, "a", name || phone_number, html_options)
+      end
+
+      def phone_to(v, phone_number, name = nil, html_options = nil, **html)
+        if name in Hash
+          html_options = name
+          name = nil
+        end
+        html_options = Hash.stringify_keys(html_options || html)
+        cc = Hash.delete(html_options, "country_code")
+        country_code = cc == nil || String.blank?(Kernel.to_s(cc)) ? "" : "+#{ERB::Util.url_encode(cc)}"
+        html_options["href"] = "tel:#{country_code}#{ERB::Util.url_encode(phone_number)}"
+        return content_tag(v, "a", html_options) { yield } if block_given?
+        content_tag(v, "a", name || phone_number, html_options)
+      end
+
+      # private
+      def convert_options_to_data_attributes(v, options, html_options)
+        if html_options
+          h = Hash.stringify_keys(html_options)
+          h["data-remote"] = "true" if UrlHelper.link_to_remote_options?(options) || UrlHelper.link_to_remote_options?(h)
+          method = Hash.delete(h, "method")
+          UrlHelper.add_method_to_attributes!(h, method) if method
+          h
+        else
+          UrlHelper.link_to_remote_options?(options) ? Hash.of("data-remote" => "true") : Hash.new
+        end
+      end
+
+      # Ruby: name.respond_to?(:model_name) && options.is_a?(Hash) && options.empty? ? url_for(name) : url_for(options)
+      def url_target(v, name, options)
+        if (name in ModelNaming::Model) && (options in Hash) && Hash.empty?(options)
+          url_for(v, name)
+        else
+          url_for(v, options)
+        end
+      end
+
+      # Ruby: method_for_options(options): :patch for a persisted record, :post for a new one
+      def method_for_options(v, options)
+        case options
+        in Array then method_for_options(v, Array.last(options))
+        in ModelNaming::Model then ModelNaming::Model.persisted?(options) ? :patch : :post
+        else nil
+        end
+      end
+
+      def token_tag(v, token = nil, form_options: nil)
+        if token != false && protect_against_forgery?(v)
+          token = if token == true || token == nil
+                    form_authenticity_token(v, form_options: Hash.merge(form_options || Hash.new, Hash.of(authenticity_token: token)))
+                  else
+                    token
+                  end
+          options = Hash.of(type: "hidden", name: Kernel.to_s(request_forgery_protection_token(v)), value: token)
+          options[:autocomplete] = "off" unless remove_hidden_field_autocomplete(v)
+          tag(v, :input, options)
+        else
+          String.html_safe("")
+        end
+      end
+
+      def method_tag(v, method)
+        options = Hash.of(type: "hidden", name: "_method", value: Kernel.to_s(method))
+        options[:autocomplete] = "off" unless remove_hidden_field_autocomplete(v)
+        tag(v, "input", options)
+      end
+
+      module_function
+
+      def link_to_remote_options?(options)
+        if options in Hash
+          a = Hash.delete(options, "remote")
+          b = Hash.delete(options, :remote)
+          (a != nil && a != false) || (b != nil && b != false)
+        else
+          false
+        end
+      end
+
+      def add_method_to_attributes!(html_options, method)
+        rel = Kernel.to_s(html_options["rel"])
+        if method_not_get_method?(method) && !String.include?(rel, "nofollow")
+          html_options["rel"] = String.blank?(rel) ? "nofollow" : "#{rel} nofollow"
+        end
+        html_options["data-method"] = method
+      end
+
+      def method_not_get_method?(method)
+        return false unless method
+        String.downcase(Kernel.to_s(method)) != "get"
+      end
+
+      # Ruby: to_form_params(attribute, namespace = nil): [{name:, value:}] sorted by name
+      def to_form_params(attribute, namespace = nil)
+        params = Any[]
+        case attribute
+        in Hash
+          Hash.each(attribute) do |key, value|
+            prefix = namespace ? "#{namespace}[#{key}]" : Kernel.to_s(key)
+            Array.concat(params, to_form_params(value, prefix))
+          end
+        in Array
+          array_prefix = "#{namespace}[]"
+          Array.each(attribute) { |value| Array.concat(params, to_form_params(value, array_prefix)) }
+        else
+          Array.push(params, {name: Kernel.to_s(namespace), value: param_value(attribute)})
+        end
+        Array.sort_by(params) { |pair| pair => {name:}; name }
+      end
+
+      def param_value(value) = ActionDispatch::Journey::Formatter.to_param(value) || ""
+
+      def remove_trailing_slash(url_string)
+        trailing_index = (String.index(url_string, "?") || 0) - 1
+        return url_string unless url_string[trailing_index] == "/"
+        s = Kernel.dup(url_string)
+        String.slice!(s, trailing_index)
+        s
+      end
+    end
+  end
+end

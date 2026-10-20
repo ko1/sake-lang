@@ -1,0 +1,74 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/capture_helper.rb (partial: capture passes no arguments to its block)
+#
+# A mixin of the view: Rails' @output_buffer and @view_flow are the view's readers `output_buffer(v)`, `view_flow(v)`
+# (a mixin that other modules include cannot read fields). A template's `<%= content_tag :div do %>...<% end %>`
+# block appends to the same OutputBuffer, whose raw String `capture` swaps, so the block's text comes back as
+# Rails' does; a block called from Sake code returns its value, which is escaped unless it is a SafeBuffer.
+
+require "../buffers"
+require "../flows"
+
+module ActionView
+  module Helpers
+    module CaptureHelper
+      def output_buffer(v) = raise(NotImplementedError)
+      def set_output_buffer(v, b) = raise(NotImplementedError)
+      def view_flow(v) = raise(NotImplementedError)
+
+      def capture(v)
+        value = nil
+        out = output_buffer(v)
+        buffer = OutputBuffer.capture(out) { value = yield }
+        string = (value in OutputBuffer) && Kernel.equal?(out, value) ? buffer : (CaptureHelper.presence_of(buffer) || value)
+        case string
+        in OutputBuffer then OutputBuffer.to_s(string)
+        in ActiveSupport::SafeBuffer then string
+        in String then ActiveSupport::CoreExt::ERBUtil.html_escape(string)
+        else nil
+        end
+      end
+
+      # Ruby: content_for(name, content = nil, options = {}, &block); options[:flush] is the keyword flush:
+      def content_for(v, name, content = nil, flush: false)
+        if content || block_given?
+          content = capture(v) { yield } if block_given?
+          flow = view_flow(v)
+          if content
+            flush ? OutputFlow.set(flow, name, content) : OutputFlow.append(flow, name, content)
+          end
+          nil
+        else
+          CaptureHelper.presence_of(OutputFlow.get(view_flow(v), name))
+        end
+      end
+
+      def provide(v, name, content = nil)
+        content = capture(v) { yield } if block_given?
+        flow = view_flow(v)
+        result = content ? OutputFlow.append!(flow, name, content) : nil
+        content ? nil : result
+      end
+
+      def content_for?(v, name)
+        !ActiveSupport::SafeBuffer.blank?(OutputFlow.get(view_flow(v), name))
+      end
+
+      def with_output_buffer(v, buf = nil)
+        buf ||= OutputBuffer.make
+        old_buffer = output_buffer(v)
+        set_output_buffer(v, buf)
+        begin
+          yield
+        ensure
+          set_output_buffer(v, old_buffer)
+        end
+        buf
+      end
+
+      module_function
+
+      # Ruby: buffer.presence (SafeBuffer)
+      def presence_of(buffer) = ActiveSupport::SafeBuffer.blank?(buffer) ? nil : buffer
+    end
+  end
+end

@@ -1,0 +1,117 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/tags/base.rb (partial: no object from the view's instance variable `@#{object_name}` (no instance_variable_get): pass object:)
+#
+# Rails' Tags::Base includes TagHelper and FormTagHelper and so builds tags itself; here a tag object calls the
+# view's helpers (`FormTagHelper.field_name(@template_object, ...)`), and its own tag/content_tag
+# (ActiveModelInstanceTag) wrap a field with errors. Each tag class (TextField, CheckBox, ...) is
+# `class X < Base`, which pastes Base's fields and functions; an overridden render keeps the parent's as
+# super_render. A tag is built with keywords (`TextField.new(object_name: n, method_name: m, template_object: v,
+# options: o)`) and Base's initialize does what Ruby's does with them.
+
+require "../active_model_helper"
+require "../form_tag_helper"
+require "../../model_naming"
+
+module ActionView
+  module Helpers
+    module Tags
+      class Base
+        attr_accessor object_name, method_name, template_object, options, object
+        attr_accessor skip_default_ids, allow_method_names_outside_object, generate_indexed_names, auto_index
+        include ActiveModelInstanceTag
+
+        def initialize(t)
+          @object_name = Kernel.dup(Kernel.to_s(@object_name))
+          @method_name = Kernel.dup(Kernel.to_s(@method_name))
+          @options = Hash.new if @options == nil
+          opts = @options
+          m = String.match(@object_name, /\[\]$/) || String.match(@object_name, /\[\]\]$/)
+          if m
+            pre = MatchData.pre_match(m)
+            @object_name = String.end_with?(MatchData.to_s(m), "]]") ? "#{pre}]" : pre
+          end
+          @object = Hash.delete(opts, :object) if @object == nil
+          @skip_default_ids = Hash.delete(opts, :skip_default_ids)
+          @allow_method_names_outside_object = Hash.delete(opts, :allow_method_names_outside_object)
+          if m
+            @generate_indexed_names = true
+            @auto_index = retrieve_autoindex(t, MatchData.pre_match(m))
+          else
+            @generate_indexed_names = false
+            @auto_index = nil
+          end
+          after_initialize(t)
+        end
+
+        # (Sake only) Ruby's `def initialize(*); super; ...; end` in Placeholderable and DatetimeLocalField
+        def after_initialize(t) = nil
+
+        def render(t) = raise(NotImplementedError, "Subclasses must implement a render method")
+
+        # private
+        # Ruby: object.public_send(@method_name)
+        def value(t)
+          o = @object
+          (o in ModelNaming::Model) ? ModelNaming::Model.read_attribute_for_validation(o, @method_name) : nil
+        end
+
+        def value_before_type_cast(t) = value(t)
+
+        def retrieve_autoindex(t, pre_match)
+          o = @object
+          raise ArgumentError, "object[] naming but object param and @object var don't exist or don't respond to to_param: #{Kernel.inspect(o)}" unless o in ModelNaming::Model
+          ModelNaming::Model.to_param(o)
+        end
+
+        def add_default_name_and_field_for_value(t, tag_value, options, field = "id")
+          if tag_value == nil
+            add_default_name_and_field(t, options, field)
+          else
+            specified_field = options[field]
+            add_default_name_and_field(t, options, field)
+            if Object.blank?(specified_field) && TagHelper.present_content?(options[field])
+              options[field] = "#{options[field]}_#{Base.sanitized_value(tag_value)}"
+            end
+          end
+        end
+
+        def add_default_name_and_id_for_value(t, tag_value, options) = add_default_name_and_field_for_value(t, tag_value, options)
+
+        def add_default_name_and_field(t, options, field = "id")
+          index = name_and_id_index(t, options)
+          options["name"] = Hash.key?(options, "name") ? options["name"] : tag_name(t, options["multiple"], index)
+          if generate_ids?(t)
+            options[field] = tag_id(t, index, Hash.delete(options, "namespace")) unless Hash.key?(options, field)
+            namespace = Hash.delete(options, "namespace")
+            if namespace != nil
+              options[field] = options[field] ? "#{namespace}_#{options[field]}" : namespace
+            end
+          end
+        end
+
+        def add_default_name_and_id(t, options) = add_default_name_and_field(t, options)
+
+        def tag_name(t, multiple = false, index = nil)
+          FormTagHelper.field_name(@template_object, @object_name, sanitized_method_name(t), multiple: multiple != nil && multiple != false, index: index)
+        end
+
+        def tag_id(t, index = nil, namespace = nil)
+          FormTagHelper.field_id(@template_object, @object_name, @method_name, index: index, namespace: namespace)
+        end
+
+        def sanitized_method_name(t) = String.delete_suffix(@method_name, "?")
+
+        def name_and_id_index(t, options)
+          if Hash.key?(options, "index")
+            Hash.delete(options, "index") || ""
+          elsif @generate_indexed_names
+            @auto_index || ""
+          end
+        end
+
+        def generate_ids?(t) = @skip_default_ids == nil || @skip_default_ids == false
+
+        def sanitized_value(value) = String.downcase(String.gsub(String.gsub(Kernel.to_s(value), /[\s.]/, "_"), /[^-[[:word:]]]/, ""))
+      end
+    end
+  end
+end

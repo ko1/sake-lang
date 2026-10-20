@@ -1,0 +1,42 @@
+require "rails/actionview/action_view/base"
+require "fixtures/blog_routes"
+require "fixtures/records"
+generate "blog_url_helpers", "BlogUrlHelpers"
+generate "rails/actionview/action_view/generate/view_class", "BlogView", "views=views", "records=Post,Comment", "include=BlogUrlHelpers", "assigns=post,posts,comments"
+
+def view_for(posts, post, comments)
+  view = BlogView.new(routes: blog_route_set, posts: posts, post: post, comments: comments)
+  ActionView::LookupContext.set_prefixes(BlogView.lookup_context(view), String["posts"])   # a PostsController's _prefixes
+  view
+end
+
+posts = Any[Post.new(1, "Hello", "First <post>"), Post.new(2, "Second", "More")]
+comments = Any[Comment.new(1, 1, "Nice"), Comment.new(2, 1, "Great")]
+
+puts "-- posts/index with the layout"
+view = view_for(posts, nil, comments)
+puts BlogView.render(view, template: "posts/index", layout: "layouts/application")
+puts "-- posts/show"
+view = view_for(posts, Array.first(posts), comments)
+puts BlogView.render(view, template: "posts/show", layout: "layouts/application")
+puts "-- an empty index without a layout"
+puts BlogView.render(view_for(Any[], nil, comments), template: "posts/index")
+puts "-- a partial without locals, and plain/html bodies"
+puts BlogView.render(view, partial: "posts/shared")
+puts BlogView.render(view, plain: "<plain>")
+puts BlogView.render(view, html: "<html>")
+puts "-- lookup"
+lc = ActionView::LookupContext.make(String["views"])
+p(ActionView::LookupContext.exists?(lc, "index", String["posts"]), ActionView::LookupContext.exists?(lc, "post", String["posts"], true), ActionView::LookupContext.exists?(lc, "nope", String["posts"]))
+t = ActionView::LookupContext.find_template(lc, "posts/index")
+p(ActionView::Template.virtual_path(t), ActionView::Template.format(t), ActionView::Template.variable(t))
+begin
+  BlogView.render(view, template: "posts/missing")
+rescue ActionView::MissingTemplate => e
+  puts String.split(Exception.message(e), " with ")[0]
+end
+begin
+  BlogView.render(view, partial: "posts/nothing")
+rescue ActionView::MissingTemplate => e
+  puts String.split(Exception.message(e), " with ")[0]
+end

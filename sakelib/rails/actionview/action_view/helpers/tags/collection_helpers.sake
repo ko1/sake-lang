@@ -1,0 +1,124 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/tags/{collection_helpers,collection_check_boxes,collection_radio_buttons}.rb (partial: no Proc values for checked:/disabled:)
+#
+# Ruby's Builder < CheckBoxBuilder / RadioButtonBuilder are one Builder with a `kind` (Sake's paste would make
+# them unrelated types for the block). CollectionHelpers is a mixin of the two tag classes, whose bare calls
+# reach the tag's functions. A block receives the builder: `collection_checkboxes(...) { |b| ... }`.
+
+require "base"
+
+module ActionView
+  module Helpers
+    module Tags
+      module CollectionHelpers
+        class Builder
+          attr_reader kind, template_object, object_name, method_name, object, sanitized_attribute_name, text, value, input_html_options
+
+          def label(b, label_html_options = nil)
+            html_options = Hash.merge(Hash.slice(@input_html_options, :index, :namespace), label_html_options || Hash.new)
+            html_options[:for] ||= @input_html_options[:id] if @input_html_options[:id]
+            FormHelper.label(@template_object, @object_name, @sanitized_attribute_name, @text, html_options)
+          end
+
+          def checkbox(b, extra_html_options = nil)
+            html_options = Hash.merge(extra_html_options || Hash.new, @input_html_options)
+            html_options[:multiple] = true
+            html_options[:skip_default_ids] = false
+            FormHelper.checkbox(@template_object, @object_name, @method_name, html_options, @value, nil)
+          end
+
+          def check_box(b, extra_html_options = nil) = checkbox(b, extra_html_options)
+
+          def radio_button(b, extra_html_options = nil)
+            html_options = Hash.merge(extra_html_options || Hash.new, @input_html_options)
+            html_options[:skip_default_ids] = false
+            FormHelper.radio_button(@template_object, @object_name, @method_name, @value, html_options)
+          end
+        end
+
+        def template_object(t) = raise(NotImplementedError)
+        def collection(t) = raise(NotImplementedError)
+        def value_method(t) = raise(NotImplementedError)
+        def text_method(t) = raise(NotImplementedError)
+        def html_options(t) = raise(NotImplementedError)
+        def options(t) = raise(NotImplementedError)
+        def object(t) = raise(NotImplementedError)
+        def object_name(t) = raise(NotImplementedError)
+        def method_name(t) = raise(NotImplementedError)
+        def render_component(t, builder) = raise(NotImplementedError)
+        def builder_kind(t) = raise(NotImplementedError)
+        def hidden_field_name(t) = raise(NotImplementedError)
+
+        # private
+        def default_html_options_for_collection(t, item, value)
+          html_options = Hash.dup(html_options(t))
+          Array.each(Symbol[:checked, :selected, :disabled, :readonly]) do |option|
+            current_value = options(t)[option]
+            next if current_value == nil
+            values = (current_value in Array) ? current_value : Any[current_value]
+            accept = Array.include?(Array.map(values) { |x| Kernel.to_s(x) }, Kernel.to_s(value))
+            if accept
+              html_options[option] = true
+            elsif option == :checked
+              html_options[option] = false
+            end
+          end
+          html_options[:object] = object(t)
+          html_options
+        end
+
+        def sanitize_attribute_name(t, value) = "#{sanitized_method_name(t)}_#{Base.sanitized_value(value)}"
+
+        def render_collection_for(t)
+          opts = Hash.stringify_keys(options(t))
+          parts = Array.map(collection(t)) do |item|
+            value = FormOptionsHelper.value_for_collection(item, value_method(t))
+            text = FormOptionsHelper.value_for_collection(item, text_method(t))
+            default_html_options = default_html_options_for_collection(t, item, value)
+            builder = Builder.new(builder_kind(t), template_object(t), object_name(t), method_name(t), item, sanitize_attribute_name(t, value), text, value, default_html_options)
+            block_given? ? CaptureHelper.capture(template_object(t)) { yield(builder) } : render_component(t, builder)
+          end
+          rendered_collection = String.html_safe(Array.join(Array.map(parts) { |x| Object.html_text(x) }))
+          include_hidden = Hash.key?(opts, "include_hidden") ? opts["include_hidden"] : true
+          include_hidden ? ActiveSupport::SafeBuffer.+(hidden_field(t), rendered_collection) : rendered_collection
+        end
+
+        def hidden_field(t)
+          hidden_name = html_options(t)[:name] || hidden_field_name(t)
+          FormTagHelper.hidden_field_tag(template_object(t), hidden_name, "", Hash.of(id: nil, form: html_options(t)[:form]))
+        end
+      end
+
+      class CollectionCheckBoxes < Base
+        attr_accessor collection, value_method, text_method, html_options
+        include CollectionHelpers
+
+        def builder_kind(t) = :checkbox
+
+        def render(t)
+          return render_collection_for(t) { |b| yield(b) } if block_given?
+          render_collection_for(t)
+        end
+
+        # private
+        def render_component(t, builder) = ActiveSupport::SafeBuffer.+(CollectionHelpers::Builder.checkbox(builder), CollectionHelpers::Builder.label(builder))
+        def hidden_field_name(t) = "#{tag_name(t, false, @options[:index])}[]"
+      end
+
+      class CollectionRadioButtons < Base
+        attr_accessor collection, value_method, text_method, html_options
+        include CollectionHelpers
+
+        def builder_kind(t) = :radio_button
+
+        def render(t)
+          return render_collection_for(t) { |b| yield(b) } if block_given?
+          render_collection_for(t)
+        end
+
+        # private
+        def render_component(t, builder) = ActiveSupport::SafeBuffer.+(CollectionHelpers::Builder.radio_button(builder), CollectionHelpers::Builder.label(builder))
+        def hidden_field_name(t) = tag_name(t, false, @options[:index])
+      end
+    end
+  end
+end

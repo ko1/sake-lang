@@ -1,0 +1,59 @@
+# Port of actionview-8.1.3/lib/action_view/renderer/template_renderer.rb (partial: no file:, inline:, renderable:; locals: are not taken (a compiled template's locals are typed keywords, see generate/templates.sake))
+
+require "abstract_renderer"
+require "../context"
+
+module ActionView
+  module TemplateRenderer
+    module_function
+
+    def render(view, lookup_context, template: nil, layout: nil, prefixes: nil, plain: nil, html: nil, body: nil, formats: nil)
+      details = LookupContext::Details.dup(LookupContext.details(lookup_context))
+      LookupContext::Details.set_formats(details, formats) if formats
+      t = determine_template(lookup_context, details, template, prefixes, plain, html, body)
+      # Ruby: prepend_formats(template.format)
+      f = Template.format(t)
+      if f && !LookupContext.html_fallback_for_js(lookup_context)
+        LookupContext.set_formats(lookup_context, Array.uniq(Symbol[f] + LookupContext.formats(lookup_context)))
+      end
+      render_template(view, lookup_context, details, t, layout)
+    end
+
+    def determine_template(lookup_context, details, template, prefixes, plain, html, body)
+      return Template.text(body) if body
+      return Template.text(plain) if plain
+      return Template.html(html) if html
+      if template
+        return LookupContext.find_template(lookup_context, template, prefixes || String[], false, Symbol[], details)
+      end
+      raise ArgumentError, "You invoked render but did not give any of :body, :file, :html, :inline, :partial, :plain, :renderable, or :template option."
+    end
+
+    def render_template(view, lookup_context, details, template, layout_name)
+      layout = layout_name ? find_layout(lookup_context, details, layout_name) : nil
+      content = Template.render(template, view) { |buf| Context._compiled(view, Template.method_name(template), buf) }
+      if layout
+        OutputFlow.set(Context.view_flow(view), :layout, content)
+        Template.render(layout, view) { |buf| Context._compiled(view, Template.method_name(layout), buf) }
+      else
+        content
+      end
+    end
+
+    # Ruby: resolve_layout(layout, keys, formats): a String layout in the first format; missing in it but present
+    # in another format is no layout
+    def find_layout(lookup_context, details, layout)
+      raise ArgumentError, "Rendering layouts from an absolute path is not supported." if String.start_with?(layout, "/")
+      d = LookupContext::Details.dup(details)
+      LookupContext::Details.set_formats(d, Array.first(LookupContext::Details.formats(details), 1))
+      begin
+        LookupContext.find_template(lookup_context, layout, String[], false, Symbol[], d)
+      rescue MissingTemplate => e
+        all = LookupContext::Details.dup(details)
+        LookupContext::Details.set_formats(all, LookupContext::Details.default_formats)
+        raise e unless LookupContext.template_exists?(lookup_context, layout, String[], false, Symbol[], all)
+        nil
+      end
+    end
+  end
+end

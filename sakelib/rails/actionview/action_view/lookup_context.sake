@@ -1,0 +1,102 @@
+# Port of actionview-8.1.3/lib/action_view/lookup_context.rb (partial: no DetailsKey cache, no digest cache, no register_detail for other details)
+#
+# Rails registers the four details (locale, formats, variants, handlers) with blocks giving their defaults and
+# defines their accessors with module_eval; here they are the fields of LookupContext::Details, with Rails' defaults.
+
+require "path_set"
+
+module ActionView
+  class LookupContext
+    attr_accessor prefixes, details, view_paths, html_fallback_for_js
+
+    # The four registered details; inspect is Ruby's Hash inspect, as MissingTemplate prints it
+    class Details
+      attr_accessor locale, formats, variants, handlers
+
+      def defaults = Details.new(Symbol[:en], default_formats, Symbol[], Template::Handlers.extensions)
+      def default_formats = Symbol[:html, :text, :js, :css, :xml, :json]
+      def dup(d) = Details.new(Array.dup(@locale), Array.dup(@formats), Array.dup(@variants), Array.dup(@handlers))
+      def requested(d) = TemplateDetails::Requested.make(locale: @locale, handlers: @handlers, formats: @formats, variants: @variants)
+      def inspect(d) = "{locale: #{Kernel.inspect(@locale)}, formats: #{Kernel.inspect(@formats)}, variants: #{Kernel.inspect(@variants)}, handlers: #{Kernel.inspect(@handlers)}}"
+    end
+
+    # Ruby: LookupContext.new(view_paths, details = {}, prefixes = [])
+    def make(view_paths, details = nil, prefixes = String[])
+      LookupContext.new(prefixes, details || Details.defaults, PathSet.make(view_paths), false)
+    end
+
+    def locale(l) = Array.first(Details.locale(@details))
+    def formats(l) = Details.formats(@details)
+    def variants(l) = Details.variants(@details)
+    def default_formats(l) = Details.default_formats
+
+    # Ruby: formats=(values): "*/*" adds the defaults; [:js] alone falls back to :html
+    def set_formats(l, values)
+      vals = Array.uniq(Array.dup(values))
+      if Array.include?(vals, :"*/*")
+        Array.delete(vals, :"*/*")
+        vals = Array.uniq(vals + Details.default_formats)
+      end
+      unless Template::Types.valid_symbols?(vals)
+        invalid = Array.reject(vals) { |v| Array.include?(Template::Types.symbols, v) }
+        raise ArgumentError, "Invalid formats: #{Array.join(Array.map(invalid) { |v| Kernel.inspect(v) }, ", ")}"
+      end
+      if Array.size(vals) == 1 && vals[0] == :js
+        Array.push(vals, :html)
+        @html_fallback_for_js = true
+      end
+      Details.set_formats(@details, Array.empty?(vals) ? Details.default_formats : vals)
+    end
+
+    def set_variants(l, values) = Details.set_variants(@details, values)
+
+    def find(l, name, prefixes = String[], partial = false, keys = Symbol[], details = nil)
+      n, pfx = normalize_name(l, name, prefixes)
+      d = details || @details
+      PathSet.find(@view_paths, n, pfx, partial, d, Details.requested(d), keys)
+    end
+
+    def find_template(l, name, prefixes = String[], partial = false, keys = Symbol[], details = nil) = find(l, name, prefixes, partial, keys, details)
+
+    def find_all(l, name, prefixes = String[], partial = false, keys = Symbol[], details = nil)
+      n, pfx = normalize_name(l, name, prefixes)
+      d = details || @details
+      PathSet.find_all(@view_paths, n, pfx, partial, d, Details.requested(d), keys)
+    end
+
+    def exists?(l, name, prefixes = String[], partial = false, keys = Symbol[], details = nil)
+      !Array.empty?(find_all(l, name, prefixes, partial, keys, details))
+    end
+
+    def template_exists?(l, name, prefixes = String[], partial = false, keys = Symbol[], details = nil) = exists?(l, name, prefixes, partial, keys, details)
+
+    # Ruby: any?(name, prefixes, partial): every variant
+    def any?(l, name, prefixes = String[], partial = false)
+      n, pfx = normalize_name(l, name, prefixes)
+      d = Details.defaults
+      r = TemplateDetails::Requested.make(locale: Details.locale(d), handlers: Details.handlers(d), formats: Details.formats(d), variants: Symbol[], any_variant: true)
+      PathSet.exists?(@view_paths, n, pfx, partial, d, r, Symbol[])
+    end
+
+    def append_view_paths(l, paths) = @view_paths = PathSet.make(PathSet.to_ary(@view_paths) + paths)
+    def prepend_view_paths(l, paths) = @view_paths = PathSet.make(paths + PathSet.to_ary(@view_paths))
+
+    def with_prepended_formats(l, formats)
+      d = Details.dup(@details)
+      Details.set_formats(d, formats)
+      LookupContext.new(@prefixes, d, @view_paths, false)
+    end
+
+    # private: "posts/form" with prefixes ["admin"] is "form" in ["admin/posts"]
+    def normalize_name(l, name, prefixes)
+      name = Kernel.to_s(name)
+      idx = String.rindex(name, "/")
+      return [name, Array.empty?(prefixes) ? String[""] : prefixes] unless idx
+      path_prefix = String.[](name, 0, idx) || ""
+      path_prefix = String.[](path_prefix, 1..) || "" if String.start_with?(path_prefix, "/")
+      base = String.[](name, (idx + 1)..) || ""
+      pfx = Array.empty?(prefixes) ? String[path_prefix] : Array.map(prefixes) { |p| "#{p}/#{path_prefix}" }
+      [base, pfx]
+    end
+  end
+end

@@ -1,0 +1,51 @@
+# Port of actionview-8.1.3/lib/action_view/renderer/abstract_renderer.rb (partial: RenderedTemplate/RenderedCollection are the bodies themselves; no PREFIXED_PARTIAL_NAMES cache)
+#
+# ObjectRendering (Rails' module of ObjectRenderer and CollectionRenderer) is module functions over the view.
+
+require "../lookup_context"
+require "../model_naming"
+
+module ActionView
+  module AbstractRenderer
+    module ObjectRendering
+      module_function
+
+      # Ruby: local_variable(path): options[:as], else the partial's base name
+      def local_variable(path, as = nil)
+        if as
+          raise ArgumentError, "The value (#{as}) of the option `as` is not a valid Ruby identifier; make sure it starts with lowercase letter, and is followed by any combination of letters, numbers and underscores." unless String.match?(Kernel.to_s(as), /\A[a-z_]\w*\z/)
+          return String.to_sym(Kernel.to_s(as))
+        end
+        base = String.end_with?(path, "/") ? "" : File.basename(path)
+        m = String.match(base, /\A_?(.*?)(?:\.\w+)*\z/)
+        raise ArgumentError, "The partial name (#{path}) is not a valid Ruby identifier; make sure your partial name starts with underscore." unless m && String.match?(m[1] || "", /\A[a-z_]\w*\z/i)
+        String.to_sym(m[1] || "")
+      end
+
+      def partial_path(object, context_prefix, prefix_with_namespace)
+        model = ModelNaming.convert_to_model(object)
+        path = case model
+               in ModelNaming::Model then ModelNaming::Model.to_partial_path(model)
+               else raise ArgumentError, "'#{Kernel.inspect(object)}' is not an ActiveModel-compatible object. It must implement #to_partial_path."
+               end
+        prefix_with_namespace && context_prefix ? merge_prefix_into_object_path(context_prefix, path) : path
+      end
+
+      def merge_prefix_into_object_path(prefix, object_path)
+        if String.include?(prefix, "/") && String.include?(object_path, "/")
+          prefixes = String[]
+          prefix_array = String.split(File.dirname(prefix), "/")
+          object_path_array = Array.[](String.split(object_path, "/"), 0..-3) || String[]
+          Array.each_with_index(prefix_array) do |dir, index|
+            break if dir == object_path_array[index]
+            Array.push(prefixes, dir)
+          end
+          Array.push(prefixes, object_path)
+          Array.join(prefixes, "/")
+        else
+          object_path
+        end
+      end
+    end
+  end
+end

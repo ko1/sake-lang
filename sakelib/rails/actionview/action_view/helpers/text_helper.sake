@@ -1,0 +1,194 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/text_helper.rb (partial: pluralize knows the :en inflections only; simple_format's html_options is a Hash, its options are keywords; a cycle's block-less form only)
+#
+# A mixin of the view. Rails' options Hashes are keyword parameters; `highlight` passes each match to its block
+# (Rails' `segment.gsub!(pattern, &block)`). The cycles live in the view's `_cycles` field (Rails' @_cycles).
+
+require "../../../activesupport/active_support/core_ext/string/filters"
+require "../../../activesupport/active_support/core_ext/string/inflections"
+require "sanitize_helper"
+require "tag_helper"
+require "output_safety_helper"
+
+module ActionView
+  module Helpers
+    module TextHelper
+      include SanitizeHelper
+      include TagHelper
+      include OutputSafetyHelper
+
+      def output_buffer(v) = raise(NotImplementedError)
+      def _cycles(v) = raise(NotImplementedError)
+      def set__cycles(v, cycles) = raise(NotImplementedError)
+
+      def concat(v, string) = OutputBuffer.<<(output_buffer(v), string)
+      def safe_concat(v, string) = OutputBuffer.safe_concat(output_buffer(v), string)
+
+      # Ruby: truncate(text, options = {}, &block) with length: (30), omission:, separator:, escape:
+      def truncate(v, text, length: 30, omission: "...", separator: nil, escape: true)
+        return nil unless text
+        content = String.truncate(Object.html_text(text), length, omission: omission, separator: separator)
+        content = escape ? ActiveSupport::CoreExt::ERBUtil.html_escape(content) : String.html_safe(content)
+        if block_given? && String.length(Object.html_text(text)) > length
+          ActiveSupport::SafeBuffer.concat(content, capture(v) { yield })
+        end
+        content
+      end
+
+      # Ruby: highlight(text, phrases, options = {}, &block) with sanitize: (true) and highlighter:
+      def highlight(v, text, phrases, sanitize: true, highlighter: "<mark>\\1</mark>")
+        html = sanitize ? Object.html_text(sanitize(v, text) || "") : Object.html_text(text)
+        phrase_list = (phrases in Array) ? phrases : Any[phrases]
+        if String.blank?(html) || Array.empty?(Array.reject(phrase_list) { |ph| Object.blank?(ph) })
+          return String.html_safe(html)
+        end
+        patterns = Array.map(phrase_list) { |phrase| (phrase in Regexp) ? Regexp.source(phrase) : Regexp.escape(Kernel.to_s(phrase)) }
+        pattern = Regexp.new("(#{Array.join(patterns, "|")})", "i")
+        segments = Array.map(String.scan(html, /<[^>]*|[^<]+/)) do |segment|
+          s = Kernel.to_s(segment)
+          if String.start_with?(s, "<")
+            s
+          elsif block_given?
+            String.gsub(s, pattern) { |m| Object.html_text(yield(m)) }
+          else
+            String.gsub(s, pattern, highlighter)
+          end
+        end
+        String.html_safe(Array.join(segments))
+      end
+
+      # Ruby: excerpt(text, phrase, options = {}) with radius: (100), omission: ("..."), separator: ("")
+      def excerpt(v, text, phrase, radius: 100, omission: "...", separator: "")
+        return nil unless text && phrase
+        regex = (phrase in Regexp) ? phrase : Regexp.new(Regexp.escape(phrase), "i")
+        matches = String.match(text, regex)
+        return nil unless matches
+        found = matches[0] || ""
+        unless String.empty?(separator)
+          Array.each(String.split(text, separator)) do |value|
+            if String.match?(value, regex)
+              found = value
+              break
+            end
+          end
+        end
+        parts = String.split(text, found, 2)
+        prefix, first_part = TextHelper.cut_excerpt_part(:first, Array.first(parts), separator, radius, omission)
+        postfix, second_part = TextHelper.cut_excerpt_part(:second, parts[1], separator, radius, omission)
+        affix = String.strip(Array.join(String[first_part, String.empty?(first_part) ? "" : separator, found,
+                                                String.empty?(second_part) ? "" : separator, second_part]))
+        prefix + affix + postfix
+      end
+
+      # Ruby: pluralize(count, singular, plural_arg = nil, plural: plural_arg, locale: I18n.locale)
+      def pluralize(v, count, singular, plural_arg = nil, plural: nil, locale: :en)
+        plural ||= plural_arg
+        word = if count == 1 || String.match?(Kernel.to_s(count), /^1(\.0+)?$/)
+                 singular
+               else
+                 plural || String.pluralize(singular)
+               end
+        "#{count || 0} #{word}"
+      end
+
+      def word_wrap(v, text, line_width: 80, break_sequence: "\n")
+        return "" if String.empty?(text)
+        pattern = Regexp.new("(.{1,#{line_width}})(?:[^\\S\\n]+\\n?|\\n*\\Z|\\n)|\\n")
+        String.chomp(String.gsub(text, pattern, "\\1#{break_sequence}"), break_sequence)
+      end
+
+      # Ruby: simple_format(text, html_options = {}, options = {}); options are wrapper_tag:, sanitize:, sanitize_options:
+      def simple_format(v, text, html_options = nil, wrapper_tag: "p", sanitize: true, sanitize_options: nil)
+        html = Object.html_text(text)
+        if sanitize
+          tags = sanitize_options ? sanitize_options[:tags] : nil
+          attributes = sanitize_options ? sanitize_options[:attributes] : nil
+          html = Object.html_text(sanitize(v, html, tags: tags, attributes: attributes) || "")
+        end
+        paragraphs = TextHelper.split_paragraphs(html)
+        if Array.empty?(paragraphs)
+          content_tag(v, wrapper_tag, nil, html_options)
+        else
+          String.html_safe(Array.join(Array.map(paragraphs) { |paragraph| Object.html_text(content_tag(v, wrapper_tag, raw(v, paragraph), html_options)) }, "\n\n"))
+        end
+      end
+
+      # Ruby: cycle(first_value, *values) with name: ("default"); an Array as first_value gives its elements
+      def cycle(v, first_value, *values, name: "default")
+        all = Any[]
+        (first_value in Array) ? Array.concat(all, first_value) : Array.push(all, first_value)
+        Array.concat(all, values)
+        cycle = get_cycle(v, name)
+        unless cycle && Cycle.values(cycle) == Array.map(all) { |x| Kernel.to_s(x) }
+          cycle = set_cycle(v, name, Cycle.make(all))
+        end
+        Cycle.to_s(cycle)
+      end
+
+      def current_cycle(v, name = "default")
+        cycle = get_cycle(v, name)
+        cycle ? Cycle.current_value(cycle) : nil
+      end
+
+      def reset_cycle(v, name = "default")
+        cycle = get_cycle(v, name)
+        cycle ? Cycle.reset(cycle) : nil
+      end
+
+      class Cycle
+        attr_reader values
+        attr_accessor index
+
+        # Ruby: Cycle.new(first_value, *values); the values are kept as their to_s
+        def make(values) = Cycle.new(Array.map(values) { |x| Kernel.to_s(x) }, 0)
+        def reset(c) = @index = 0
+        def current_value(c) = Array.fetch(@values, previous_index(c))
+
+        def to_s(c)
+          value = Array.fetch(@values, @index)
+          @index = next_index(c)
+          value
+        end
+
+        # private
+        def next_index(c) = step_index(c, 1)
+        def previous_index(c) = step_index(c, -1)
+        def step_index(c, n) = (@index + n) % Array.size(@values)
+      end
+
+      # private
+      def get_cycle(v, name)
+        set__cycles(v, Hash.new) if _cycles(v) == nil
+        cycles = _cycles(v) || Hash.new
+        cycles[name]
+      end
+
+      def set_cycle(v, name, cycle_object)
+        set__cycles(v, Hash.new) if _cycles(v) == nil
+        cycles = _cycles(v) || Hash.new
+        cycles[name] = cycle_object
+      end
+
+      module_function
+
+      def split_paragraphs(text)
+        return String[] if String.blank?(text)
+        Array.map(String.split(String.gsub(text, /\r\n?/, "\n"), /\n\n+/)) { |t| String.gsub(t, /([^\n]\n)(?=[^\n])/, "\\1<br />") }
+      end
+
+      def cut_excerpt_part(part_position, part, separator, radius, omission)
+        return ["", ""] unless part
+        if separator != ""
+          pieces = String.split(part, separator)
+          Array.delete(pieces, "")
+          affix = Array.length(pieces) > radius ? omission : ""
+          kept = part_position == :first ? Array.last(pieces, radius) : Array.first(pieces, radius)
+          [affix, Array.join(kept, separator)]
+        else
+          affix = String.length(part) > radius ? omission : ""
+          kept = part_position == :first ? (String.[](part, Integer.clamp(String.length(part) - radius, 0, String.length(part))..) || "") : (String.[](part, 0, radius) || "")
+          [affix, kept]
+        end
+      end
+    end
+  end
+end

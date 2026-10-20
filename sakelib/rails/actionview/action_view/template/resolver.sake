@@ -1,0 +1,84 @@
+# Port of actionview-8.1.3/lib/action_view/template/resolver.rb (partial: no caching of unbound templates, no all_template_paths)
+#
+# Resolver is Rails' abstract base of FileSystemResolver; with one kind of resolver here it is FileSystemResolver.
+
+require "../template_path"
+require "../template_details"
+require "../unbound_template"
+
+module ActionView
+  class Resolver
+    class PathParser
+      ParsedPath = Struct.new(:path, :details)
+
+      def build_path_regex
+        handlers = Array.join(Array.map(Template::Handlers.extensions) { |h| Regexp.escape(Symbol.to_s(h)) }, "|")
+        formats = Array.join(Array.map(Template::Types.symbols) { |f| Regexp.escape(Symbol.to_s(f)) }, "|")
+        locales = "en|[a-z]{2}(?:[-_][A-Z]{2})?"
+        Regexp.new("\\A(?:(?<prefix>.*)/)?(?<partial>_)?(?<action>.*?)(?:\\.(?<locale>#{locales}))??(?:\\.(?<format>#{formats}))??(?:\\+(?<variant>[^.]*))??(?:\\.(?<handler>#{handlers}))?\\z")
+      end
+
+      def parse(path)
+        match = Regexp.match(once { build_path_regex }, path) || raise(ArgumentError, "unparsable template path #{path}")
+        tpath = TemplatePath.build(match["action"] || "", match["prefix"] || "", match["partial"] != nil)
+        details = TemplateDetails.new(PathParser.sym(match["locale"]), PathParser.sym(match["handler"]), PathParser.sym(match["format"]), PathParser.sym(match["variant"]))
+        ParsedPath.new(tpath, details)
+      end
+
+      def sym(s) = s ? String.to_sym(s) : nil
+    end
+  end
+
+  class FileSystemResolver
+    attr_reader path
+
+    # Ruby: FileSystemResolver.new(path) (File.expand_path(path): here the path as given, which names the compiled functions)
+    def make(path) = FileSystemResolver.new(String.delete_suffix(path, "/"))
+
+    def to_s(r) = @path
+    def to_path(r) = @path
+    def ==(a, b) = @path == FileSystemResolver.path(b)
+
+    # Ruby: find_all(name, prefix, partial, details, key, locals): key is the details as TemplateDetails::Requested
+    def find_all(r, name, prefix, partial, details, key, locals = Symbol[])
+      requested_details = key
+      tpath = TemplatePath.build(name, prefix, partial)
+      unbound = unbound_templates_from_path(r, tpath)
+      Array.map(filter_and_sort_by_details(r, unbound, requested_details)) { |ut| UnboundTemplate.bind_locals(ut, locals) }
+    end
+
+    # private
+    def build_unbound_template(r, template)
+      rel = String.[](template, (String.size(@path) + 1)..) || ""
+      parsed = Resolver::PathParser.parse(rel)
+      tp = Resolver::PathParser::ParsedPath.path(parsed)
+      UnboundTemplate.new(File.read(template), template, Resolver::PathParser::ParsedPath.details(parsed), TemplatePath.virtual(tp))
+    end
+
+    def unbound_templates_from_path(r, path)
+      return Any[] if String.include?(TemplatePath.name(path), ".")
+      paths = template_glob(r, "#{escape_entry(TemplatePath.to_s(path))}*")
+      Array.select(Array.map(paths) { |p| build_unbound_template(r, p) }) { |t| UnboundTemplate.virtual_path(t) == TemplatePath.virtual(path) }
+    end
+
+    def filter_and_sort_by_details(r, templates, requested_details)
+      filtered = Array.select(templates) { |t| TemplateDetails.matches?(UnboundTemplate.details(t), requested_details) }
+      if Array.size(filtered) > 1
+        filtered = Array.sort_by(filtered) { |t| TemplateDetails.sort_key_for(UnboundTemplate.details(t), requested_details) }
+      end
+      filtered
+    end
+
+    def template_glob(r, glob)
+      query = File.join(escape_entry(@path), glob)
+      path_with_slash = File.join(@path, "")
+      Array.filter_map(Array.sort(Dir.glob(query))) do |filename|
+        next nil if File.directory?(filename)
+        next nil unless String.start_with?(filename, path_with_slash)
+        filename
+      end
+    end
+
+    def escape_entry(entry) = String.gsub(entry, /[*?{}\[\]]/) { |c| "\\" + c }
+  end
+end

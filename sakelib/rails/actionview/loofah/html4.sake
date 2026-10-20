@@ -1,0 +1,470 @@
+# Port of loofah-2.25.1/lib/loofah/html5/scrub.rb and html5/safelist.rb (partial: the tables rails-html-sanitizer reads; scrub_css with a small CSS tokenizer instead of Crass; no SVG local-ref scrubbing) and (Sake only) an HTML4 fragment parser and serializer standing in for Nokogiri::HTML4::DocumentFragment over libxml2 2.13
+#
+# Loofah parses with Nokogiri (libxml2's HTML4 parser) and serializes with libxml2's htmlNodeDumpFormatOutput.
+# Sake has neither, so this file approximates both: a tokenizer for tags, attributes, comments, script/style
+# (kept as CDATA, as libxml2 does), entities (a table of the common named ones and numeric references), void
+# elements and the implied end tags of p/li/dt/dd/option/tr/td; the serializer writes libxml2's quoting (double
+# quotes, single quotes when the value holds `"` and no `'`), escapes, and its newlines around non-inline elements.
+
+require "cgi"
+
+module Loofah
+  class Attr
+    attr_accessor name, value
+  end
+
+  # A node of the fragment: kind is :fragment, :element, :text, :comment or :cdata
+  class Node
+    attr_accessor kind, name, content, attrs, children, parent
+
+    def make(kind, name, content = "") = Node.new(kind, name, content, Attr[], Node[], nil)
+
+    def element?(n) = @kind == :element
+    def text?(n) = @kind == :text
+    def comment?(n) = @kind == :comment
+    def cdata?(n) = @kind == :cdata
+
+    def index_in(n, list) = Array.find_index(list) { |c| Kernel.equal?(c, n) }
+
+    # Ruby: node.remove
+    def remove(n)
+      par = @parent
+      return n unless par
+      i = index_in(n, Node.children(par))
+      Array.delete_at(Node.children(par), i) if i
+      @parent = nil
+      n
+    end
+
+    # Ruby: node.before(nodes)
+    def before(n, nodes)
+      par = @parent
+      return n unless par
+      Array.each(Array.dup(nodes)) do |c|
+        Node.remove(c)
+        i = index_in(n, Node.children(par)) || 0
+        Array.insert(Node.children(par), i, c)
+        Node.set_parent(c, par)
+      end
+      n
+    end
+
+    def append(n, child)
+      Array.push(@children, child)
+      Node.set_parent(child, n)
+      child
+    end
+
+    def attribute(n, name) = Array.find(@attrs) { |a| Attr.name(a) == name }
+
+    def remove_attribute(n, name) = Array.reject!(@attrs) { |a| Attr.name(a) == name }
+
+    # Ruby: node.text (the text of the node and its descendants)
+    def text(n)
+      return @content unless @kind == :element || @kind == :fragment
+      Array.join(Array.map(@children) { |c| Node.text(c) })
+    end
+  end
+
+  module HTML4
+    module_function
+
+    def void_elements = once { Set.of("area", "base", "basefont", "br", "col", "embed", "frame", "hr", "img", "input", "isindex", "link", "meta", "param") }
+
+    # libxml2's elements that are not `isinline` (the serializer puts newlines around them)
+    def block_elements = once do
+      Set.of("address", "area", "base", "blockquote", "caption", "center", "col", "colgroup", "dd", "dir", "div", "dl", "dt",
+             "fieldset", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "isindex", "legend", "li",
+             "link", "menu", "meta", "noframes", "noscript", "ol", "optgroup", "option", "p", "param", "pre", "style",
+             "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr", "ul")
+    end
+
+    # every element libxml2 knows (an unknown one is serialized without newlines)
+    def known_elements = once do
+      Set.union(Set.union(block_elements, void_elements),
+                Set.of("a", "abbr", "acronym", "applet", "b", "bdo", "big", "body", "br", "button", "cite", "code", "del", "dfn",
+                       "em", "font", "head", "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "map", "mark",
+                       "object", "q", "s", "samp", "script", "select", "small", "span", "strike", "strong", "sub", "sup",
+                       "textarea", "time", "tt", "u", "var"))
+    end
+
+    # libxml2's htmlStartClose: the open elements a start tag closes
+    def closes(name)
+      case name
+      in "li" then String["li"]
+      in "dt" | "dd" then String["dt", "dd"]
+      in "option" then String["option"]
+      in "optgroup" then String["option", "optgroup"]
+      in "tr" then String["tr", "td", "th"]
+      in "td" | "th" then String["td", "th"]
+      in "thead" | "tbody" | "tfoot" then String["thead", "tbody", "tfoot", "tr", "td", "th"]
+      else
+        p_closers = String["address", "blockquote", "center", "dd", "dir", "div", "dl", "dt", "fieldset", "form", "h1", "h2", "h3",
+                           "h4", "h5", "h6", "hr", "li", "menu", "ol", "p", "pre", "table", "ul"]
+        Array.include?(p_closers, name) ? String["p"] : String[]
+      end
+    end
+
+    def entities = once do
+      Hash.of("amp" => "&", "lt" => "<", "gt" => ">", "quot" => "\"", "apos" => "'", "nbsp" => " ", "copy" => "©",
+              "reg" => "®", "trade" => "™", "hellip" => "…", "mdash" => "—", "ndash" => "–",
+              "lsquo" => "‘", "rsquo" => "’", "ldquo" => "“", "rdquo" => "”", "laquo" => "«",
+              "raquo" => "»", "bull" => "•", "middot" => "·", "deg" => "°", "plusmn" => "±",
+              "times" => "×", "divide" => "÷", "para" => "¶", "sect" => "§", "cent" => "¢",
+              "pound" => "£", "yen" => "¥", "euro" => "€", "frac12" => "½", "frac14" => "¼",
+              "frac34" => "¾", "iexcl" => "¡", "iquest" => "¿", "larr" => "←", "rarr" => "→",
+              "uarr" => "↑", "darr" => "↓", "hearts" => "♥", "eacute" => "é", "egrave" => "è",
+              "aacute" => "á", "agrave" => "à", "ccedil" => "ç", "uuml" => "ü", "ouml" => "ö",
+              "auml" => "ä", "szlig" => "ß", "ntilde" => "ñ", "shy" => "­", "acute" => "´")
+    end
+
+    # numeric and the known named references; an unknown or unterminated one stays as it is
+    def decode_entities(s)
+      return s unless String.include?(s, "&")
+      String.gsub(s, /&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/) do |m|
+        ref = String.[](m, 1...-1) || ""
+        if String.start_with?(ref, "#x") || String.start_with?(ref, "#X")
+          Integer.chr(String.hex(String.[](ref, 2..) || "0"))
+        elsif String.start_with?(ref, "#")
+          Integer.chr(String.to_i(String.[](ref, 1..) || "0"))
+        else
+          entities[ref] || m
+        end
+      end
+    end
+
+    def start_tag_re = /\A<([a-zA-Z][^\s\/>]*)/
+    def attr_re = /\A[\s\/]*([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/
+
+    # Ruby: Loofah.html4_fragment(html) (Nokogiri::HTML4::DocumentFragment.parse)
+    def parse_fragment(html)
+      root = Node.make(:fragment, "#fragment")
+      stack = Node[root]
+      pos = 0
+      len = String.length(html)
+      while pos < len
+        lt = String.index(html, "<", pos)
+        if lt == nil
+          add_text(stack, String.[](html, pos..) || "")
+          break
+        end
+        add_text(stack, String.[](html, pos, lt - pos) || "") if lt > pos
+        rest = String.[](html, lt..) || ""
+        if String.start_with?(rest, "<!--")
+          close = String.index(html, "-->", lt + 4)
+          body = close ? (String.[](html, lt + 4, close - lt - 4) || "") : (String.[](html, lt + 4..) || "")
+          Node.append(Array.last(stack) || root, Node.make(:comment, "comment", body))
+          pos = close ? close + 3 : len
+        elsif String.start_with?(rest, "<!") || String.start_with?(rest, "<?")
+          close = String.index(html, ">", lt)
+          pos = close ? close + 1 : len
+        elsif (m = String.match(rest, /\A<\/([a-zA-Z][^\s\/>]*)[^>]*>/))
+          close_element(stack, String.downcase(m[1] || ""))
+          pos = lt + String.length(m[0] || "")
+        elsif (m = String.match(rest, start_tag_re))
+          name = String.downcase(m[1] || "")
+          pos = lt + String.length(m[0] || "")
+          element = Node.make(:element, name)
+          while (am = String.match(String.[](html, pos..) || "", attr_re))
+            aname = String.downcase(am[1] || "")
+            raw = am[2] || am[3] || am[4]
+            Array.push(Node.attrs(element), Attr.new(aname, raw ? decode_entities(raw) : nil)) unless Node.attribute(element, aname)
+            pos += String.length(am[0] || "")
+          end
+          gt = String.index(html, ">", pos)
+          pos = gt ? gt + 1 : len
+          Array.each(closes(name)) { |c| close_element(stack, c) if Array.any?(stack) { |s| Node.name(s) == c } }
+          Node.append(Array.last(stack) || root, element)
+          if name == "script" || name == "style"
+            endm = Regexp.match(Regexp.new("</#{name}\\s*>", "i"), html, pos)
+            body_end = endm ? (MatchData.begin(endm, 0) || len) : len
+            body = String.[](html, pos, body_end - pos) || ""
+            Node.append(element, Node.make(:cdata, "#cdata-section", body)) unless String.empty?(body)
+            pos = endm ? (MatchData.end(endm, 0) || len) : len
+          elsif !Set.include?(void_elements, name)
+            Array.push(stack, element)
+          end
+        else
+          add_text(stack, "<")
+          pos = lt + 1
+        end
+      end
+      root
+    end
+
+    def add_text(stack, s)
+      return if String.empty?(s)
+      parent = Array.last(stack) || raise(ArgumentError, "no open node")
+      last = Array.last(Node.children(parent))
+      text = decode_entities(s)
+      if last && Node.text?(last)
+        Node.set_content(last, Node.content(last) + text)
+      else
+        Node.append(parent, Node.make(:text, "text", text))
+      end
+    end
+
+    # an end tag closes up to its open element; a stray one is ignored
+    def close_element(stack, name)
+      i = Array.rindex(Array.map(stack) { |s| Node.name(s) }, name)
+      return if i == nil || i == 0
+      Array.pop(stack) while Array.size(stack) > i
+    end
+
+    # --- serializing (libxml2's htmlNodeDumpFormatOutput, as Nokogiri's to_html) ---
+
+    def escape_text(s) = String.gsub(s, /[&<>]/, Hash.of("&" => "&amp;", "<" => "&lt;", ">" => "&gt;"))
+
+    def attribute_html(a)
+      value = Attr.value(a)
+      return " #{Attr.name(a)}" if value == nil
+      v = escape_text(value)
+      if String.include?(v, "\"")
+        String.include?(v, "'") ? " #{Attr.name(a)}=\"#{String.gsub(v, "\"", "&quot;")}\"" : " #{Attr.name(a)}='#{v}'"
+      else
+        " #{Attr.name(a)}=\"#{v}\""
+      end
+    end
+
+    def block?(n) = Node.element?(n) && Set.include?(block_elements, Node.name(n))
+    def textish?(n) = Node.text?(n)
+
+    def to_html(fragment) = Array.join(Array.map(Node.children(fragment)) { |c| node_html(c, false) })
+
+    def node_html(n, in_element)
+      case Node.kind(n)
+      in :text then escape_text(Node.content(n))
+      in :cdata then Node.content(n)
+      in :comment then "<!--#{Node.content(n)}-->"
+      else element_html(n, in_element)
+      end
+    end
+
+    def element_html(n, in_element)
+      name = Node.name(n)
+      out = "<#{name}#{Array.join(Array.map(Node.attrs(n)) { |a| attribute_html(a) })}>"
+      children = Node.children(n)
+      formatting = block?(n) && !String.start_with?(name, "p")
+      unless Set.include?(void_elements, name)
+        first = Array.first(children)
+        last = Array.last(children)
+        many = Array.size(children) > 1
+        out += "\n" if formatting && many && first && !textish?(first)
+        Array.each_with_index(children) do |c, i|
+          out += node_html(c, true)
+          nxt = Array.[](children, i + 1)
+          out += "\n" if nxt && block?(c) && !textish?(nxt) && !String.start_with?(name, "p")
+        end
+        out += "\n" if formatting && many && last && !textish?(last)
+        out += "</#{name}>"
+      end
+      out
+    end
+  end
+
+  module HTML5
+    module SafeList
+      module_function
+
+      def attr_val_is_uri = once { Set.of("action", "cite", "href", "longdesc", "poster", "preload", "src", "xlink:href", "xml:base") }
+
+      def allowed_protocols = once do
+        Set.of("afs", "aim", "callto", "data", "ed2k", "fax", "feed", "ftp", "gopher", "http", "https", "irc", "line", "mailto",
+               "modem", "news", "nntp", "rsync", "rtsp", "sftp", "sms", "ssh", "tag", "tel", "telnet", "urn", "webcal", "xmpp")
+      end
+
+      def allowed_uri_data_mediatypes = once { Set.of("image/gif", "image/jpeg", "image/png", "text/css", "text/plain") }
+      def protocol_separator = /:|(&#0*58)|(&#x70)|(&#x0*3a)|(%|&#37;)3A/i
+
+      def allowed_css_properties = once do
+        Set.of("align-content", "align-items", "align-self", "aspect-ratio", "azimuth", "background-color", "border-bottom-color",
+               "border-collapse", "border-color", "border-left-color", "border-right-color", "border-top-color", "clear", "color",
+               "cursor", "direction", "display", "elevation", "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow",
+               "flex-shrink", "flex-wrap", "float", "font", "font-family", "font-size", "font-style", "font-variant",
+               "font-weight", "height", "justify-content", "letter-spacing", "line-height", "list-style", "list-style-type",
+               "max-height", "max-width", "min-height", "min-width", "order", "overflow", "overflow-x", "overflow-y",
+               "page-break-after", "page-break-before", "page-break-inside", "pause", "pause-after", "pause-before", "pitch",
+               "pitch-range", "richness", "speak", "speak-header", "speak-numeral", "speak-punctuation", "speech-rate",
+               "stress", "text-align", "text-decoration", "text-indent", "unicode-bidi", "vertical-align", "voice-family",
+               "volume", "white-space", "width")
+      end
+
+      def allowed_svg_properties = once do
+        Set.of("fill", "fill-opacity", "fill-rule", "stroke", "stroke-linecap", "stroke-linejoin", "stroke-opacity", "stroke-width")
+      end
+
+      def shorthand_css_properties = once { Set.of("background", "border", "margin", "padding") }
+
+      def allowed_css_functions = once do
+        Set.of("attr", "blur", "brightness", "calc", "circle", "contrast", "counter", "counters", "cubic-bezier", "drop-shadow",
+               "ellipse", "grayscale", "hsl", "hsla", "hue-rotate", "hwb", "inset", "invert", "linear-gradient", "matrix",
+               "matrix3d", "opacity", "perspective", "polygon", "radial-gradient", "repeating-linear-gradient",
+               "repeating-radial-gradient", "rgb", "rgba", "rotate", "rotate3d", "rotatex", "rotatey", "rotatez", "saturate",
+               "sepia", "scale", "scale3d", "scalex", "scaley", "scalez", "skew", "skewx", "skewy", "symbols", "translate",
+               "translate3d", "translatex", "translatey", "translatez")
+      end
+
+      def allowed_css_keywords = once do
+        Set.of("!important", "auto", "block", "bold", "both", "bottom", "center", "collapse", "dashed", "dotted", "double",
+               "groove", "hidden", "inherit", "initial", "inset", "italic", "left", "medium", "none", "normal", "nowrap",
+               "outset", "pointer", "revert", "ridge", "right", "separate", "solid", "thick", "thin", "top", "transparent",
+               "underline", "unset", "aqua", "black", "blue", "fuchsia", "gray", "green", "grey", "lime", "maroon", "navy",
+               "olive", "orange", "purple", "red", "silver", "teal", "white", "yellow")
+      end
+
+      # libxml2 mis-escapes these attributes (BROKEN_ESCAPING_ATTRIBUTES; `name` only on <a>)
+      def broken_escaping_attributes = once { Set.of("href", "action", "src", "name") }
+    end
+
+    module Scrub
+      module_function
+
+      def control_characters = /[`\u0000- \u007f\u0080-ā]/
+      def css_keywordish = /\A(#[0-9a-fA-F]+|rgb\(\d+%?,\d*%?,?\d*%?\)?|-?\d{0,3}\.?\d{0,10}(ch|cm|r?em|ex|in|lh|mm|pc|pt|px|Q|vmax|vmin|vw|vh|%|,|\))?)\z/
+      def uri_protocol_regex = /\A[a-z][a-z0-9+\-.]*:/
+
+      def allowed_uri?(uri_string)
+        s = CGI.unescapeHTML(String.gsub(uri_string, control_characters, ""))
+        s = String.gsub(s, control_characters, "").gsub("&colon;", ":").downcase
+        if String.match?(s, uri_protocol_regex)
+          protocol = Array.first(String.split(s, SafeList.protocol_separator)) || ""
+          return false unless Set.include?(SafeList.allowed_protocols, protocol)
+          if protocol == "data"
+            mediatype = String.split(s, SafeList.protocol_separator)[1]
+            mediatype = Array.first(String.split(mediatype, /[;,]/)) if mediatype
+            return false if mediatype && !Set.include?(SafeList.allowed_uri_data_mediatypes, mediatype)
+          end
+        end
+        true
+      end
+
+      def scrub_uri_attribute(node, attr)
+        return false if allowed_uri?(Attr.value(attr) || "")
+        Node.remove_attribute(node, Attr.name(attr))
+        true
+      end
+
+      def force_correct_attribute_escaping!(node)
+        Array.each(Node.attrs(node)) do |a|
+          next unless Set.include?(SafeList.broken_escaping_attributes, Attr.name(a))
+          next if Attr.name(a) == "name" && Node.name(node) != "a"
+          value = Attr.value(a)
+          Attr.set_value(a, String.gsub(value, /[ "]/) { |m| m == " " ? "%20" : "%22" }) if value
+        end
+      end
+
+      def scrub_css_attribute(node)
+        style = Node.attribute(node, "style")
+        Attr.set_value(style, scrub_css(Attr.value(style) || "")) if style
+      end
+
+      # Ruby: Crass.parse_properties(style), each property filtered and stringified ("name:value;")
+      def scrub_css(style)
+        out = ""
+        Array.each(css_declarations(style)) do |decl|
+          colon = String.index(decl, ":")
+          next unless colon
+          name = String.downcase(String.strip(String.[](decl, 0, colon) || ""))
+          raw_value = String.[](decl, colon + 1..) || ""
+          important = String.match?(raw_value, /!\s*important\s*\z/i)
+          raw_value = String.sub(raw_value, /!\s*important\s*\z/i, "") if important
+          tokens = css_tokens(raw_value)
+          next if Array.any?(tokens) { |kind, _| kind == :url }
+          shorthand = Set.include?(SafeList.shorthand_css_properties, Array.first(String.split(name, "-")) || "")
+          next unless Set.include?(SafeList.allowed_css_properties, name) || Set.include?(SafeList.allowed_svg_properties, name) || shorthand
+          value = Array.join(Array.filter_map(tokens) do |kind, raw|
+            case kind
+            in :whitespace then " "
+            in :string then String.match?(raw, /\A(["'])?[^"']+\1\z/) ? raw : nil
+            in :function
+              fname = String.downcase(String.[](raw, 0, String.index(raw, "(") || 0) || "")
+              Set.include?(SafeList.allowed_css_functions, fname) ? raw : nil
+            in :ident then !shorthand || Set.include?(SafeList.allowed_css_keywords, raw) || String.match?(raw, css_keywordish) ? raw : nil
+            else raw
+            end
+          end)
+          value = String.strip(value)
+          next if String.empty?(value)
+          value += " !important" if important
+          out += "#{name}:#{value};"
+        end
+        out
+      end
+
+      # the declarations of a style attribute, split at `;` outside parentheses and strings
+      def css_declarations(style)
+        decls = String[]
+        current = ""
+        depth = 0
+        quote = nil
+        Array.each(String.chars(style)) do |ch|
+          if quote
+            quote = nil if ch == quote
+          elsif ch == "\"" || ch == "'"
+            quote = ch
+          elsif ch == "("
+            depth += 1
+          elsif ch == ")"
+            depth -= 1 if depth > 0
+          elsif ch == ";" && depth == 0
+            Array.push(decls, current)
+            current = ""
+            next
+          end
+          current += ch
+        end
+        Array.push(decls, current) unless String.empty?(String.strip(current))
+        decls
+      end
+
+      # a property value as [kind, raw] tokens: whitespace, string, url, function, ident, other
+      def css_tokens(value)
+        tokens = Any[]
+        s = value
+        until String.empty?(s)
+          m = String.match(s, /\A\s+/) || String.match(s, /\A("[^"]*"|'[^']*')/) || String.match(s, /\Aurl\([^)]*\)/i) ||
+              String.match(s, /\A[-a-zA-Z_][-\w]*\([^()]*(\([^()]*\)[^()]*)*\)/) || String.match(s, /\A-?[a-zA-Z_][-\w]*/) ||
+              String.match(s, /\A[^\s"'a-zA-Z_]+/) || String.match(s, /\A./)
+          raw = m ? (m[0] || "") : s
+          kind = if String.match?(raw, /\A\s/) then :whitespace
+                 elsif String.match?(raw, /\A["']/) then :string
+                 elsif String.match?(raw, /\Aurl\(/i) then :url
+                 elsif String.match?(raw, /\(/) then :function
+                 elsif String.match?(raw, /\A-?[a-zA-Z_]/) then :ident
+                 else :other
+                 end
+          Array.push(tokens, [kind, raw])
+          s = String.[](s, String.length(raw)..) || ""
+        end
+        tokens
+      end
+
+      def cdata_needs_escaping?(node) = Node.cdata?(node)
+
+      def escape_tags(string) = String.gsub(string, /[<>&]/, Hash.of("<" => "&lt;", ">" => "&gt;", "&" => "&amp;"))
+    end
+  end
+
+  # Ruby: Loofah::Scrubber (scrub(node) returns CONTINUE or STOP; traverse walks the tree in `direction`)
+  module Scrubber
+    def direction(s) = raise(NotImplementedError)
+    def scrub(s, node) = raise(NotImplementedError)
+
+    def traverse(s, node)
+      if direction(s) == :bottom_up
+        Array.each(Array.dup(Node.children(node))) { |j| traverse(s, j) }
+        scrub(s, node)
+      else
+        return nil if scrub(s, node) == :stop
+        Array.each(Array.dup(Node.children(node))) { |j| traverse(s, j) }
+      end
+      nil
+    end
+
+    # Ruby: fragment.scrub!(scrubber): each top-level node
+    def scrub!(s, fragment)
+      Array.each(Array.dup(Node.children(fragment))) { |c| traverse(s, c) }
+      fragment
+    end
+  end
+end

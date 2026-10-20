@@ -1,0 +1,154 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/asset_url_helper.rb (partial: no asset_host as a Proc (a stored block), no asset pipeline: paths are public paths as with skip_pipeline)
+#
+# A mixin of the view. Rails reads config.asset_host, config.relative_url_root and
+# config.default_asset_host_protocol from the view's config; here they are functions of the view with Rails'
+# defaults (nil), which a view class overrides. Rails' options Hash also takes trailing keywords (`**opts`).
+
+require "../../../actionpack/action_dispatch/http/request"
+
+module ActionView
+  module Helpers
+    module AssetUrlHelper
+      def request(v) = raise(NotImplementedError)
+
+      # Ruby: config.asset_host / config.relative_url_root / config.default_asset_host_protocol
+      def asset_host(v) = nil
+      def relative_url_root(v) = nil
+      def default_asset_host_protocol(v) = nil
+
+      def asset_path(v, source, options = nil, **opts)
+        options = AssetUrlHelper.merge_options(options, opts)
+        raise ArgumentError, "nil is not a valid asset source" if source == nil
+        source = Kernel.to_s(source)
+        return "" if String.blank?(source)
+        return source if String.match?(source, AssetUrlHelper.uri_regexp)
+        m = String.match(source, /([?#].+)$/)
+        tail = m ? m[1] : nil
+        source = String.sub(source, /([?#].+)$/, "")
+        extname = compute_asset_extname(v, source, options)
+        source = "#{source}#{extname}" if extname
+        unless String.start_with?(source, "/")
+          source = compute_asset_path(v, source, options)
+        end
+        root = relative_url_root(v)
+        if root
+          source = File.join(root, source) unless String.start_with?(source, "#{root}/")
+        end
+        host = compute_asset_host(v, source, options)
+        source = File.join(host, source) if host
+        "#{source}#{tail}"
+      end
+
+      def path_to_asset(v, source, options = nil, **opts) = asset_path(v, source, AssetUrlHelper.merge_options(options, opts))
+
+      def asset_url(v, source, options = nil, **opts) = path_to_asset(v, source, Hash.merge(AssetUrlHelper.merge_options(options, opts), Hash.of(protocol: :request)))
+      def url_to_asset(v, source, options = nil, **opts) = asset_url(v, source, AssetUrlHelper.merge_options(options, opts))
+
+      def compute_asset_extname(v, source, options = nil)
+        options ||= Hash.new
+        return nil if options[:extname] == false
+        given = options[:extname]
+        extname = (given in String) ? given : AssetUrlHelper.asset_extension(options[:type])
+        extname && File.extname(source) != extname ? extname : nil
+      end
+
+      def compute_asset_path(v, source, options = nil)
+        dir = AssetUrlHelper.asset_public_directory((options || Hash.new)[:type]) || ""
+        File.join(dir, source)
+      end
+
+      def public_compute_asset_path(v, source, options = nil) = compute_asset_path(v, source, options)
+
+      def compute_asset_host(v, source = "", options = nil)
+        options ||= Hash.new
+        req = request(v)
+        given = options[:host]
+        host = (given in String) ? given : asset_host(v)
+        if host && String.include?(host, "%d")
+          host = format(host, AssetUrlHelper.crc32(source) % 4)
+        end
+        host ||= ActionDispatch::Request.base_url(req) if req && options[:protocol] == :request
+        return nil unless host
+        return host if String.match?(host, AssetUrlHelper.uri_regexp)
+        protocol = options[:protocol] || default_asset_host_protocol(v) || (req ? :request : :relative)
+        case protocol
+        in :relative then "//#{host}"
+        in :request
+          req ? "#{ActionDispatch::Request.protocol(req)}#{host}" : "//#{host}"
+        else "#{protocol}://#{host}"
+        end
+      end
+
+      def javascript_path(v, source, options = nil, **opts) = path_to_asset(v, source, AssetUrlHelper.typed(:javascript, options, opts))
+      def path_to_javascript(v, source, options = nil, **opts) = javascript_path(v, source, AssetUrlHelper.merge_options(options, opts))
+      def javascript_url(v, source, options = nil, **opts) = url_to_asset(v, source, AssetUrlHelper.typed(:javascript, options, opts))
+      def url_to_javascript(v, source, options = nil, **opts) = javascript_url(v, source, AssetUrlHelper.merge_options(options, opts))
+      def stylesheet_path(v, source, options = nil, **opts) = path_to_asset(v, source, AssetUrlHelper.typed(:stylesheet, options, opts))
+      def path_to_stylesheet(v, source, options = nil, **opts) = stylesheet_path(v, source, AssetUrlHelper.merge_options(options, opts))
+      def stylesheet_url(v, source, options = nil, **opts) = url_to_asset(v, source, AssetUrlHelper.typed(:stylesheet, options, opts))
+      def url_to_stylesheet(v, source, options = nil, **opts) = stylesheet_url(v, source, AssetUrlHelper.merge_options(options, opts))
+      def image_path(v, source, options = nil, **opts) = path_to_asset(v, source, AssetUrlHelper.typed(:image, options, opts))
+      def path_to_image(v, source, options = nil, **opts) = image_path(v, source, AssetUrlHelper.merge_options(options, opts))
+      def image_url(v, source, options = nil, **opts) = url_to_asset(v, source, AssetUrlHelper.typed(:image, options, opts))
+      def url_to_image(v, source, options = nil, **opts) = image_url(v, source, AssetUrlHelper.merge_options(options, opts))
+      def video_path(v, source, options = nil, **opts) = path_to_asset(v, source, AssetUrlHelper.typed(:video, options, opts))
+      def path_to_video(v, source, options = nil, **opts) = video_path(v, source, AssetUrlHelper.merge_options(options, opts))
+      def video_url(v, source, options = nil, **opts) = url_to_asset(v, source, AssetUrlHelper.typed(:video, options, opts))
+      def url_to_video(v, source, options = nil, **opts) = video_url(v, source, AssetUrlHelper.merge_options(options, opts))
+      def audio_path(v, source, options = nil, **opts) = path_to_asset(v, source, AssetUrlHelper.typed(:audio, options, opts))
+      def path_to_audio(v, source, options = nil, **opts) = audio_path(v, source, AssetUrlHelper.merge_options(options, opts))
+      def audio_url(v, source, options = nil, **opts) = url_to_asset(v, source, AssetUrlHelper.typed(:audio, options, opts))
+      def url_to_audio(v, source, options = nil, **opts) = audio_url(v, source, AssetUrlHelper.merge_options(options, opts))
+      def font_path(v, source, options = nil, **opts) = path_to_asset(v, source, AssetUrlHelper.typed(:font, options, opts))
+      def path_to_font(v, source, options = nil, **opts) = font_path(v, source, AssetUrlHelper.merge_options(options, opts))
+      def font_url(v, source, options = nil, **opts) = url_to_asset(v, source, AssetUrlHelper.typed(:font, options, opts))
+      def url_to_font(v, source, options = nil, **opts) = font_url(v, source, AssetUrlHelper.merge_options(options, opts))
+
+      module_function
+
+      def uri_regexp = %r{^[-a-z]+://|^(?:cid|data):|^//}i
+
+      # Ruby: ASSET_EXTENSIONS[type]
+      def asset_extension(type)
+        case type
+        in :javascript then ".js"
+        in :stylesheet then ".css"
+        else nil
+        end
+      end
+
+      # Ruby: ASSET_PUBLIC_DIRECTORIES[type]
+      def asset_public_directory(type)
+        case type
+        in :audio then "/audios"
+        in :font then "/fonts"
+        in :image then "/images"
+        in :javascript then "/javascripts"
+        in :stylesheet then "/stylesheets"
+        in :video then "/videos"
+        else nil
+        end
+      end
+
+      # (Sake only) Ruby's `options = {}` with trailing keywords
+      def merge_options(options, opts)
+        return Hash.dup(options) if options && Hash.empty?(opts)
+        return opts if options == nil
+        Hash.merge(options, opts)
+      end
+
+      # Ruby: { type: :image }.merge!(options)
+      def typed(type, options, opts) = Hash.merge(Hash.of(type: type), merge_options(options, opts))
+
+      # Ruby: Zlib.crc32(source) (Sake's Zlib has no crc32; the table-less bitwise form)
+      def crc32(s)
+        crc = 0xFFFFFFFF
+        Array.each(String.bytes(s)) do |b|
+          crc = crc ^ b
+          Integer.times(8) { crc = (crc & 1) == 1 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1 }
+        end
+        crc ^ 0xFFFFFFFF
+      end
+    end
+  end
+end

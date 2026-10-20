@@ -1,0 +1,77 @@
+# Port of rails-html-sanitizer-1.7.0/lib/rails/html/sanitizer.rb (partial: the HTML4 vendor only (Rails::HTML4::*, ActionView's default); no :scrubber option; parsing and serializing are loofah/html4.sake's approximation of Nokogiri/libxml2)
+#
+# Rails composes each sanitizer from concerns (ComposedSanitize, Parser::HTML4, Scrubber::Full/Link/SafeList,
+# Serializer::UTF8Encode); here each class has the composed `sanitize` written out: parse, scrub, serialize.
+
+require "scrubbers"
+
+module Rails
+  module HTML
+    module Sanitizer
+      module_function
+
+      def allowed_uri?(uri_string) = Loofah::HTML5::Scrub.allowed_uri?(uri_string)
+
+      # Ruby: Concern::Scrubber::SafeList::DEFAULT_ALLOWED_TAGS / DEFAULT_ALLOWED_ATTRIBUTES
+      def default_allowed_tags = once do
+        Set.of("a", "abbr", "acronym", "address", "b", "big", "blockquote", "br", "cite", "code", "dd", "del", "dfn", "div", "dl",
+               "dt", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "ins", "kbd", "li", "mark", "ol", "p", "pre",
+               "samp", "small", "span", "strong", "sub", "sup", "time", "tt", "ul", "var")
+      end
+
+      def default_allowed_attributes = once do
+        Set.of("abbr", "alt", "cite", "class", "datetime", "height", "href", "lang", "name", "src", "title", "width", "xml:lang")
+      end
+
+      # Ruby: ComposedSanitize#sanitize (nil gives nil, "" is given back)
+      def composed(html)
+        return nil if html == nil
+        return html if String.empty?(html)
+        Loofah::HTML4.to_html(yield(Loofah::HTML4.parse_fragment(html)))
+      end
+    end
+  end
+
+  module HTML4
+    class FullSanitizer
+      attr_reader scrubber
+
+      def make = FullSanitizer.new(Rails::HTML::TextOnlyScrubber.new(nil))
+
+      def sanitize(sz, html) = Rails::HTML::Sanitizer.composed(html) { |fragment| Loofah::Scrubber.scrub!(@scrubber, fragment) }
+    end
+
+    class LinkSanitizer
+      attr_reader link_scrubber
+
+      def make
+        scrubber = Rails::HTML::TargetScrubber.make_target
+        Rails::HTML::TargetScrubber.set_tags(scrubber, String["a"])
+        Rails::HTML::TargetScrubber.set_attributes(scrubber, String["href"])
+        LinkSanitizer.new(scrubber)
+      end
+
+      def sanitize(sz, html) = Rails::HTML::Sanitizer.composed(html) { |fragment| Loofah::Scrubber.scrub!(@link_scrubber, fragment) }
+    end
+
+    class SafeListSanitizer
+      attr_reader permit_scrubber
+
+      def make(prune: false) = SafeListSanitizer.new(Rails::HTML::PermitScrubber.make(prune: prune))
+
+      def allowed_tags = Rails::HTML::Sanitizer.default_allowed_tags
+      def allowed_attributes = Rails::HTML::Sanitizer.default_allowed_attributes
+
+      # Ruby: sanitize(html, options = {}) with options[:tags] / options[:attributes]
+      def sanitize(sz, html, tags: nil, attributes: nil)
+        Rails::HTML::Sanitizer.composed(html) do |fragment|
+          Rails::HTML::PermitScrubber.set_tags(@permit_scrubber, tags ? Set.to_a(Set.new(tags)) : Set.to_a(allowed_tags))
+          Rails::HTML::PermitScrubber.set_attributes(@permit_scrubber, attributes ? Set.to_a(Set.new(attributes)) : Set.to_a(allowed_attributes))
+          Loofah::Scrubber.scrub!(@permit_scrubber, fragment)
+        end
+      end
+
+      def sanitize_css(sz, style_string) = Loofah::HTML5::Scrub.scrub_css(style_string)
+    end
+  end
+end

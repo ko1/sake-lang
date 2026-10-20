@@ -1,0 +1,43 @@
+# Port of actionview-8.1.3/lib/action_view/renderer/partial_renderer.rb and renderer/object_renderer.rb (partial: no partial layouts, no collection caching)
+#
+# Rails' PartialRenderer/ObjectRenderer render a partial with a locals Hash; here the locals' names come in
+# (`keys`, to find the template compiled for them) and the caller's block runs the compiled function with the
+# values: `|template, buffer|` (and `object` for an object partial). generate/templates.sake writes these calls.
+
+require "abstract_renderer"
+require "../context"
+
+module ActionView
+  module PartialRenderer
+    module_function
+
+    def find_template(view, path, keys)
+      lc = Context.lookup_context(view)
+      prefixes = String.include?(path, "/") ? String[] : LookupContext.prefixes(lc)
+      LookupContext.find_template(lc, path, prefixes, true, keys)
+    end
+
+    # Ruby: PartialRenderer#render(partial, context, block)
+    def render(view, partial, keys)
+      template = find_template(view, partial, keys)
+      Template.render(template, view) { |buf| yield(template, buf) }
+    end
+  end
+
+  module ObjectRenderer
+    module_function
+
+    # Ruby: render_object_with_partial(object, partial, context, block): the object is the local named after the partial (or as:)
+    def render_object_with_partial(view, object, partial, keys, as: nil)
+      local_name = AbstractRenderer::ObjectRendering.local_variable(partial, as)
+      template = PartialRenderer.find_template(view, partial, Array.uniq(keys + Symbol[local_name]))
+      Template.render(template, view) { |buf| yield(template, buf, object) }
+    end
+
+    def render_object_derive_partial(view, object, keys, as: nil)
+      lc = Context.lookup_context(view)
+      path = AbstractRenderer::ObjectRendering.partial_path(object, Array.first(LookupContext.prefixes(lc)), Context.prefix_partial_path_with_controller_namespace(view))
+      render_object_with_partial(view, object, path, keys, as: as) { |t, buf, o| yield(t, buf, o) }
+    end
+  end
+end

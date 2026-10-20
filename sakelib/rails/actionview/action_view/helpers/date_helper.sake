@@ -1,0 +1,592 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/date_helper.rb and helpers/tags/{date_select,time_select,datetime_select}.rb (partial: no :day_format/:year_format lambdas (stored blocks), no FormBuilder delegation (FormBuilder's file calls these))
+#
+# A mixin of the view (`distance_of_time_in_words(v, from, to)`); the strings are actionview's locale/en.yml
+# through sakelib/i18n (../locale.sake loads it, as action_view.rb's on_load(:i18n) does). DateTimeSelector is
+# Rails' class; it includes TagHelper in Rails, here it holds the view and calls the view's content_tag/tag.
+# Rails' `options` Hash keeps its keys (`discard_year:`, `prompt:`, `order:` ...) as one Hash of mixed values.
+# Tags::DateSelect (date_select/time_select/datetime_select for a record) is folded into the three helpers:
+# the record comes as `options[:object]` (FormBuilder's objectify_options) and its value is read with
+# ModelNaming::Model.read_attribute_for_validation (Rails' `object.public_send(method)`).
+
+require "tag_helper"
+require "../locale"
+require "../model_naming"
+require "../../../activesupport/active_support/time"
+
+module ActionView
+  module Helpers
+    module DateHelper
+      def field_error_proc(v, html_tag, instance) = raise(NotImplementedError)
+
+      def distance_of_time_in_words(v, from_time, to_time = 0, include_seconds: false, scope: :"datetime.distance_in_words", locale: nil)
+        from_time = DateHelper.normalize_distance_of_time_argument_to_time(from_time)
+        to_time = DateHelper.normalize_distance_of_time_argument_to_time(to_time)
+        from_time, to_time = to_time, from_time if from_time > to_time
+        distance_in_minutes = Float.round((to_time - from_time) / 60.0)
+        distance_in_seconds = Float.round(to_time - from_time)
+        DateHelper.distance_words(from_time, to_time, distance_in_minutes, distance_in_seconds, include_seconds, scope, locale)
+      end
+
+      def time_ago_in_words(v, from_time, include_seconds: false, scope: :"datetime.distance_in_words", locale: nil)
+        distance_of_time_in_words(v, from_time, Time.now, include_seconds: include_seconds, scope: scope, locale: locale)
+      end
+
+      def distance_of_time_in_words_to_now(v, from_time, include_seconds: false, scope: :"datetime.distance_in_words", locale: nil)
+        time_ago_in_words(v, from_time, include_seconds: include_seconds, scope: scope, locale: locale)
+      end
+
+      # Ruby: relative_time_in_words(from_time, options = {}): "in 3 days" / "3 days ago"
+      def relative_time_in_words(v, from_time, include_seconds: false, scope: :"datetime.relative", locale: nil)
+        now = Time.now
+        time = distance_of_time_in_words(v, from_time, now, include_seconds: include_seconds, locale: locale)
+        key = DateHelper.normalize_distance_of_time_argument_to_time(from_time) > now ? :future : :past
+        Kernel.to_s(I18n.t(key, time: time, scope: scope, locale: locale))
+      end
+
+      # Ruby: date_select(object_name, method, options = {}, html_options = {}) (Tags::DateSelect#render)
+      def date_select(v, object_name, method, options = nil, html_options = nil) = DateHelper.tags_render(v, :date, object_name, method, options || Hash.new, html_options || Hash.new)
+      def time_select(v, object_name, method, options = nil, html_options = nil) = DateHelper.tags_render(v, :time, object_name, method, options || Hash.new, html_options || Hash.new)
+      def datetime_select(v, object_name, method, options = nil, html_options = nil) = DateHelper.tags_render(v, :datetime, object_name, method, options || Hash.new, html_options || Hash.new)
+
+      def select_datetime(v, datetime = Time.current, options = nil, html_options = nil) = DateTimeSelector.select_datetime(DateTimeSelector.make(v, datetime, options, html_options))
+      def select_date(v, date = Date.current, options = nil, html_options = nil) = DateTimeSelector.select_date(DateTimeSelector.make(v, date, options, html_options))
+      def select_time(v, datetime = Time.current, options = nil, html_options = nil) = DateTimeSelector.select_time(DateTimeSelector.make(v, datetime, options, html_options))
+      def select_second(v, datetime, options = nil, html_options = nil) = DateTimeSelector.select_second(DateTimeSelector.make(v, datetime, options, html_options))
+      def select_minute(v, datetime, options = nil, html_options = nil) = DateTimeSelector.select_minute(DateTimeSelector.make(v, datetime, options, html_options))
+      def select_hour(v, datetime, options = nil, html_options = nil) = DateTimeSelector.select_hour(DateTimeSelector.make(v, datetime, options, html_options))
+      def select_day(v, date, options = nil, html_options = nil) = DateTimeSelector.select_day(DateTimeSelector.make(v, date, options, html_options))
+      def select_month(v, date, options = nil, html_options = nil) = DateTimeSelector.select_month(DateTimeSelector.make(v, date, options, html_options))
+      def select_year(v, date, options = nil, html_options = nil) = DateTimeSelector.select_year(DateTimeSelector.make(v, date, options, html_options))
+
+      # Ruby: time_tag(date_or_time, *args, &block): content (or I18n.l with format:), the rest are attributes
+      def time_tag(v, date_or_time, content = nil, format: :long, **options)
+        attrs = Hash.merge(Hash.of(datetime: Kernel.to_s(DateHelper.iso8601(date_or_time))), options)
+        return content_tag(v, "time", nil, attrs) { yield } if block_given?
+        text = content || Kernel.to_s(I18n.l(date_or_time, format: format))
+        content_tag(v, "time", text, attrs)
+      end
+
+      module_function
+
+      def minutes_in_year = 525600
+      def minutes_in_quarter_year = 131400
+      def minutes_in_three_quarters_year = 394200
+
+      # (Sake only) the body of Rails' `I18n.with_options locale:, scope: do |locale| case distance_in_minutes ... end`
+      def distance_words(from_time, to_time, distance_in_minutes, distance_in_seconds, include_seconds, scope, locale)
+        if distance_in_minutes <= 1
+          unless include_seconds
+            return distance_in_minutes == 0 ? tr(:less_than_x_minutes, 1, scope, locale) : tr(:x_minutes, distance_in_minutes, scope, locale)
+          end
+          return tr(:less_than_x_seconds, 5, scope, locale) if distance_in_seconds <= 4
+          return tr(:less_than_x_seconds, 10, scope, locale) if distance_in_seconds <= 9
+          return tr(:less_than_x_seconds, 20, scope, locale) if distance_in_seconds <= 19
+          return tr(:half_a_minute, nil, scope, locale) if distance_in_seconds <= 39
+          return tr(:less_than_x_minutes, 1, scope, locale) if distance_in_seconds <= 59
+          return tr(:x_minutes, 1, scope, locale)
+        end
+        return tr(:x_minutes, distance_in_minutes, scope, locale) if distance_in_minutes < 45
+        return tr(:about_x_hours, 1, scope, locale) if distance_in_minutes < 90
+        return tr(:about_x_hours, Float.round(Integer.to_f(distance_in_minutes) / 60.0), scope, locale) if distance_in_minutes < 1440
+        return tr(:x_days, 1, scope, locale) if distance_in_minutes < 2520
+        return tr(:x_days, Float.round(Integer.to_f(distance_in_minutes) / 1440.0), scope, locale) if distance_in_minutes < 43200
+        return tr(:about_x_months, Float.round(Integer.to_f(distance_in_minutes) / 43200.0), scope, locale) if distance_in_minutes < 86400
+        return tr(:x_months, Float.round(Integer.to_f(distance_in_minutes) / 43200.0), scope, locale) if distance_in_minutes < 525600
+        from_year = Time.year(from_time)
+        from_year += 1 if Time.month(from_time) >= 3
+        to_year = Time.year(to_time)
+        to_year -= 1 if Time.month(to_time) < 3
+        leap_years = if from_year > to_year
+                       0
+                     else
+                       fyear = from_year - 1
+                       (to_year / 4 - to_year / 100 + to_year / 400) - (fyear / 4 - fyear / 100 + fyear / 400)
+                     end
+        minutes_with_offset = distance_in_minutes - leap_years * 1440
+        remainder = minutes_with_offset % minutes_in_year
+        distance_in_years = minutes_with_offset / minutes_in_year
+        if remainder < minutes_in_quarter_year
+          tr(:about_x_years, distance_in_years, scope, locale)
+        elsif remainder < minutes_in_three_quarters_year
+          tr(:over_x_years, distance_in_years, scope, locale)
+        else
+          tr(:almost_x_years, distance_in_years + 1, scope, locale)
+        end
+      end
+
+      # Ruby: locale.t(key, count: n) inside I18n.with_options locale:, scope:
+      def tr(key, count, scope, locale) = Kernel.to_s(I18n.t(key, count: count, scope: scope, locale: locale))
+
+      # private
+      def normalize_distance_of_time_argument_to_time(value)
+        case value
+        in Integer | Float then Time.at(value)
+        in Time then value
+        in Date then Date.to_time(value)
+        in ActiveSupport::TimeWithZone then ActiveSupport::TimeWithZone.to_time(value)
+        else raise ArgumentError, "#{Kernel.inspect(value)} can't be converted to a Time value"
+        end
+      end
+
+      # (Sake only) Ruby's date_or_time.iso8601
+      def iso8601(x)
+        case x
+        in Time then Time.iso8601(x)
+        in Date then Date.iso8601(x)
+        in ActiveSupport::TimeWithZone then ActiveSupport::TimeWithZone.iso8601(x)
+        else Kernel.to_s(x)
+        end
+      end
+
+      # Ruby: Tags::DateSelect.new(object_name, method, self, options, html_options).render (select_type from the class name)
+      def tags_render(v, select_type, object_name, method, options, html_options)
+        o = options[:object]
+        object = (o in ModelNaming::Model) ? o : nil
+        opts = Hash.except(options, :object)
+        value = object == nil ? nil : ModelNaming::Model.read_attribute_for_validation(object, Kernel.to_s(method))
+        datetime = Hash.key?(opts, :selected) ? opts[:selected] : (value || default_datetime(opts))
+        opts[:field_name] = Kernel.to_s(method)
+        opts[:include_position] = true
+        opts[:prefix] ||= Kernel.to_s(object_name)
+        selector = DateTimeSelector.make(v, datetime, opts, html_options)
+        html = case select_type
+               in :date then DateTimeSelector.select_date(selector)
+               in :time then DateTimeSelector.select_time(selector)
+               else DateTimeSelector.select_datetime(selector)
+               end
+        return html if object == nil
+        # Tags::Base#error_wrapping
+        Array.empty?(ModelNaming::Model.errors_for(object, Kernel.to_s(method))) ? html : DateHelper.field_error_proc(v, html, nil)
+      end
+
+      def default_datetime(options)
+        return nil if DateTimeSelector.truthy?(options[:include_blank]) || DateTimeSelector.truthy?(options[:prompt])
+        default = options[:default]
+        case default
+        in nil then Time.current
+        in Date | Time then default
+        in Hash
+          time = Time.current
+          Time.utc(int_or(default, :year, Time.year(time)), int_or(default, :month, Time.month(time)), int_or(default, :day, Time.day(time)),
+                   int_or(default, :hour, Time.hour(time)), int_or(default, :minute, int_or(default, :min, Time.min(time))),
+                   int_or(default, :second, int_or(default, :sec, Time.sec(time))))
+        else nil
+        end
+      end
+
+      def int_or(h, k, fallback)
+        x = h[k]
+        (x in Integer) ? x : fallback
+      end
+    end
+
+    class DateTimeSelector
+      attr_accessor template, datetime, options, html_options, month_names_cache, date_order_cache
+
+      def default_prefix = "date"
+
+      def position(type)
+        case type
+        in :year then 1
+        in :month then 2
+        in :day then 3
+        in :hour then 4
+        in :minute then 5
+        else 6
+        end
+      end
+
+      def ampm_translation(i)
+        h = i % 12 == 0 ? 12 : i % 12
+        "#{String.rjust(Integer.to_s(h), 2, "0")} #{i < 12 ? "AM" : "PM"}"
+      end
+
+      # Ruby: DateTimeSelector.new(datetime, options = {}, html_options = {})
+      def make(template, datetime, options = nil, html_options = nil)
+        opts = options ? Hash.dup(options) : Hash.new
+        opts[:datetime_separator] ||= " &mdash; "
+        opts[:time_separator] ||= " : "
+        DateTimeSelector.new(template, datetime, opts, html_options ? Hash.dup(html_options) : Hash.new, nil, nil)
+      end
+
+      # (Sake only) Ruby's truthiness of an option value
+      def truthy?(x) = x != nil && x != false
+      def opt?(s, key) = truthy?(@options[key])
+      def set_opt(s, key) = @options[key] ||= true
+
+      def select_datetime(s)
+        order = Array.dup(date_order(s))
+        order = Array.difference(order, Any[:hour, :minute, :second])
+        set_opt(s, :discard_year) unless Array.include?(order, :year)
+        set_opt(s, :discard_month) unless Array.include?(order, :month)
+        set_opt(s, :discard_day) if opt?(s, :discard_month) || !Array.include?(order, :day)
+        set_opt(s, :discard_minute) if opt?(s, :discard_hour)
+        set_opt(s, :discard_second) unless opt?(s, :include_seconds) && !opt?(s, :discard_minute)
+        set_day_if_discarded(s)
+        if opt?(s, :tag) && opt?(s, :ignore_date)
+          select_time(s)
+        else
+          Array.each(Any[:day, :month, :year]) { |o| Array.unshift(order, o) unless Array.include?(order, o) }
+          order = order + Any[:hour, :minute, :second] unless opt?(s, :discard_hour)
+          build_selects_from_types(s, order)
+        end
+      end
+
+      def select_date(s)
+        order = Array.dup(date_order(s))
+        @options[:discard_hour] = true
+        @options[:discard_minute] = true
+        @options[:discard_second] = true
+        set_opt(s, :discard_year) unless Array.include?(order, :year)
+        set_opt(s, :discard_month) unless Array.include?(order, :month)
+        set_opt(s, :discard_day) if opt?(s, :discard_month) || !Array.include?(order, :day)
+        set_day_if_discarded(s)
+        Array.each(Any[:day, :month, :year]) { |o| Array.unshift(order, o) unless Array.include?(order, o) }
+        build_selects_from_types(s, order)
+      end
+
+      def select_time(s)
+        order = Symbol[]
+        @options[:discard_month] = true
+        @options[:discard_year] = true
+        @options[:discard_day] = true
+        set_opt(s, :discard_second) unless opt?(s, :include_seconds)
+        Array.concat(order, Symbol[:year, :month, :day]) unless opt?(s, :ignore_date)
+        Array.concat(order, Symbol[:hour, :minute])
+        Array.push(order, :second) if opt?(s, :include_seconds)
+        build_selects_from_types(s, order)
+      end
+
+      def select_second(s)
+        if opt?(s, :use_hidden) || opt?(s, :discard_second)
+          opt?(s, :include_seconds) ? build_hidden(s, :second, sec(s)) : nil
+        else
+          build_options_and_select(s, :second, sec(s))
+        end
+      end
+
+      def select_minute(s)
+        if opt?(s, :use_hidden) || opt?(s, :discard_minute)
+          build_hidden(s, :minute, min(s))
+        else
+          step = @options[:minute_step]
+          build_options_and_select(s, :minute, min(s), Hash.of(step: (step in Integer) ? step : nil))
+        end
+      end
+
+      def select_hour(s)
+        if opt?(s, :use_hidden) || opt?(s, :discard_hour)
+          build_hidden(s, :hour, hour(s))
+        else
+          start_hour = @options[:start_hour]
+          end_hour = @options[:end_hour]
+          build_options_and_select(s, :hour, hour(s), Hash.of(ampm: opt?(s, :ampm), start: (start_hour in Integer) ? start_hour : 0, end: (end_hour in Integer) ? end_hour : 23))
+        end
+      end
+
+      def select_day(s)
+        if opt?(s, :use_hidden) || opt?(s, :discard_day)
+          build_hidden(s, :day, day(s) || 1)
+        else
+          build_select(s, :day, build_day_options(s, day(s)))
+        end
+      end
+
+      def select_month(s)
+        if opt?(s, :use_hidden) || opt?(s, :discard_month)
+          build_hidden(s, :month, month(s) || 1)
+        else
+          month_options = String[]
+          m = month(s)
+          Integer.upto(1, 12) do |month_number|
+            options = Hash.of(value: month_number)
+            options[:selected] = "selected" if m == month_number
+            Array.push(month_options, Object.html_text(TagHelper.content_tag(@template, "option", month_name(s, month_number), options)) + "\n")
+          end
+          build_select(s, :month, Array.join(month_options))
+        end
+      end
+
+      def select_year(s)
+        y = year(s)
+        if y == nil || @datetime == 0
+          val = 1
+          middle_year = Date.year(Date.today)
+        else
+          val = y
+          middle_year = y
+        end
+        if opt?(s, :use_hidden) || opt?(s, :discard_year)
+          build_hidden(s, :year, y == nil || @datetime == 0 ? "1" : val)
+        else
+          start_year = @options[:start_year]
+          end_year = @options[:end_year]
+          start = (start_year in Integer) ? start_year : middle_year - 5
+          stop = (end_year in Integer) ? end_year : middle_year + 5
+          step = start < stop ? 1 : -1
+          max = @options[:max_years_allowed]
+          max_years_allowed = (max in Integer) ? max : 1000
+          if Integer.abs(stop - start) > max_years_allowed
+            raise ArgumentError, "There are too many years options to be built. Are you sure you haven't mistyped something? You can provide the :max_years_allowed parameter."
+          end
+          build_select(s, :year, build_year_options(s, val, start, stop, step))
+        end
+      end
+
+      # private: Ruby's define_method over %w(sec min hour day month year): `@datetime.send(method)`
+      def part(s, name)
+        d = @datetime
+        case d
+        in Hash
+          x = d[name]
+          (x in Integer) ? x : nil
+        in Integer then d
+        in nil then nil
+        in Time
+          case name
+          in :sec then Time.sec(d)
+          in :min then Time.min(d)
+          in :hour then Time.hour(d)
+          in :day then Time.day(d)
+          in :month then Time.month(d)
+          else Time.year(d)
+          end
+        in ActiveSupport::TimeWithZone
+          case name
+          in :sec then ActiveSupport::TimeWithZone.sec(d)
+          in :min then ActiveSupport::TimeWithZone.min(d)
+          in :hour then ActiveSupport::TimeWithZone.hour(d)
+          in :day then ActiveSupport::TimeWithZone.day(d)
+          in :month then ActiveSupport::TimeWithZone.month(d)
+          else ActiveSupport::TimeWithZone.year(d)
+          end
+        in Date
+          case name
+          in :day then Date.day(d)
+          in :month then Date.month(d)
+          in :year then Date.year(d)
+          else raise ArgumentError, "undefined method '#{name}' for an instance of Date"
+          end
+        else nil
+        end
+      end
+
+      def sec(s) = part(s, :sec)
+      def min(s) = part(s, :min)
+      def hour(s) = part(s, :hour)
+      def day(s) = part(s, :day)
+      def month(s) = part(s, :month)
+      def year(s) = part(s, :year)
+
+      def prompt_text(s, prompt, type)
+        (prompt in String) ? prompt : Kernel.to_s(I18n.translate(String.to_sym("datetime.prompts.#{type}"), locale: locale(s)))
+      end
+
+      def locale(s)
+        l = @options[:locale]
+        (l in Symbol) ? l : nil
+      end
+
+      def set_day_if_discarded(s)
+        d = @datetime
+        return nil unless d && opt?(s, :discard_day)
+        @datetime = case d
+                    in Time then Time.change(d, Hash.of(day: 1))
+                    in Date then Date.change(d, Hash.of(day: 1))
+                    in ActiveSupport::TimeWithZone then ActiveSupport::TimeWithZone.change(d, Hash.of(day: 1))
+                    in Hash
+                      h = Hash.dup(d)
+                      h[:day] = 1
+                      h
+                    else d
+                    end
+      end
+
+      def month_names(s)
+        cached = @month_names_cache
+        return cached if cached
+        given = @options[:use_month_names]
+        names = Any[]
+        if given in Array
+          Array.each(given) { |n| Array.push(names, n) }
+        else
+          Array.each(translated_month_names(s)) { |n| Array.push(names, n) }
+        end
+        Array.unshift(names, nil) if Array.size(names) < 13
+        @month_names_cache = names
+        names
+      end
+
+      def translated_month_names(s)
+        key = opt?(s, :use_short_month) ? :"date.abbr_month_names" : :"date.month_names"
+        names = I18n.translate(key, locale: locale(s))
+        (names in Array) ? names : Any[]
+      end
+
+      def day_name(s, number) = opt?(s, :use_two_digit_numbers) ? format("%02d", number) : Integer.to_s(number)
+
+      def month_name(s, number)
+        format_string = @options[:month_format_string]
+        if opt?(s, :use_month_numbers)
+          Integer.to_s(number)
+        elsif opt?(s, :use_two_digit_numbers)
+          format("%02d", number)
+        elsif opt?(s, :add_month_numbers)
+          "#{number} - #{Kernel.to_s(Array.fetch(month_names(s), number, nil))}"
+        elsif format_string in String
+          # Ruby: format_string % { number: number, name: month_names[number] }
+          name = Kernel.to_s(Array.fetch(month_names(s), number, nil))
+          String.gsub(format_string, /%\{(number|name)\}/) { |m| m == "%{number}" ? Integer.to_s(number) : name }
+        else
+          Kernel.to_s(Array.fetch(month_names(s), number, nil))
+        end
+      end
+
+      def date_order(s)
+        cached = @date_order_cache
+        return cached if cached
+        given = @options[:order]
+        order = Symbol[]
+        if given in Array
+          Array.each(given) { |o| Array.push(order, String.to_sym(Kernel.to_s(o))) }
+        else
+          Array.concat(order, translated_date_order(s))
+        end
+        @date_order_cache = order
+        order
+      end
+
+      def translated_date_order(s)
+        order = I18n.translate(:"date.order", locale: locale(s), default: Any[])
+        date_order = Symbol[]
+        Array.each(order) { |o| Array.push(date_order, String.to_sym(Kernel.to_s(o))) } if order in Array
+        forbidden_elements = Array.difference(date_order, Symbol[:year, :month, :day])
+        raise RuntimeError, "#{locale(s)}.date.order only accepts :year, :month and :day" if Array.any?(forbidden_elements) { true }
+        date_order
+      end
+
+      def build_options_and_select(s, type, selected, options = nil) = build_select(s, type, build_options(s, selected, options || Hash.new))
+
+      def build_options(s, selected, options)
+        start_v = options[:start]
+        stop_v = options[:end]
+        step_v = options[:step]
+        start = (start_v in Integer) ? start_v : 0
+        stop = (stop_v in Integer) ? stop_v : 59
+        step = (step_v in Integer) ? step_v : 1
+        ampm = truthy?(options[:ampm])
+        select_options = String[]
+        Integer.step(start, stop, step) do |i|
+          value = format("%02d", i)
+          tag_options = Hash.of(value: value)
+          tag_options[:selected] = "selected" if selected == i
+          text = ampm ? ampm_translation(i) : value
+          Array.push(select_options, Object.html_text(TagHelper.content_tag(@template, "option", text, tag_options)))
+        end
+        String.html_safe(Array.join(select_options, "\n") + "\n")
+      end
+
+      def build_day_options(s, selected)
+        select_options = String[]
+        Range.each(1..31) do |value|
+          tag_options = Hash.of(value: value)
+          tag_options[:selected] = "selected" if selected == value
+          Array.push(select_options, Object.html_text(TagHelper.content_tag(@template, "option", day_name(s, value), tag_options)))
+        end
+        String.html_safe(Array.join(select_options, "\n") + "\n")
+      end
+
+      def build_year_options(s, selected, start, stop, step)
+        select_options = String[]
+        Integer.step(start, stop, step) do |value|
+          tag_options = Hash.of(value: value)
+          tag_options[:selected] = "selected" if selected == value
+          Array.push(select_options, Object.html_text(TagHelper.content_tag(@template, "option", value, tag_options)))
+        end
+        String.html_safe(Array.join(select_options, "\n") + "\n")
+      end
+
+      def build_select(s, type, select_options_as_html)
+        select_options = Hash.merge(Hash.of(id: input_id_from_type(s, type), name: input_name_from_type(s, type)), @html_options)
+        select_options[:disabled] = "disabled" if opt?(s, :disabled)
+        with_css = @options[:with_css_classes]
+        select_options[:class] = css_class_attribute(s, type, select_options[:class], with_css) if truthy?(with_css)
+        select_html = "\n"
+        select_html += Object.html_text(TagHelper.content_tag(@template, "option", "", Hash.of(value: "", label: " "))) + "\n" if opt?(s, :include_blank)
+        select_html += Object.html_text(prompt_option_tag(s, type, @options[:prompt])) + "\n" if opt?(s, :prompt)
+        select_html += Object.html_text(select_options_as_html)
+        String.html_safe(Object.html_text(TagHelper.content_tag(@template, "select", String.html_safe(select_html), select_options)) + "\n")
+      end
+
+      def css_class_attribute(s, type, html_options_class, options)
+        css_class = case options
+                    in Hash then options[type]
+                    else type
+                    end
+        Array.join(Array.compact(Any[html_options_class, css_class]), " ")
+      end
+
+      def prompt_option_tag(s, type, options)
+        prompt = case options
+                 in Hash
+                   x = options[type]
+                   x == nil ? false : x
+                 in String then options
+                 else Kernel.to_s(I18n.translate(String.to_sym("datetime.prompts.#{type}"), locale: locale(s)))
+                 end
+        truthy?(prompt) ? TagHelper.content_tag(@template, "option", prompt_text(s, prompt, type), Hash.of(value: "")) : String.html_safe("")
+      end
+
+      def build_hidden(s, type, value)
+        select_options = Hash.of(type: "hidden", id: input_id_from_type(s, type), name: input_name_from_type(s, type), value: value, autocomplete: "off")
+        select_options[:disabled] = @html_options[:disabled] if Hash.key?(@html_options, :disabled)
+        select_options[:disabled] = "disabled" if opt?(s, :disabled)
+        String.html_safe(Object.html_text(TagHelper.tag(@template, :input, select_options)) + "\n")
+      end
+
+      def input_name_from_type(s, type)
+        p = @options[:prefix]
+        prefix = (p in String) ? p : default_prefix
+        prefix += "[#{Kernel.to_s(@options[:index])}]" if Hash.key?(@options, :index)
+        fname = @options[:field_name]
+        field_name = (fname in String) ? fname : Symbol.to_s(type)
+        field_name += "(#{position(type)}i)" if opt?(s, :include_position)
+        opt?(s, :discard_type) ? prefix : "#{prefix}[#{field_name}]"
+      end
+
+      def input_id_from_type(s, type)
+        id = String.gsub(input_name_from_type(s, type), /([\[(])|(\]\[)/, "_").String.gsub(/[\])]/, "")
+        ns = @options[:namespace]
+        id = "#{ns}_#{id}" if ns in String
+        id
+      end
+
+      def build_selects_from_types(s, order)
+        select = ""
+        first_visible = Array.find(order) { |type| !opt?(s, String.to_sym("discard_#{type}")) }
+        Array.reverse_each(order) do |type|
+          sep = type == first_visible ? nil : separator(s, type)
+          html = case type
+                 in :year then select_year(s)
+                 in :month then select_month(s)
+                 in :day then select_day(s)
+                 in :hour then select_hour(s)
+                 in :minute then select_minute(s)
+                 else select_second(s)
+                 end
+          select = Kernel.to_s(sep) + Object.html_text(html) + select
+        end
+        String.html_safe(select)
+      end
+
+      def separator(s, type)
+        return "" if opt?(s, :use_hidden)
+        case type
+        in :year | :month | :day then opt?(s, String.to_sym("discard_#{type}")) ? "" : Kernel.to_s(@options[:date_separator])
+        in :hour then opt?(s, :discard_year) && opt?(s, :discard_day) ? "" : Kernel.to_s(@options[:datetime_separator])
+        else opt?(s, String.to_sym("discard_#{type}")) ? "" : Kernel.to_s(@options[:time_separator])
+        end
+      end
+    end
+  end
+end

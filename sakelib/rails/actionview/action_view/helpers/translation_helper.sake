@@ -1,0 +1,162 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/translation_helper.rb, with activesupport-8.1.3/lib/active_support/html_safe_translation.rb (partial: no I18n exception_handler call, no raise_on_missing_translations setter)
+#
+# A mixin of the view: `t(view, ".title")` scopes the key by the template's virtual_path as Rails does. Rails
+# passes `**options` to I18n.translate; sakelib's I18n takes locale:, scope:, count:, default: and the
+# interpolation values, so the options Hash is taken apart here. Rails' MISSING_TRANSLATION sentinel (a default
+# I18n returns when nothing is found) is a rescue of I18n::MissingTranslationData from the strict lookup.
+
+require "tag_helper"
+require "../locale"
+require "../../../activesupport/active_support/core_ext/string/inflections"
+
+module ActionView
+  module Helpers
+    module TranslationHelper
+      include TagHelper
+
+      def virtual_path(v) = raise(NotImplementedError)
+
+      # Ruby: translate(key, **options) { |translation, resolved_key| }
+      def translate(v, key, **options)
+        if key in Array
+          return Array.map(key) { |k| translate(v, k, **options) }
+        end
+        key = (key in Symbol) || key == nil ? key : Kernel.to_s(key)
+        opts = Hash.except(options, :default)
+        alternatives = Any[]
+        has_default = Hash.key?(options, :default)
+        if has_default
+          d = options[:default]
+          if d in Array
+            Array.each(Array.compact(d)) { |x| Array.push(alternatives, x) }
+          else
+            Array.push(alternatives, d)
+          end
+        end
+        raise_opt = opts[:raise]
+        raise_opt = true if raise_opt == nil && TranslationHelper.raise_on_missing_translations
+        translation = nil
+        found = false
+        first_key = nil
+        while key || !Array.empty?(alternatives)
+          key = scope_key_by_partial(v, key)
+          if Array.empty?(alternatives) && raise_opt != nil
+            # Rails' NO_DEFAULT: I18n handles the missing translation (raises, or gives its message)
+            translation = TranslationHelper.html_safe_translate(key, opts, raise_opt != false)
+            found = true
+            break
+          end
+          translated = begin
+            TranslationHelper.html_safe_translate(key, opts, true)
+          rescue I18n::MissingTranslationData
+            :__missing_translation__
+          end
+          if translated != :__missing_translation__
+            translation = translated
+            found = true
+            break
+          end
+          first_alternative = Array.first(alternatives)
+          if !Array.empty?(alternatives) && !(first_alternative in Symbol)
+            translation = first_alternative == nil ? nil : TranslationHelper.translate_defaults(alternatives, opts)
+            found = true
+            break
+          end
+          first_key ||= key
+          key = Array.shift(alternatives)
+        end
+        if !found && key == nil && first_key != nil
+          translation = missing_translation(v, first_key, opts)
+          key = first_key
+        end
+        block_given? ? yield(translation, key) : translation
+      end
+
+      def t(v, key, **options)
+        return translate(v, key, **options) { |translation, k| yield(translation, k) } if block_given?
+        translate(v, key, **options)
+      end
+
+      def localize(v, object, locale: nil, format: :default) = I18n.localize(object, locale: locale, format: format)
+      def l(v, object, locale: nil, format: :default) = I18n.localize(object, locale: locale, format: format)
+
+      # private
+      def scope_key_by_partial(v, key)
+        return key unless (key in String) && String.start_with?(key, ".")
+        path = virtual_path(v)
+        raise "Cannot use t(#{Kernel.inspect(key)}) shortcut because path is not available" unless path
+        "#{String.gsub(path, %r{/_?}, ".")}#{key}"
+      end
+
+      def missing_translation(v, key, options)
+        locale = TranslationHelper.option_locale(options) || I18n.locale
+        keys = Any[locale, *I18n.normalize_keys(key, options[:scope], ".")]
+        title = "translation missing: #{Array.join(keys, ".")}"
+        Hash.each(options) do |name, value|
+          title += ", #{name}: #{Object.html_text(ActiveSupport::CoreExt::ERBUtil.html_escape(value))}" unless name == :scope
+        end
+        if TranslationHelper.debug_missing_translation
+          content_tag(v, "span", String.titleize(Kernel.to_s(Array.last(keys))), class: "translation_missing", title: title)
+        else
+          title
+        end
+      end
+
+      module_function
+
+      # Ruby: singleton_class.attr_accessor :raise_on_missing_translations; mattr_accessor :debug_missing_translation
+      def raise_on_missing_translations = false
+      def debug_missing_translation = true
+
+      def option_locale(options)
+        l = options[:locale]
+        (l in Symbol) ? l : nil
+      end
+
+      # Ruby's I18n options that are not interpolation values (I18n::RESERVED_KEYS, those sakelib's I18n reads)
+      def reserved_keys = Set.of(:scope, :default, :separator, :resolve, :object, :fallback, :format, :cascade, :throw, :raise, :deep_interpolation, :locale, :count)
+
+      def interpolation_values(options) = Hash.reject(options) { |k, _| Set.include?(reserved_keys, k) }
+
+      # I18n.translate(key, **options): strict raises I18n::MissingTranslationData, else gives I18n's message
+      def i18n_translate(key, options, strict)
+        count = options[:count]
+        c = (count in Integer | Float) ? count : nil
+        sep = options[:separator]
+        I18n.translate_with(key, option_locale(options), options[:scope], nil, c, (sep in String) ? sep : ".", interpolation_values(options), strict)
+      end
+
+      # Ruby: I18n.translate(nil, **options, default: alternatives)
+      def translate_defaults(alternatives, options)
+        l = option_locale(options) || I18n.locale
+        count = options[:count]
+        c = (count in Integer | Float) ? count : nil
+        entry = I18n.resolve_default(l, alternatives, options[:scope], c, ".", interpolation_values(options))
+        entry == nil ? nil : I18n.finish(l, entry, c, interpolation_values(options))
+      end
+
+      # ActiveSupport::HtmlSafeTranslation.translate
+      def html_safe_translate(key, options, strict)
+        return i18n_translate(key, options, strict) unless html_safe_translation_key?(key)
+        html_safe_options = Hash.dup(options)
+        Hash.each(options) do |name, value|
+          unless Set.include?(reserved_keys, name) && name != :count || (name == :count && (value in Integer | Float))
+            html_safe_options[name] = Object.html_text(ActiveSupport::CoreExt::ERBUtil.html_escape(Kernel.to_s(value)))
+          end
+        end
+        translation = i18n_translate(key, html_safe_options, strict)
+        html_safe_translation(translation)
+      end
+
+      def html_safe_translation_key?(key) = String.match?(Kernel.to_s(key), /(?:_|\b)html\z/)
+
+      def html_safe_translation(translation)
+        case translation
+        in String then String.html_safe(translation)
+        in Array then Array.map(translation) { |element| (element in String) ? String.html_safe(element) : element }
+        else translation
+        end
+      end
+    end
+  end
+end

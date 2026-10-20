@@ -1,0 +1,127 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/number_helper.rb (partial: no locale: (ActiveSupport's port is en only))
+#
+# Rails' helpers symbolize the options Hash, html-escape the format strings and delegate with public_send; here
+# each helper takes ActiveSupport::NumberHelper's keywords (with its en defaults), escapes the same ones, and calls
+# the ActiveSupport function by name (Rails' `public_send(method, number, options)`). `raise: true` is a keyword.
+
+require "../../../activesupport/active_support/number_helper"
+require "../../../activesupport/active_support/core_ext/string/output_safety"
+
+module ActionView
+  module Helpers
+    module NumberHelper
+      class InvalidNumberError < StandardError
+        attr_accessor number
+      end
+
+      def number_to_phone(v, number, area_code: false, delimiter: "-", extension: nil, country_code: nil, pattern: nil, raise: false)
+        return nil unless number
+        NumberHelper.parse_float(number, true) if raise
+        ActiveSupport::CoreExt::ERBUtil.html_escape(ActiveSupport::NumberHelper.number_to_phone(number, area_code: area_code, delimiter: delimiter,
+                                                                                           extension: extension, country_code: country_code, pattern: pattern))
+      end
+
+      def number_to_currency(v, number, unit: "$", format: "%u%n", negative_format: nil, precision: 2, significant: false,
+                             strip_insignificant_zeros: false, separator: ".", delimiter: ",", round_mode: :default, raise: false)
+        return nil unless number
+        NumberHelper.wrap_with_output_safety_handling(number, raise) do
+          ActiveSupport::NumberHelper.number_to_currency(number, unit: NumberHelper.escape_unit(unit), format: NumberHelper.escape(format),
+                                                         negative_format: negative_format ? NumberHelper.escape(negative_format) : nil,
+                                                         precision: precision, significant: significant,
+                                                         strip_insignificant_zeros: strip_insignificant_zeros,
+                                                         separator: NumberHelper.escape(separator), delimiter: NumberHelper.escape(delimiter),
+                                                         round_mode: round_mode)
+        end
+      end
+
+      def number_to_percentage(v, number, format: "%n%", precision: 3, significant: false, strip_insignificant_zeros: false,
+                               separator: ".", delimiter: "", round_mode: :default, raise: false)
+        return nil unless number
+        NumberHelper.wrap_with_output_safety_handling(number, raise) do
+          ActiveSupport::NumberHelper.number_to_percentage(number, format: NumberHelper.escape(format), precision: precision,
+                                                           significant: significant, strip_insignificant_zeros: strip_insignificant_zeros,
+                                                           separator: NumberHelper.escape(separator), delimiter: NumberHelper.escape(delimiter),
+                                                           round_mode: round_mode)
+        end
+      end
+
+      # Ruby: delegate_number_helper_method(:number_to_delimited, ...)
+      def number_with_delimiter(v, number, delimiter: ",", separator: ".", raise: false)
+        return nil unless number
+        NumberHelper.wrap_with_output_safety_handling(number, raise) do
+          ActiveSupport::NumberHelper.number_to_delimited(number, delimiter: NumberHelper.escape(delimiter), separator: NumberHelper.escape(separator))
+        end
+      end
+
+      # Ruby: delegate_number_helper_method(:number_to_rounded, ...)
+      def number_with_precision(v, number, precision: 3, significant: false, strip_insignificant_zeros: false,
+                                separator: ".", delimiter: "", round_mode: :default, raise: false)
+        return nil unless number
+        NumberHelper.wrap_with_output_safety_handling(number, raise) do
+          ActiveSupport::NumberHelper.number_to_rounded(number, precision: precision, significant: significant,
+                                                        strip_insignificant_zeros: strip_insignificant_zeros,
+                                                        separator: NumberHelper.escape(separator), delimiter: NumberHelper.escape(delimiter),
+                                                        round_mode: round_mode)
+        end
+      end
+
+      def number_to_human_size(v, number, precision: 3, significant: true, strip_insignificant_zeros: true, separator: ".",
+                               delimiter: "", round_mode: :default, format: "%n %u", raise: false)
+        return nil unless number
+        NumberHelper.wrap_with_output_safety_handling(number, raise) do
+          ActiveSupport::NumberHelper.number_to_human_size(number, precision: precision, significant: significant,
+                                                           strip_insignificant_zeros: strip_insignificant_zeros,
+                                                           separator: NumberHelper.escape(separator), delimiter: NumberHelper.escape(delimiter),
+                                                           round_mode: round_mode, format: NumberHelper.escape(format))
+        end
+      end
+
+      def number_to_human(v, number, precision: 3, significant: true, strip_insignificant_zeros: true, separator: ".",
+                          delimiter: "", round_mode: :default, format: "%n %u", units: nil, raise: false)
+        return nil unless number
+        NumberHelper.wrap_with_output_safety_handling(number, raise) do
+          ActiveSupport::NumberHelper.number_to_human(number, precision: precision, significant: significant,
+                                                      strip_insignificant_zeros: strip_insignificant_zeros,
+                                                      separator: NumberHelper.escape(separator), delimiter: NumberHelper.escape(delimiter),
+                                                      round_mode: round_mode, format: NumberHelper.escape(format),
+                                                      units: units ? NumberHelper.escape_units(units) : nil)
+        end
+      end
+
+      module_function
+
+      # Ruby: escape_unsafe_options: ERB::Util.html_escape(options[:format]) (a String here, for ActiveSupport)
+      def escape(s) = ActiveSupport::CoreExt::ERBUtil.unwrapped_html_escape(s)
+
+      # options[:unit] is escaped unless it is html_safe?
+      def escape_unit(unit) = Object.html_safe?(unit) ? Object.html_text(unit) : escape(unit)
+
+      def escape_units(units) = Hash.transform_values(units) { |u| escape(u) }
+
+      def wrap_with_output_safety_handling(number, raise_on_invalid)
+        valid_float = valid_float?(number)
+        raise InvalidNumberError.new("InvalidNumberError", number) if raise_on_invalid && !valid_float
+        formatted_number = yield
+        if valid_float || Object.html_safe?(number)
+          (formatted_number in String) ? String.html_safe(formatted_number) : formatted_number
+        else
+          formatted_number
+        end
+      end
+
+      def valid_float?(number) = parse_float(number, false) != nil
+
+      # Ruby: Float(number, exception: false)
+      def parse_float(number, raise_error)
+        result = case number
+                 in Integer | Float then Arithmetic.to_f(number)
+                 in Rational then Rational.to_f(number)
+                 in String then (Float(String.strip(number)) rescue nil)
+                 else nil
+                 end
+        raise InvalidNumberError.new("InvalidNumberError", number) if result == nil && raise_error
+        result
+      end
+    end
+  end
+end

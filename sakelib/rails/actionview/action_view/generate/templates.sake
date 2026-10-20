@@ -1,0 +1,240 @@
+# (Sake only) The view class with its compiled templates: what Rails builds at run time with
+# ActionView::Base.with_empty_template_cache, Template#compile (module_eval) and public_send.
+#
+#   ActionView::Generate.view_class(name, view_paths, records:, includes:, assigns:) => Sake source:
+#   class BlogView < ActionView::Base            # Rails: the view class (a subclass per controller or an empty cache)
+#     attr_accessor post, posts                  # the assigns (Rails copies the controller's instance variables)
+#     include BlogUrlHelpers                     # routes.url_helpers, app helpers
+#     def _app_views_posts_index_html_erb(view, local_assigns, output_buffer) ...   # Template#compile
+#     def _compiled(view, method_name, buffer)   # Base#_run's public_send for templates without locals
+#     def _render_..._1(view, post:) ...         # a template's `render "form", post: @post`
+#     def _render_record(view, template, buffer, object)   # `render @post`: the partial of the record's type
+#
+# Every template under the view paths is compiled once; a template without strict locals is compiled once per set
+# of locals its render calls pass (Rails builds a Template per locals set, UnboundTemplate#bind_locals). Records are
+# the types `render record` may get, with Rails' partial path ("posts/post" for Post).
+
+require "../template/handlers/erb"
+require "../template/resolver"
+require "../lookup_context"
+require "../context"
+require "../../../activesupport/active_support/inflector"
+
+module ActionView
+  module Generate
+    # One template file as compiled: its identifier, virtual path, strict signature and body
+    class Compiled
+      attr_reader identifier, virtual_path, partial, strict, code, calls, yields, method_base, variable
+    end
+
+    module_function
+
+    def method_base(identifier) = "_" + String.gsub(identifier, /[^a-z_]/, "_")
+
+    def compile_file(view_path, file)
+      rel = String.[](file, (String.size(view_path) + 1)..) || ""
+      parsed = Resolver::PathParser.parse(rel)
+      details = Resolver::PathParser::ParsedPath.details(parsed)
+      return nil unless TemplateDetails.handler(details) == :erb
+      tp = Resolver::PathParser::ParsedPath.path(parsed)
+      virtual = TemplatePath.virtual(tp)
+      identifier = File.join(view_path, rel)
+      source = File.read(file)
+      sm = String.match(source, Template.strict_locals_regex)
+      strict = sm ? String.rstrip(sm[1] || "") : nil
+      source = String.sub(source, Template.strict_locals_regex, "") if sm
+      base = method_base(identifier)
+      e = Template::Handlers::ERB.call(identifier, source, TemplateDetails.format(details), "#{base}_render")
+      code = Template::Handlers::ERB::Erubi.code(e)
+      Compiled.new(identifier, virtual, TemplatePath.partial(tp), strict, code, Template::Handlers::ERB::Erubi.calls(e),
+                   Template::Handlers::ERB::Erubi.yields?(e), base, String.to_sym(TemplatePath.name(tp)))
+    end
+
+    # Ruby's strict locals "post:, title: nil" => the names, and which have no default
+    def strict_keys(sig)
+      return String[] if String.empty?(String.strip(sig))
+      Array.map(Template::Handlers::ERB.split_args(sig)) { |p| String.delete_suffix(String.strip(String.split(p, ":")[0] || ""), "*") }
+    end
+
+    def strict_required(sig) = Array.filter_map(Template::Handlers::ERB.split_args(sig)) { |p| String.match?(String.strip(p), /\A[a-z_]\w*:\z/) ? String.delete_suffix(String.strip(p), ":") : nil }
+
+    # The function name of a template compiled for these locals (Template#method_name)
+    def variant_name(c, keys)
+      return Compiled.method_base(c) if Compiled.strict(c) || Array.empty?(keys)
+      "#{Compiled.method_base(c)}__#{Array.join(Array.sort(keys), "_")}"
+    end
+
+    # Can this template be called with these locals? (a strict one: required ⊆ keys ⊆ declared)
+    def accepts?(c, keys)
+      sig = Compiled.strict(c)
+      return true unless sig
+      declared = strict_keys(sig)
+      Array.all?(strict_required(sig)) { |k| Array.include?(keys, k) } && Array.all?(keys) { |k| Array.include?(declared, k) }
+    end
+
+    # the keyword arguments a template's function takes for these locals: strict drops the undeclared implicit ones
+    def call_keys(c, keys)
+      sig = Compiled.strict(c)
+      return keys unless sig
+      declared = strict_keys(sig)
+      Array.select(keys) { |k| Array.include?(declared, k) }
+    end
+
+    def call_of(c, keys, values)
+      ks = call_keys(c, keys)
+      la = Array.empty?(ks) ? "Hash.new" : "Hash.of(#{Array.join(Array.map(ks) { |k| "#{k}: #{values[k] || k}" }, ", ")})"
+      kw = Array.map(ks) { |k| ", #{k}: #{values[k] || k}" }
+      "#{variant_name(c, keys)}(view, #{la}, buffer#{Array.join(kw, "")})"
+    end
+
+    def partial_candidates(all, name)
+      want = String.include?(name, "/") ? TemplatePath.virtual(TemplatePath.parse(String.sub(name, /([^\/]+)\z/) { |m| "_#{m}" })) : nil
+      base = "_#{File.basename(name)}"
+      Array.select(all) do |c|
+        v = Compiled.virtual_path(c)
+        Compiled.partial(c) && (want ? (v == want || String.end_with?(v, "/#{want}")) : File.basename(v) == base)
+      end
+    end
+
+    def dispatch(lines, indent, candidates, keys, values)
+      ind = " " * indent
+      ok = Array.select(candidates) { |c| accepts?(c, keys) }
+      if Array.empty?(ok)
+        Array.push(lines, "#{ind}ActionView::Template.not_compiled(template)")
+        return nil
+      end
+      Array.push(lines, "#{ind}case ActionView::Template.method_name(template)")
+      Array.each(ok) { |c| Array.push(lines, "#{ind}in #{Kernel.inspect(variant_name(c, keys))} then #{call_of(c, keys, values)}") }
+      Array.push(lines, "#{ind}else ActionView::Template.not_compiled(template)", "#{ind}end")
+      nil
+    end
+
+    def record_partial(record) = "#{ActiveSupport::Inflector.pluralize(ActiveSupport::Inflector.underscore(record))}/#{ActiveSupport::Inflector.underscore(record)}"
+
+    def view_class(name, view_paths, records: String[], includes: String[], assigns: String[])
+      all = Any[]
+      Array.each(view_paths) do |vp|
+        Array.each(Array.sort(Dir.glob(File.join(vp, "**", "*")))) do |f|
+          next if File.directory?(f)
+          c = compile_file(vp, f)
+          Array.push(all, c) if c
+        end
+      end
+      variants = Hash.new    # function name => [compiled, keys]
+      out = String["# Generated by ActionView::Generate.view_class: #{Array.size(all)} templates under #{Array.join(view_paths, ", ")}",
+                   "class #{name} < ActionView::Base"]
+      Array.push(out, "  attr_accessor #{Array.join(assigns, ", ")}") unless Array.empty?(assigns)
+      Array.each(includes) { |m| Array.push(out, "  include #{m}") }
+      Array.push(out, "  FormBuilder = ActionView::Helpers::FormBuilder",
+                 "  def default_view_paths(v) = String[#{Array.join(Array.map(view_paths) { |p| Kernel.inspect(p) }, ", ")}]")
+      fns = String[]
+      # templates callable without locals (actions, layouts, strict ones without required locals)
+      Array.each(all) do |c|
+        sig = Compiled.strict(c)
+        if (sig && Array.empty?(strict_required(sig))) || (!sig && !Compiled.partial(c))
+          variants[variant_name(c, String[])] = [c, String[]]
+        end
+      end
+      need_records = false
+      Array.each(all) do |c|
+        Array.each(Compiled.calls(c)) do |rc|
+          kind = Template::Handlers::ERB::RenderCall.kind(rc)
+          pname = Template::Handlers::ERB::RenderCall.name(rc)
+          keys = Template::Handlers::ERB::RenderCall.keys(rc)
+          func = Template::Handlers::ERB::RenderCall.func(rc)
+          lines = String["# sake-origin: #{Template::Handlers::ERB::RenderCall.origin(rc)}"]
+          kw_params = Array.map(keys) { |k| "#{k}:" }
+          values = Hash.new
+          sym_keys = "Symbol[#{Array.join(Array.map(keys) { |k| ":#{k}" }, ", ")}]"
+          case kind
+          in :partial
+            pn = pname || ""
+            Array.push(lines, "def #{func}(view#{Array.join(Array.map(kw_params) { |k| ", #{k}" }, "")})",
+                       "  ActionView::PartialRenderer.render(view, #{Kernel.inspect(pn)}, #{sym_keys}) do |template, buffer|")
+            cands = partial_candidates(all, pn)
+            Array.each(cands) { |cc| variants[variant_name(cc, keys)] = [cc, keys] if accepts?(cc, keys) }
+            dispatch(lines, 4, cands, keys, values)
+            Array.push(lines, "  end", "end")
+          in :collection | :object
+            pn = pname || ""
+            as = Template::Handlers::ERB::RenderCall.as(rc)
+            var = as || String.delete_prefix(File.basename(pn), "_")
+            all_keys = kind == :collection ? Array.uniq(keys + String[var, "#{var}_counter", "#{var}_iteration"]) : Array.uniq(keys + String[var])
+            values[var] = "object"
+            values["#{var}_counter"] = "counter"
+            values["#{var}_iteration"] = "iteration"
+            spacer = Template::Handlers::ERB::RenderCall.spacer(rc)
+            # the spacer renders without locals (through _compiled)
+            Array.each(partial_candidates(all, spacer || "")) { |cc| variants[variant_name(cc, String[])] = [cc, String[]] if accepts?(cc, String[]) } if spacer
+            as_kw = as ? ", as: :#{as}" : ""
+            if kind == :collection
+              Array.push(lines, "def #{func}(view, collection#{Array.join(Array.map(kw_params) { |k| ", #{k}" }, "")})",
+                         "  ActionView::CollectionRenderer.render_collection_with_partial(view, collection, #{Kernel.inspect(pn)}, #{sym_keys}#{as_kw}#{spacer ? ", spacer_template: #{Kernel.inspect(spacer)}" : ""}) do |template, buffer, object, counter, iteration|")
+            else
+              Array.push(lines, "def #{func}(view, object_value#{Array.join(Array.map(kw_params) { |k| ", #{k}" }, "")})",
+                         "  ActionView::ObjectRenderer.render_object_with_partial(view, object_value, #{Kernel.inspect(pn)}, #{sym_keys}#{as_kw}) do |template, buffer, object|")
+            end
+            cands = partial_candidates(all, pn)
+            Array.each(cands) { |cc| variants[variant_name(cc, all_keys)] = [cc, all_keys] if accepts?(cc, all_keys) }
+            dispatch(lines, 4, cands, all_keys, values)
+            Array.push(lines, "  end", "end")
+          in :derive | :derive_collection
+            need_records = true
+            Array.push(lines, "def #{func}(view, records)")
+            coll = "ActionView::CollectionRenderer.render_collection_derive_partial(view, records, Symbol[]) { |template, buffer, object, counter, iteration| _render_record_in_collection(view, template, buffer, object, counter, iteration) }"
+            if kind == :derive_collection
+              Array.push(lines, "  #{coll}")
+            else
+              Array.push(lines, "  case records", "  in Array then #{coll}",
+                         "  else ActionView::ObjectRenderer.render_object_derive_partial(view, records, Symbol[]) { |template, buffer, object| _render_record(view, template, buffer, object) }",
+                         "  end")
+            end
+            Array.push(lines, "end")
+          end
+          Array.push(fns, Array.join(lines, "\n"))
+        end
+      end
+      if need_records
+        Array.each(Any[false, true]) do |in_collection|
+          lines = String[in_collection ? "def _render_record_in_collection(view, template, buffer, object, counter, iteration)" : "def _render_record(view, template, buffer, object)", "  case object"]
+          Array.each(records) do |rec|
+            var = ActiveSupport::Inflector.underscore(rec)
+            keys = in_collection ? String[var, "#{var}_counter", "#{var}_iteration"] : String[var]
+            values = Hash.of(var => "object", "#{var}_counter" => "counter", "#{var}_iteration" => "iteration")
+            cands = partial_candidates(all, record_partial(rec))
+            # a partial that reads its counter is a collection's only (Rails: a NameError when rendered alone)
+            cands = Array.reject(cands) { |cc| String.match?(Compiled.code(cc), Regexp.new("\\b#{var}_(counter|iteration)\\b")) } unless in_collection
+            Array.each(cands) { |cc| variants[variant_name(cc, keys)] = [cc, keys] if accepts?(cc, keys) }
+            Array.push(lines, "  in #{rec}")
+            dispatch(lines, 4, cands, keys, values)
+          end
+          Array.push(lines, "  else raise ArgumentError, \"'\#{Kernel.inspect(object)}' is not an ActiveModel-compatible object. It must implement #to_partial_path.\"", "  end", "end")
+          Array.push(fns, Array.join(lines, "\n"))
+        end
+      end
+      # the compiled functions (Template#compiled_source)
+      Hash.each(variants) do |fname, pair|
+        c, keys = pair
+        sig = Compiled.strict(c)
+        params = sig ? (String.empty?(String.strip(sig)) ? "" : ", #{sig}") : Array.join(Array.map(keys) { |k| ", #{k}:" }, "")
+        Array.push(out, "# sake-origin: #{Compiled.identifier(c)}:1",
+                   "  def #{fname}(view, local_assigns, output_buffer#{params})",
+                   "    @virtual_path = #{Kernel.inspect(Compiled.virtual_path(c))}")
+        Array.push(out, String.rstrip(String.gsub(Compiled.code(c), /^/, "  ")))
+        Array.push(out, "# sake-origin: none", "    output_buffer", "  end")
+      end
+      # Base#_run's public_send for the templates without locals
+      Array.push(out, "  def _compiled(view, method_name, buffer)", "    case method_name")
+      Hash.each(variants) do |fname, pair|
+        c, keys = pair
+        next unless Array.empty?(keys) && (Compiled.strict(c) == nil || Array.empty?(strict_required(Compiled.strict(c) || "")))
+        blk = Compiled.yields(c) ? " { |name| _layout_for(view, name) }" : ""
+        Array.push(out, "    in #{Kernel.inspect(fname)} then #{fname}(view, Hash.new, buffer)#{blk}")
+      end
+      Array.push(out, "    else raise ActionView::Template::Error.new(\"\#{method_name} is not a compiled template of #{name}\", method_name)", "    end", "  end")
+      Array.each(fns) { |f| Array.push(out, String.gsub(f, /^/, "  ")) }
+      Array.push(out, "end")
+      Array.join(out, "\n") + "\n"
+    end
+  end
+end

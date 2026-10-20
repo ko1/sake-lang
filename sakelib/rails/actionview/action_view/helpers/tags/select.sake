@@ -1,0 +1,112 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/tags/{select,select_renderer,collection_select,grouped_collection_select}.rb
+#
+# Ruby includes FormOptionsHelper into the tag classes; here they call the view's (`FormOptionsHelper.options_for_select(@template_object, ...)`).
+# SelectRenderer is a mixin whose bare calls reach the tag's own functions (declared as required functions).
+
+require "base"
+
+module ActionView
+  module Helpers
+    module Tags
+      module SelectRenderer
+        def template_object(t) = raise(NotImplementedError)
+
+        # private
+        def select_content_tag(t, option_tags, options, html_options)
+          html_options = Hash.stringify_keys(html_options || Hash.new)
+          Array.each(Symbol[:required, :multiple, :size]) do |prop|
+            html_options[Symbol.to_s(prop)] = Hash.delete(options, prop) if Hash.key?(options, prop) && !Hash.key?(html_options, Symbol.to_s(prop))
+          end
+          add_default_name_and_field(t, html_options)
+          if SelectRenderer.placeholder_required?(html_options)
+            raise ArgumentError, "include_blank cannot be false for a required field." if options[:include_blank] == false
+            options[:include_blank] ||= true unless options[:prompt]
+          end
+          value = Hash.key?(options, :selected) ? options[:selected] : value(t)
+          select = content_tag(t, "select", add_options(t, option_tags, options, value), html_options)
+          include_hidden = Hash.key?(options, :include_hidden) ? options[:include_hidden] : true
+          if html_options["multiple"] && include_hidden
+            tag_options = Hash.of(disabled: html_options["disabled"], name: html_options["name"], type: "hidden", value: "")
+            tag_options[:autocomplete] = "off" unless FormTagHelper.remove_hidden_field_autocomplete(template_object(t))
+            ActiveSupport::SafeBuffer.+(tag(t, "input", tag_options), select)
+          else
+            select
+          end
+        end
+
+        def add_options(t, option_tags, options, value = nil)
+          tb = TagHelper.tag_builder(template_object(t))
+          include_blank = options[:include_blank]
+          if include_blank != nil && include_blank != false
+            content = (include_blank in String) ? include_blank : nil
+            label = content ? nil : " "
+            option_tags = ActiveSupport::SafeBuffer.+(TagHelper::TagBuilder.content_tag_string(tb, "option", content, Hash.of(value: "", label: label)), "\n") + option_tags
+          end
+          prompt = options[:prompt]
+          if Object.blank?(value) && prompt != nil && prompt != false
+            tag_options = Hash.of(value: "")
+            tag_options[:disabled] = true if options[:disabled] == ""
+            tag_options[:selected] = true if options[:selected] == ""
+            option_tags = ActiveSupport::SafeBuffer.+(TagHelper::TagBuilder.content_tag_string(tb, "option", FormOptionsHelper.prompt_text(prompt), tag_options), "\n") + option_tags
+          end
+          option_tags
+        end
+
+        module_function
+
+        def placeholder_required?(html_options)
+          size = Hash.key?(html_options, "size") ? html_options["size"] : 1
+          html_options["required"] && !html_options["multiple"] && String.to_i(Kernel.to_s(size)) == 1
+        end
+      end
+
+      class Select < Base
+        attr_accessor choices, html_options
+        include SelectRenderer
+
+        def render(t)
+          selected = Hash.key?(@options, :selected) ? @options[:selected] : (value(t) == nil ? "" : value(t))
+          option_tags_options = Hash.of(selected: selected, disabled: @options[:disabled])
+          option_tags = if grouped_choices?(t)
+                          FormOptionsHelper.grouped_options_for_select(@template_object, @choices, option_tags_options)
+                        else
+                          FormOptionsHelper.options_for_select(@template_object, @choices, option_tags_options)
+                        end
+          select_content_tag(t, option_tags, @options, @html_options)
+        end
+
+        # private
+        def grouped_choices?(t)
+          c = @choices
+          return false unless c in Array
+          return false if Array.empty?(c)
+          first = Array.first(c)
+          (first in Array) && (first[1] in Array)
+        end
+      end
+
+      class CollectionSelect < Base
+        attr_accessor collection, value_method, text_method, html_options
+        include SelectRenderer
+
+        def render(t)
+          selected = Hash.key?(@options, :selected) ? @options[:selected] : value(t)
+          option_tags_options = Hash.of(selected: selected, disabled: @options[:disabled])
+          select_content_tag(t, FormOptionsHelper.options_from_collection_for_select(@template_object, @collection, @value_method, @text_method, option_tags_options), @options, @html_options)
+        end
+      end
+
+      class GroupedCollectionSelect < Base
+        attr_accessor collection, group_method, group_label_method, option_key_method, option_value_method, html_options
+        include SelectRenderer
+
+        def render(t)
+          selected = Hash.key?(@options, :selected) ? @options[:selected] : value(t)
+          option_tags_options = Hash.of(selected: selected, disabled: @options[:disabled])
+          option_tags = FormOptionsHelper.option_groups_from_collection_for_select(@template_object, @collection, @group_method, @group_label_method, @option_key_method, @option_value_method, option_tags_options)
+          select_content_tag(t, option_tags, @options, @html_options)
+        end
+      end
+    end
+  end
+end

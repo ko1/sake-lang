@@ -1,0 +1,64 @@
+# Port of actionview-8.1.3/lib/action_view/renderer/collection_renderer.rb (partial: no preloading iterator, no collection caching, no partial layouts)
+#
+# The block runs the compiled partial for one element: `|template, buffer, object, counter, iteration|`, Rails'
+# locals[as], locals["#{as}_counter"], locals["#{as}_iteration"].
+
+require "partial_renderer"
+
+module ActionView
+  class PartialIteration
+    attr_reader size, index
+
+    def make(size) = PartialIteration.new(size, 0)
+    def first?(i) = @index == 0
+    def last?(i) = @index == @size - 1
+    def iterate!(i) = @index += 1
+  end
+
+  module CollectionRenderer
+    module_function
+
+    # Ruby: retrieve_variable(path): [as, :"#{as}_counter", :"#{as}_iteration"]
+    def retrieve_variable(path, as = nil)
+      variable = AbstractRenderer::ObjectRendering.local_variable(path, as)
+      Symbol[variable, String.to_sym("#{variable}_counter"), String.to_sym("#{variable}_iteration")]
+    end
+
+    def render_collection_with_partial(view, collection, partial, keys, as: nil, spacer_template: nil)
+      iter_vars = retrieve_variable(partial, as)
+      template = PartialRenderer.find_template(view, partial, Array.uniq(keys + iter_vars))
+      render_collection(view, collection, spacer_template) do |object, iteration|
+        Template.render(template, view) { |buf| yield(template, buf, object, PartialIteration.index(iteration), iteration) }
+      end
+    end
+
+    # Ruby: render_collection_derive_partial: each element's partial from to_partial_path (MixedCollectionIterator)
+    def render_collection_derive_partial(view, collection, keys, spacer_template: nil)
+      lc = Context.lookup_context(view)
+      cache = Hash.new
+      render_collection(view, collection, spacer_template) do |object, iteration|
+        path = AbstractRenderer::ObjectRendering.partial_path(object, Array.first(LookupContext.prefixes(lc)), Context.prefix_partial_path_with_controller_namespace(view))
+        template = cache[path] ||= PartialRenderer.find_template(view, path, Array.uniq(keys + retrieve_variable(path)))
+        Template.render(template, view) { |buf| yield(template, buf, object, PartialIteration.index(iteration), iteration) }
+      end
+    end
+
+    # private: Ruby's render_collection + collection_with_template; nil for an empty collection (RenderedCollection.empty)
+    def render_collection(view, collection, spacer_template)
+      return nil if Array.empty?(collection)
+      spacer = if spacer_template
+                 st = PartialRenderer.find_template(view, spacer_template, Symbol[])
+                 Template.render(st, view) { |buf| Context._compiled(view, Template.method_name(st), buf) }
+               else
+                 String.html_safe("")
+               end
+      partial_iteration = PartialIteration.make(Array.size(collection))
+      bodies = Array.map(collection) do |object|
+        content = yield(object, partial_iteration)
+        PartialIteration.iterate!(partial_iteration)
+        Object.html_text(content)
+      end
+      String.html_safe(Array.join(bodies, Object.html_text(spacer)))
+    end
+  end
+end

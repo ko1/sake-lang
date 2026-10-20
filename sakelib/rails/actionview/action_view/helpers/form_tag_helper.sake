@@ -1,0 +1,322 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/form_tag_helper.rb (partial: no direct_upload option (Active Storage), image_submit_tag takes the src as given (no asset pipeline))
+#
+# A mixin of the view. Rails' options Hashes are positional Hashes here; the trailing keywords Rails' callers
+# write (`text_field_tag :q, nil, class: "x"`) are `**html_options`, merged into the Hash as content_tag does.
+# Rails' mattr_accessors (default_enforce_utf8, ...) are functions with the values an app's load_defaults 8.1 gives.
+
+require "../../../activesupport/active_support/core_ext/hash/keys"
+require "../../../activesupport/active_support/core_ext/hash/deep_merge"
+require "../../../activesupport/active_support/core_ext/string/inflections"
+require "tag_helper"
+require "../model_naming"
+
+module ActionView
+  module Helpers
+    module FormTagHelper
+      include TagHelper
+
+      # UrlHelper's (included by Rails' FormTagHelper)
+      def url_for(v, options = nil) = raise(NotImplementedError)
+      def token_tag(v, token = nil, form_options: nil) = raise(NotImplementedError)
+      def method_tag(v, method) = raise(NotImplementedError)
+
+      # Ruby: mattr_accessor :default_enforce_utf8 (load_defaults 6.0: false), :embed_authenticity_token_in_remote_forms
+      def default_enforce_utf8(v) = false
+      def embed_authenticity_token_in_remote_forms(v) = nil
+      # Ruby: ActionView::Base.remove_hidden_field_autocomplete / automatically_disable_submit_tag
+      def remove_hidden_field_autocomplete(v) = false
+      def automatically_disable_submit_tag(v) = true
+
+      def form_tag(v, url_for_options = nil, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        html_options = html_options_for_form(v, url_for_options || Hash.new, options)
+        if block_given?
+          form_tag_with_body(v, html_options, capture(v) { yield })
+        else
+          form_tag_html(v, html_options)
+        end
+      end
+
+      def field_id(v, object_name, method_name, *suffixes, index: nil, namespace: nil) = FormTagHelper.field_id_of(object_name, method_name, suffixes, index, namespace)
+
+      def field_name(v, object_name, method_name, *method_names, multiple: false, index: nil) = FormTagHelper.field_name_of(object_name, method_name, method_names, multiple, index)
+
+      def select_tag(v, name, option_tags = nil, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        option_tags ||= ""
+        name_s = Kernel.to_s(name)
+        html_name = options[:multiple] == true && !String.end_with?(name_s, "[]") ? "#{name_s}[]" : name_s
+        if Hash.key?(options, :include_blank)
+          include_blank = options[:include_blank]
+          options = Hash.except(options, :include_blank)
+          options_for_blank_options_tag = Hash.of(value: "")
+          if include_blank == true
+            include_blank = ""
+            options_for_blank_options_tag[:label] = " "
+          end
+          if include_blank != nil && include_blank != false
+            option_tags = ActiveSupport::SafeBuffer.safe_concat(content_tag(v, "option", include_blank, options_for_blank_options_tag), option_tags)
+          end
+        end
+        prompt = Hash.delete(options, :prompt)
+        if prompt != nil && prompt != false
+          option_tags = ActiveSupport::SafeBuffer.safe_concat(content_tag(v, "option", prompt, Hash.of(value: "")), option_tags)
+        end
+        attrs = Hash.of("name" => html_name, "id" => FormTagHelper.sanitize_to_id(name))
+        content_tag(v, "select", option_tags, Hash.update(attrs, Hash.stringify_keys(options)))
+      end
+
+      def text_field_tag(v, name, value = nil, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        attrs = Hash.of("type" => "text", "name" => name, "id" => FormTagHelper.sanitize_to_id(name), "value" => value)
+        tag(v, :input, Hash.update(attrs, Hash.stringify_keys(options)))
+      end
+
+      def label_tag(v, name = nil, content_or_options = nil, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        if block_given? && (content_or_options in Hash)
+          options = Hash.stringify_keys(content_or_options)
+          content_or_options = nil
+        else
+          options = Hash.stringify_keys(options)
+        end
+        options["for"] = FormTagHelper.sanitize_to_id(name) unless Object.blank?(name) || Hash.key?(options, "for")
+        return content_tag(v, :label, nil, options) { yield } if block_given?
+        content = (content_or_options in Hash) ? nil : content_or_options
+        content_tag(v, :label, content || String.humanize(Kernel.to_s(name)), options)
+      end
+
+      def hidden_field_tag(v, name, value = nil, options = nil, **html_options)
+        html_options = Hash.merge(FormTagHelper.with_keywords(options, html_options), Hash.of(type: :hidden))
+        unless remove_hidden_field_autocomplete(v)
+          html_options[:autocomplete] = "off" unless Hash.key?(html_options, :autocomplete)
+        end
+        text_field_tag(v, name, value, html_options)
+      end
+
+      def file_field_tag(v, name, options = nil, **html_options)
+        text_field_tag(v, name, nil, Hash.merge(FormTagHelper.with_keywords(options, html_options), Hash.of(type: :file)))
+      end
+
+      def password_field_tag(v, name = "password", value = nil, options = nil, **html_options)
+        text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, html_options), Hash.of(type: :password)))
+      end
+
+      def textarea_tag(v, name, content = nil, options = nil, **html_options)
+        options = Hash.stringify_keys(FormTagHelper.with_keywords(options, html_options))
+        size = Hash.delete(options, "size")
+        if size in String
+          cols, rows = String.split(size, "x")
+          options["cols"] = cols
+          options["rows"] = rows
+        end
+        escape = Hash.key?(options, "escape") ? Hash.delete(options, "escape") : true
+        text = escape != nil && escape != false ? Object.html_text(ActiveSupport::CoreExt::ERBUtil.html_escape(content)) : Object.html_text(content)
+        attrs = Hash.of("name" => name, "id" => FormTagHelper.sanitize_to_id(name))
+        content_tag(v, :textarea, String.html_safe(text), Hash.update(attrs, options))
+      end
+
+      def text_area_tag(v, name, content = nil, options = nil, **html_options) = textarea_tag(v, name, content, FormTagHelper.with_keywords(options, html_options))
+
+      # Ruby: checkbox_tag(name, *args) with args = [value = "1", checked = false, options = {}]
+      def checkbox_tag(v, name, value = "1", checked = false, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        attrs = Hash.of("type" => "checkbox", "name" => name, "id" => FormTagHelper.sanitize_to_id(name), "value" => value)
+        html_options = Hash.update(attrs, Hash.stringify_keys(options))
+        html_options["checked"] = "checked" if checked
+        tag(v, :input, html_options)
+      end
+
+      def check_box_tag(v, name, value = "1", checked = false, options = nil, **html_options) = checkbox_tag(v, name, value, checked, FormTagHelper.with_keywords(options, html_options))
+
+      # Ruby: radio_button_tag(name, value, *args) with args = [checked = false, options = {}]
+      def radio_button_tag(v, name, value, checked = false, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        attrs = Hash.of("type" => "radio", "name" => name, "id" => "#{FormTagHelper.sanitize_to_id(name)}_#{FormTagHelper.sanitize_to_id(value)}", "value" => value)
+        html_options = Hash.update(attrs, Hash.stringify_keys(options))
+        html_options["checked"] = "checked" if checked
+        tag(v, :input, html_options)
+      end
+
+      def submit_tag(v, value = "Save changes", options = nil, **html_options)
+        options = Hash.deep_stringify_keys(FormTagHelper.with_keywords(options, html_options))
+        tag_options = Hash.update(Hash.of("type" => "submit", "name" => "commit", "value" => value), options)
+        set_default_disable_with(v, value, tag_options)
+        tag(v, :input, tag_options)
+      end
+
+      def button_tag(v, content_or_options = nil, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        options = content_or_options if content_or_options in Hash
+        options = Hash.merge(Hash.of("name" => "button", "type" => "submit"), Hash.stringify_keys(options))
+        return content_tag(v, :button, nil, options) { yield } if block_given?
+        content = (content_or_options in Hash) ? nil : content_or_options
+        content_tag(v, :button, content || "Button", options)
+      end
+
+      # Ruby: path_to_image(source) through the asset pipeline; here the source as given
+      def image_submit_tag(v, source, options = nil, **html_options)
+        options = Hash.stringify_keys(FormTagHelper.with_keywords(options, html_options))
+        Hash.delete(options, "skip_pipeline")
+        tag(v, :input, Hash.update(Hash.of("type" => "image", "src" => source), options))
+      end
+
+      def field_set_tag(v, legend = nil, options = nil, **html_options)
+        options = FormTagHelper.with_keywords(options, html_options)
+        content = Any[]
+        Array.push(content, content_tag(v, "legend", legend)) unless Object.blank?(legend)
+        Array.push(content, capture(v) { yield }) if block_given?
+        content_tag(v, :fieldset, safe_join(v, content), Hash.empty?(options) ? nil : options)
+      end
+
+      def fieldset_tag(v, legend = nil, options = nil, **html_options)
+        return field_set_tag(v, legend, FormTagHelper.with_keywords(options, html_options)) { yield } if block_given?
+        field_set_tag(v, legend, FormTagHelper.with_keywords(options, html_options))
+      end
+
+      def color_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :color)))
+      def search_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :search)))
+      def telephone_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :tel)))
+      def phone_field_tag(v, name, value = nil, options = nil, **h) = telephone_field_tag(v, name, value, FormTagHelper.with_keywords(options, h))
+      def date_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :date)))
+      def time_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :time)))
+      def datetime_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: "datetime-local")))
+      def datetime_local_field_tag(v, name, value = nil, options = nil, **h) = datetime_field_tag(v, name, value, FormTagHelper.with_keywords(options, h))
+      def month_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :month)))
+      def week_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :week)))
+      def url_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :url)))
+      def email_field_tag(v, name, value = nil, options = nil, **h) = text_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :email)))
+
+      def number_field_tag(v, name, value = nil, options = nil, **html_options)
+        options = Hash.stringify_keys(FormTagHelper.with_keywords(options, html_options))
+        options["type"] ||= "number"
+        range = Hash.delete(options, "in") || Hash.delete(options, "within")
+        if range in Range
+          Hash.update(options, Hash.of("min" => Range.min(range), "max" => Range.max(range)))
+        end
+        text_field_tag(v, name, value, options)
+      end
+
+      def range_field_tag(v, name, value = nil, options = nil, **h) = number_field_tag(v, name, value, Hash.merge(FormTagHelper.with_keywords(options, h), Hash.of(type: :range)))
+
+      def utf8_enforcer_tag(v)
+        options = Hash.of(type: "hidden", name: "utf8", value: String.html_safe("&#x2713;"))
+        options[:autocomplete] = "off" unless remove_hidden_field_autocomplete(v)
+        tag(v, :input, options)
+      end
+
+      # private
+      def html_options_for_form(v, url_for_options, options)
+        html_options = Hash.stringify_keys(options)
+        html_options["enctype"] = "multipart/form-data" if Hash.delete(html_options, "multipart")
+        case url_for_options
+        in false then Hash.delete(html_options, "action")
+        in true then raise ArgumentError, "url: true"
+        else
+          if html_options["action"] == false
+            Hash.delete(html_options, "action")
+          else
+            html_options["action"] = url_for(v, url_for_options)
+          end
+        end
+        html_options["accept-charset"] = "UTF-8"
+        remote = Hash.delete(html_options, "remote")
+        html_options["data-remote"] = true if remote != nil && remote != false
+        if html_options["data-remote"] != nil && embed_authenticity_token_in_remote_forms(v) == false && Object.blank?(html_options["authenticity_token"])
+          html_options["authenticity_token"] = false
+        elsif html_options["authenticity_token"] == true
+          html_options["authenticity_token"] = nil
+        end
+        html_options
+      end
+
+      def extra_tags_for_form(v, html_options)
+        authenticity_token = Hash.delete(html_options, "authenticity_token")
+        method = String.downcase(Kernel.to_s(Hash.delete(html_options, "method")))
+        method_tag = case method
+                     in "get"
+                       html_options["method"] = "get"
+                       String.html_safe("")
+                     in "post" | ""
+                       html_options["method"] = "post"
+                       String.html_safe(Object.html_text(token_tag(v, authenticity_token, form_options: Hash.of(action: html_options["action"], method: "post"))))
+                     else
+                       html_options["method"] = "post"
+                       ActiveSupport::SafeBuffer.+(method_tag(v, method), token_tag(v, authenticity_token, form_options: Hash.of(action: html_options["action"], method: method)))
+                     end
+        enforce = Hash.key?(html_options, "enforce_utf8") ? Hash.delete(html_options, "enforce_utf8") : default_enforce_utf8(v)
+        if enforce != nil && enforce != false
+          ActiveSupport::SafeBuffer.+(utf8_enforcer_tag(v), method_tag)
+        else
+          method_tag
+        end
+      end
+
+      def form_tag_html(v, html_options)
+        extra_tags = extra_tags_for_form(v, html_options)
+        html = ActiveSupport::SafeBuffer.+(tag(v, :form, html_options, true), extra_tags)
+        prevent_content_exfiltration(v, html)
+      end
+
+      def form_tag_with_body(v, html_options, content)
+        extra_tags = extra_tags_for_form(v, html_options)
+        html = content_tag(v, :form, safe_join(v, Any[extra_tags, content]), html_options)
+        prevent_content_exfiltration(v, html)
+      end
+
+      # Ruby: ContentExfiltrationPreventionHelper (config.action_view.prepend_content_exfiltration_prevention, false)
+      def prevent_content_exfiltration(v, html) = html
+
+      def set_default_disable_with(v, value, tag_options)
+        data = Hash.fetch(tag_options, "data", nil)
+        data_disable = (data in Hash) ? data["disable_with"] : nil
+        if tag_options["data-disable-with"] == false || data_disable == false
+          Hash.delete(data, "disable_with") if data in Hash
+        elsif automatically_disable_submit_tag(v)
+          disable_with_text = tag_options["data-disable-with"]
+          disable_with_text ||= data_disable
+          disable_with_text ||= Kernel.to_s(value)
+          existing = (data in Hash) ? data : Hash.new
+          merged = Hash.merge(existing, Hash.of("disable_with" => disable_with_text))
+          tag_options["data"] = merged
+        end
+        Hash.delete(tag_options, "data-disable-with")
+      end
+
+      module_function
+
+      # (Sake only) field_id / field_name with the trailing names as an Array (FormBuilder passes its own on)
+      def field_id_of(object_name, method_name, suffixes, index, namespace)
+        name = case object_name
+               in ModelNaming::Model then ModelNaming::Model.param_key(object_name)
+               else Kernel.to_s(object_name)
+               end
+        sanitized_object_name = String.gsub(name, /\]\[|[^-a-zA-Z0-9:.]/, "_").delete_suffix("_")
+        sanitized_method_name = String.delete_suffix(Kernel.to_s(method_name), "?")
+        parts = Any[namespace, String.empty?(sanitized_object_name) ? nil : sanitized_object_name,
+                    String.empty?(sanitized_object_name) ? nil : index, sanitized_method_name]
+        Array.concat(parts, suffixes)
+        Array.join(Array.map(Array.compact(parts)) { |x| Kernel.to_s(x) }, "_")
+      end
+
+      def field_name_of(object_name, method_name, method_names, multiple, index)
+        names = Array.join(Array.map(method_names) { |name| "[#{name}]" })
+        if Object.blank?(object_name)
+          "#{method_name}#{names}#{multiple ? "[]" : ""}"
+        elsif index != nil
+          "#{object_name}[#{index}][#{method_name}]#{names}#{multiple ? "[]" : ""}"
+        else
+          "#{object_name}[#{method_name}]#{names}#{multiple ? "[]" : ""}"
+        end
+      end
+
+      # (Sake only) Ruby's options Hash, with the trailing keywords merged in
+      def with_keywords(options, keywords)
+        return keywords if options == nil
+        Hash.empty?(keywords) ? options : Hash.merge(options, keywords)
+      end
+
+      def sanitize_to_id(name) = String.tr(String.delete(Kernel.to_s(name), "]"), "^-a-zA-Z0-9:.", "_")
+    end
+  end
+end

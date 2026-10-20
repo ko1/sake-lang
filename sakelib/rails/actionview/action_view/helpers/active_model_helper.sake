@@ -1,0 +1,54 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/active_model_helper.rb
+#
+# ActiveModelInstanceTag is included by Tags::Base: a tag of an attribute with errors is wrapped by the view's
+# field_error_proc (Rails: a Proc in a cattr_accessor, run with instance_exec on the view; here a function of the
+# view, `field_error_proc(v, html_tag, instance)`, which an app's view class may override). The tag's state is
+# read through its readers (object, method_name, template_object), since a mixin reads no fields.
+
+require "tag_helper"
+require "../model_naming"
+
+module ActionView
+  module Helpers
+    module ActiveModelHelper
+      include TagHelper
+
+      # Ruby: ActionView::Base.field_error_proc = Proc.new { |html_tag, instance| content_tag :div, html_tag, class: "field_with_errors" }
+      def field_error_proc(v, html_tag, instance) = content_tag(v, :div, html_tag, Hash.of(class: "field_with_errors"))
+    end
+
+    module ActiveModelInstanceTag
+      def object(t) = raise(NotImplementedError)
+      def method_name(t) = raise(NotImplementedError)
+      def template_object(t) = raise(NotImplementedError)
+
+      # Ruby: content_tag(type, options, *) (super is the TagHelper's on the view)
+      def content_tag(t, type, content, options = nil)
+        html = TagHelper.content_tag(template_object(t), type, content, options)
+        ActiveModelInstanceTag.select_markup_helper?(type) ? html : error_wrapping(t, html)
+      end
+
+      def tag(t, type, options)
+        html = TagHelper.tag(template_object(t), type, options)
+        ActiveModelInstanceTag.tag_generate_errors?(options) ? error_wrapping(t, html) : html
+      end
+
+      def error_wrapping(t, html_tag)
+        object_has_errors?(t) ? ActiveModelHelper.field_error_proc(template_object(t), html_tag, t) : html_tag
+      end
+
+      def error_message(t)
+        o = object(t)
+        (o in ModelNaming::Model) ? ModelNaming::Model.errors_for(o, method_name(t)) : String[]
+      end
+
+      # private
+      def object_has_errors?(t) = !Array.empty?(error_message(t))
+
+      module_function
+
+      def select_markup_helper?(type) = Array.include?(String["optgroup", "option"], Kernel.to_s(type))
+      def tag_generate_errors?(options) = options == nil || options["type"] != "hidden"
+    end
+  end
+end

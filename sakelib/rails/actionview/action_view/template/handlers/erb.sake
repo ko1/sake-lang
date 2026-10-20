@@ -1,0 +1,209 @@
+# Port of actionview-8.1.3/lib/action_view/template/handlers/erb.rb and template/handlers/erb/erubi.rb (partial: no encoding handling, no translate_location, no annotate_rendered_view_with_filenames)
+#
+# Rails' handler turns ERB into Ruby source that Template#compile evals into a view method; Rails' Erubi subclass
+# overrides add_text / add_expression / add_code / add_postamble of ::Erubi::Engine. Here the same subclass
+# (`class Erubi < ::Erubi::Engine` pastes the engine, the overrides replace its hooks) writes Sake statements:
+#
+#   Rails (Ruby source)                         Sake
+#   @output_buffer.safe_append='<p>'.freeze;    ActionView::OutputBuffer.safe_append(output_buffer, "<p>")
+#   @output_buffer.append=( post.title );       ActionView::OutputBuffer.append(output_buffer, (Post.title(post)))
+#   @output_buffer.append= form_with do |f|     ActionView::OutputBuffer.append(output_buffer, (form_with view do |f|
+#   ...end                                      ...end))
+#
+# A `# sake-origin: FILE:LINE` line before each statement points errors at the template's line. A `<%= render ... %>`
+# whose arguments are literal (a partial's name, its locals as keywords, collection:/object:/as:/spacer_template:,
+# or a record or records) becomes a call of a generated function (RenderCall), as the locals need their types.
+
+require "erubi"
+require "../../template"
+
+module ActionView
+  class Template
+    module Handlers
+      class ERB
+        attr_reader trim_mode
+
+        # A template's render call: generate/templates.sake writes the function `func`
+        class RenderCall
+          attr_reader func, kind, name, keys, as, spacer, origin
+        end
+
+        # Ruby: ERB.call(template, source) with Rails' options (escape only for text/plain, trim on)
+        def call(path, source, format, render_prefix)
+          props = Hash.of(:bufvar => "@output_buffer", :preamble => "", :postamble => "@output_buffer", :escapefunc => "",
+                          :escape => format == :text, :trim => true, :filename => path, :render_prefix => render_prefix)
+          Erubi.new(source, props)
+        end
+
+        class Erubi < ::Erubi::Engine
+          attr_accessor out, newline_pending, line, stack, render_calls, uses_yield
+
+          def block_expr = /((\s|\))do|\{)(\s*\|[^|]*\|)?\s*\z/
+
+          # (Sake only) the compiled statements, after the engine ran
+          def code(e) = Array.join(@out || String[], "")
+          def calls(e) = @render_calls || Any[]
+          def yields?(e) = @uses_yield == true
+
+          def emit(e, indent, s)
+            @out ||= String[]
+            @stack ||= Symbol[]
+            Array.push(@out || String[], "# sake-origin: #{@filename}:#{@line || 1}\n")
+            Array.push(@out || String[], "  " * (Array.size(@stack || Symbol[]) + 1 + indent) + s + "\n")
+          end
+
+          def advance(e, s) = @line = (@line || 1) + String.count(s, "\n")
+
+          def add_text(e, text)
+            return if String.empty?(text)
+            if text == "\n"
+              @newline_pending = (@newline_pending || 0) + 1
+            else
+              full = ("\n" * (@newline_pending || 0)) + text
+              emit(e, 0, "ActionView::OutputBuffer.safe_append(output_buffer, #{Kernel.inspect(full)})")
+              @newline_pending = 0
+              advance(e, full)
+            end
+          end
+
+          def add_expression(e, indicator, code)
+            flush_newline_if_pending(e)
+            method = indicator == "==" || @escape ? "safe_expr_append" : "append"
+            src = String.strip(code)
+            src = "yield(nil)" if src == "yield"
+            @uses_yield = true if String.match?(src, /\byield\b/)
+            src = rewrite_render(e, src)
+            if String.match?(src, block_expr)
+              emit(e, 0, "ActionView::OutputBuffer.#{method}(output_buffer, (#{src}")
+              Array.push(@stack || Symbol[], :expr)
+            else
+              emit(e, 0, "ActionView::OutputBuffer.#{method}(output_buffer, (#{src}))")
+            end
+            advance(e, code)
+          end
+
+          def add_code(e, code)
+            flush_newline_if_pending(e)
+            src = String.strip(code)
+            @stack ||= Symbol[]
+            unless String.empty?(src)
+              @uses_yield = true if String.match?(src, /\byield\b/)
+              closes = src == "end" || src == "}" || String.match?(src, /\Aend\b/) || String.match?(src, /\A\}/)
+              opens = String.match?(src, /\A(if|unless|case|while|until|begin)\b/) || String.match?(src, block_expr)
+              opens = false if opens && String.match?(src, /\bend\z/)
+              middle = String.match?(src, /\A(else|elsif|in|when|rescue|ensure)\b/)
+              if closes
+                top = Array.pop(@stack || Symbol[])
+                emit(e, 0, top == :expr ? "#{src}))" : src)
+              elsif middle
+                emit(e, -1, src)
+              else
+                emit(e, 0, src)
+              end
+              Array.push(@stack || Symbol[], :code) if opens
+            end
+            advance(e, code)
+          end
+
+          def add_postamble(e, postamble) = flush_newline_if_pending(e)
+
+          def flush_newline_if_pending(e)
+            n = @newline_pending || 0
+            if n > 0
+              emit(e, 0, "ActionView::OutputBuffer.safe_append(output_buffer, #{Kernel.inspect("\n" * n)})")
+              advance(e, "\n" * n)
+              @newline_pending = 0
+            end
+          end
+
+          # Ruby's `render ...` in a template: a literal form becomes a call of a generated function
+          def rewrite_render(e, src)
+            m = String.match(src, /\Arender(?:\((.*)\)|\s+(.*))\z/m)
+            return src unless m
+            args = String.strip(m[1] || m[2] || "")
+            pieces = ERB.split_args(args)
+            positional = String[]
+            kw = Hash.new
+            kw_order = String[]
+            Array.each(pieces) do |piece|
+              km = String.match(piece, /\A([a-z_]\w*):\s*(.*)\z/m)
+              if km
+                kw[km[1] || ""] = String.strip(km[2] || "")
+                Array.push(kw_order, km[1] || "")
+              else
+                Array.push(positional, piece)
+              end
+            end
+            @render_calls ||= Any[]
+            n = Array.size(@render_calls || Any[]) + 1
+            func = "#{Hash.fetch(@properties, :render_prefix, "_render")}_#{n}"
+            origin = "#{@filename}:#{@line || 1}"
+            first = Array.first(positional)
+            if first && String.match?(first, /\A"[^"#]*"\z/)
+              name = String.[](first, 1...-1) || ""
+              locals = Array.map(kw_order) { |k| "#{k}: #{kw[k]}" }
+              Array.push(@render_calls || Any[], RenderCall.new(func, :partial, name, kw_order, nil, nil, origin))
+              return "#{func}(view#{Array.empty?(locals) ? "" : ", " + Array.join(locals, ", ")})"
+            end
+            if first
+              Array.push(@render_calls || Any[], RenderCall.new(func, :derive, nil, String[], nil, nil, origin))
+              return "#{func}(view, #{first})"
+            end
+            if Hash.key?(kw, "template") && !Hash.key?(kw, "partial")
+              return "render(view, #{Array.join(Array.map(kw_order) { |k| "#{k}: #{kw[k]}" }, ", ")})"
+            end
+            locals_src = kw["locals"]
+            local_pieces = locals_src ? ERB.split_args(String.strip(String.[](String.strip(locals_src), 1...-1) || "")) : String[]
+            keys = Array.map(local_pieces) { |p| (String.match(p, /\A([a-z_]\w*):/) || raise(ArgumentError, "#{origin}: locals: must be a literal {name: value, ...}"))[1] || "" }
+            locals_kw = Array.empty?(local_pieces) ? "" : ", " + Array.join(local_pieces, ", ")
+            as = kw["as"] ? String.delete_prefix(kw["as"] || "", ":") : nil
+            spacer = kw["spacer_template"] ? String.[](kw["spacer_template"] || "", 1...-1) : nil
+            pname = kw["partial"] ? String.[](kw["partial"] || "", 1...-1) : nil
+            if kw["collection"]
+              kind = pname ? :collection : :derive_collection
+              Array.push(@render_calls || Any[], RenderCall.new(func, kind, pname, keys, as, spacer, origin))
+              return "#{func}(view, #{kw["collection"]}#{locals_kw})"
+            end
+            if kw["object"]
+              Array.push(@render_calls || Any[], RenderCall.new(func, :object, pname, keys, as, nil, origin))
+              return "#{func}(view, #{kw["object"]}#{locals_kw})"
+            end
+            raise ArgumentError, "#{origin}: render #{args}: not a form the template compiler reads" unless pname
+            Array.push(@render_calls || Any[], RenderCall.new(func, :partial, pname, keys, nil, nil, origin))
+            "#{func}(view#{locals_kw})"
+          end
+        end
+
+        # (Sake only) split call arguments at top-level commas
+        def split_args(s)
+          parts = String[]
+          depth = 0
+          quote = nil
+          cur = ""
+          Array.each(String.chars(s)) do |c|
+            if quote
+              cur += c
+              quote = nil if c == quote
+            elsif c == "\"" || c == "'"
+              quote = c
+              cur += c
+            elsif c == "(" || c == "[" || c == "{"
+              depth += 1
+              cur += c
+            elsif c == ")" || c == "]" || c == "}"
+              depth -= 1
+              cur += c
+            elsif c == "," && depth == 0
+              Array.push(parts, String.strip(cur))
+              cur = ""
+            else
+              cur += c
+            end
+          end
+          Array.push(parts, String.strip(cur)) unless String.empty?(String.strip(cur))
+          parts
+        end
+      end
+    end
+  end
+end

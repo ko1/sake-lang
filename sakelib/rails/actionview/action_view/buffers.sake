@@ -1,0 +1,88 @@
+# Port of actionview-8.1.3/lib/action_view/buffers.rb (partial: no StreamingBuffer/RawStreamingBuffer: streaming needs a stored block)
+#
+# Rails' OutputBuffer wraps a String (@raw_buffer); compiled templates call `append=` / `safe_append=` on it.
+# Here those are `OutputBuffer.append(b, v)` / `safe_append(b, v)`, and `capture` swaps the raw String as Rails' does.
+
+require "../../activesupport/active_support/core_ext/string/output_safety"
+
+module ActionView
+  class OutputBuffer
+    attr_accessor raw_buffer
+
+    # Ruby: OutputBuffer.new(buffer = "")
+    def make(buffer = "") = OutputBuffer.new(Kernel.dup(Object.html_text(buffer)))
+
+    def length(b) = String.length(@raw_buffer)
+    def empty?(b) = String.empty?(@raw_buffer)
+    def blank?(b) = String.blank?(@raw_buffer)
+    def presence(b) = String.blank?(@raw_buffer) ? nil : b
+    def to_s(b) = String.html_safe(@raw_buffer)
+    def html_safe(b) = String.html_safe(@raw_buffer)
+    def to_str(b) = Kernel.dup(@raw_buffer)
+    def html_safe?(b) = true
+
+    def <<(b, value)
+      unless value == nil
+        String.concat(@raw_buffer, value_html(value))
+      end
+      b
+    end
+
+    # Ruby: value.to_s, escaped unless html_safe?
+    def value_html(value)
+      case value
+      in OutputBuffer then OutputBuffer.raw_buffer(value)
+      in ActiveSupport::SafeBuffer then ActiveSupport::CoreExt::ERBUtil.unwrapped_html_escape(value)
+      in String then ActiveSupport::CoreExt::ERBUtil.unwrapped_html_escape(value)
+      else ActiveSupport::CoreExt::ERBUtil.unwrapped_html_escape(Kernel.to_s(value))
+      end
+    end
+
+    def concat(b, value) = OutputBuffer.<<(b, value)
+    # Ruby: `@output_buffer.append=(expr)` (<%= expr %>)
+    def append(b, value) = OutputBuffer.<<(b, value)
+
+    def safe_concat(b, value)
+      String.concat(@raw_buffer, Object.html_text(value))
+      b
+    end
+
+    # Ruby: `@output_buffer.safe_append='text'` (the template's text)
+    def safe_append(b, value) = safe_concat(b, value)
+
+    # Ruby: `@output_buffer.safe_expr_append=(expr)` (<%== expr %>)
+    def safe_expr_append(b, val)
+      return b if val == nil
+      String.concat(@raw_buffer, (val in OutputBuffer) ? OutputBuffer.raw_buffer(val) : Object.html_text(val))
+      b
+    end
+
+    # Ruby: capture(*args) { } swaps @raw_buffer for a new String while the block runs
+    def capture(b)
+      new_buffer = Kernel.dup("")
+      old_buffer = @raw_buffer
+      @raw_buffer = new_buffer
+      begin
+        yield
+      ensure
+        OutputBuffer.set_raw_buffer(b, old_buffer)
+      end
+      String.html_safe(new_buffer)
+    end
+
+    def ==(b, other) = (other in OutputBuffer) && @raw_buffer == OutputBuffer.raw_buffer(other)
+    def raw(b) = RawOutputBuffer.new(b)
+    def inspect(b) = "#<ActionView::OutputBuffer #{Kernel.inspect(@raw_buffer)}>"
+  end
+
+  class RawOutputBuffer
+    attr_reader buffer
+
+    def <<(r, value)
+      String.concat(OutputBuffer.raw_buffer(@buffer), Object.html_text(value)) unless value == nil
+      r
+    end
+
+    def raw(r) = r
+  end
+end

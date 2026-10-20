@@ -1,0 +1,196 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/form_options_helper.rb (partial: no time_zone_select/time_zone_options_for_select, weekday_select; no Proc for selected:/disabled:; day names are English, not I18n)
+#
+# A mixin of the view. Ruby's `item.public_send(value_method)` on a collection's item is
+# ModelNaming::Model.read_attribute_for_validation(item, name). Choices are Arrays (`Any["Dollar", "$"]`: a
+# Tuple has no first/last), Hashes or Ranges.
+
+require "tag_helper"
+require "tags"
+require "../model_naming"
+
+module ActionView
+  module Helpers
+    module FormOptionsHelper
+      include TagHelper
+
+      # Ruby: select(object, method, choices = nil, options = {}, html_options = {}, &block); trailing keywords fill
+      # the first of options/html_options not given, as Ruby's implicit Hash does
+      def select(v, object, method, choices = nil, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        choices = capture(v) { yield } if block_given?
+        choices = Range.to_a(choices) if choices in Range
+        Tags::Select.render(Tags::Select.new(object_name: object, method_name: method, template_object: v, options: options, choices: choices, html_options: html_options || Hash.new))
+      end
+
+      def collection_select(v, object, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        Tags::CollectionSelect.render(Tags::CollectionSelect.new(object_name: object, method_name: method, template_object: v, options: options,
+                                                                 collection: collection, value_method: value_method, text_method: text_method, html_options: html_options || Hash.new))
+      end
+
+      def grouped_collection_select(v, object, method, collection, group_method, group_label_method, option_key_method, option_value_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        Tags::GroupedCollectionSelect.render(Tags::GroupedCollectionSelect.new(object_name: object, method_name: method, template_object: v, options: options,
+                                                                               collection: collection, group_method: group_method, group_label_method: group_label_method,
+                                                                               option_key_method: option_key_method, option_value_method: option_value_method, html_options: html_options || Hash.new))
+      end
+
+      # Ruby: options_for_select(container, selected = nil); `selected: x, disabled: y` keywords are the Hash
+      def options_for_select(v, container, selected = nil, **kw)
+        selected = kw if selected == nil && !Hash.empty?(kw)
+        case container
+        in String | ActiveSupport::SafeBuffer then return container
+        else nil
+        end
+        sel, dis = FormOptionsHelper.extract_selected_and_disabled(selected)
+        selected_s = FormOptionsHelper.strings_of(sel)
+        disabled_s = dis == nil ? nil : FormOptionsHelper.strings_of(dis)
+        elements = FormOptionsHelper.elements_of(container)
+        tags = Array.map(elements) do |element|
+          html_attributes = FormOptionsHelper.option_html_attributes(element)
+          text, value = FormOptionsHelper.option_text_and_value(element)
+          text_s = Kernel.to_s(text)
+          value_s = Kernel.to_s(value)
+          html_attributes[:selected] = Array.include?(selected_s, value_s) unless html_attributes[:selected]
+          html_attributes[:disabled] = disabled_s != nil && Array.include?(disabled_s, value_s) unless html_attributes[:disabled]
+          html_attributes[:value] = value_s
+          Object.html_text(TagHelper::TagBuilder.content_tag_string(tag_builder(v), "option", text_s, html_attributes))
+        end
+        String.html_safe(Array.join(tags, "\n"))
+      end
+
+      def options_from_collection_for_select(v, collection, value_method, text_method, selected = nil, **kw)
+        selected = kw if selected == nil && !Hash.empty?(kw)
+        options = Array.map(collection) do |element|
+          Any[FormOptionsHelper.value_for_collection(element, text_method), FormOptionsHelper.value_for_collection(element, value_method), FormOptionsHelper.option_html_attributes(element)]
+        end
+        sel, dis = FormOptionsHelper.extract_selected_and_disabled(selected)
+        options_for_select(v, options, Hash.of(selected: sel, disabled: dis))
+      end
+
+      def option_groups_from_collection_for_select(v, collection, group_method, group_label_method, option_key_method, option_value_method, selected_key = nil)
+        groups = Array.map(collection) do |group|
+          members = FormOptionsHelper.value_for_collection(group, group_method)
+          members_a = (members in Array) ? members : Any[]
+          option_tags = options_from_collection_for_select(v, members_a, option_key_method, option_value_method, selected_key)
+          Object.html_text(content_tag(v, "optgroup", option_tags, Hash.of(label: FormOptionsHelper.value_for_collection(group, group_label_method))))
+        end
+        String.html_safe(Array.join(groups))
+      end
+
+      def grouped_options_for_select(v, grouped_options, selected_key = nil, options = nil, prompt: nil, divider: nil)
+        prompt = options[:prompt] if options && Hash.key?(options, :prompt)
+        divider = options[:divider] if options && Hash.key?(options, :divider)
+        body = String.html_safe("")
+        if prompt
+          ActiveSupport::SafeBuffer.safe_concat(body, content_tag(v, "option", FormOptionsHelper.prompt_text(prompt), Hash.of(value: "")))
+        end
+        Array.each(FormOptionsHelper.elements_of(grouped_options)) do |container|
+          html_attributes = FormOptionsHelper.option_html_attributes(container)
+          label = divider
+          inner = container
+          unless divider
+            if container in Array
+              label = container[0]
+              inner = container[1]
+            end
+          end
+          ActiveSupport::SafeBuffer.safe_concat(body, content_tag(v, "optgroup", options_for_select(v, inner, selected_key), Hash.merge(Hash.of(label: label), html_attributes)))
+        end
+        body
+      end
+
+      # Ruby: weekday_options_for_select(selected = nil, index_as_value: false, day_format: :day_names, beginning_of_week: Date.beginning_of_week)
+      def weekday_options_for_select(v, selected = nil, index_as_value: false, day_format: :day_names, beginning_of_week: :monday)
+        names = day_format == :abbr_day_names ? String["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] : String["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        days = index_as_value ? Array.map(Array.each_with_index(names)) { |name, i| Any[name, i] } : Array.map(names) { |name| name }
+        into = Array.index(Symbol[:sunday, :monday, :tuesday, :wednesday, :thursday, :friday, :saturday], beginning_of_week) || 0
+        options_for_select(v, Array.rotate(days, into), selected)
+      end
+
+      def collection_radio_buttons(v, object, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        tag = Tags::CollectionRadioButtons.new(object_name: object, method_name: method, template_object: v, options: options,
+                                               collection: collection, value_method: value_method, text_method: text_method, html_options: html_options || Hash.new)
+        return Tags::CollectionRadioButtons.render(tag) { |b| yield(b) } if block_given?
+        Tags::CollectionRadioButtons.render(tag)
+      end
+
+      def collection_checkboxes(v, object, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        tag = Tags::CollectionCheckBoxes.new(object_name: object, method_name: method, template_object: v, options: options,
+                                             collection: collection, value_method: value_method, text_method: text_method, html_options: html_options || Hash.new)
+        return Tags::CollectionCheckBoxes.render(tag) { |b| yield(b) } if block_given?
+        Tags::CollectionCheckBoxes.render(tag)
+      end
+
+      def collection_check_boxes(v, object, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        return collection_checkboxes(v, object, method, collection, value_method, text_method, options, html_options) { |b| yield(b) } if block_given?
+        collection_checkboxes(v, object, method, collection, value_method, text_method, options, html_options)
+      end
+
+      module_function
+
+      # (Sake only) Ruby's implicit Hash of trailing keywords: it fills the first optional Hash argument not given
+      def fill_with_keywords(options, html_options, kw)
+        return [options || Hash.new, html_options] if Hash.empty?(kw)
+        return [kw, html_options] if options == nil
+        return [options, kw] if html_options == nil
+        [options, Hash.merge(html_options, kw)]
+      end
+
+      # (Sake only) a container's elements: a Hash's pairs, a Range's values, an Array as is
+      def elements_of(container)
+        case container
+        in Hash then Hash.map(container) { |k, val| Any[k, val] }
+        in Range then Array.map(Range.to_a(container)) { |x| x }
+        in Array then container
+        else Any[]
+        end
+      end
+
+      # Ruby: Array(r).map(&:to_s)
+      def strings_of(r)
+        case r
+        in nil then String[]
+        in Array then Array.map(r) { |x| Kernel.to_s(x) }
+        else String[Kernel.to_s(r)]
+        end
+      end
+
+      # private
+      def option_html_attributes(element)
+        attrs = Hash.new
+        Array.each(element) { |e| Hash.merge!(attrs, e) if e in Hash } if element in Array
+        attrs
+      end
+
+      def option_text_and_value(option)
+        case option
+        in Array
+          o = Array.reject(option) { |e| e in Hash }
+          [Array.first(o), Array.last(o)]
+        else [option, option]
+        end
+      end
+
+      def option_value_selected?(value, selected) = Array.include?(strings_of(selected), value)
+
+      # Ruby: Array.wrap(selected).extract_options!: a Hash gives its :selected and :disabled
+      def extract_selected_and_disabled(selected)
+        case selected
+        in Hash then [Hash.key?(selected, :selected) ? selected[:selected] : Any[], selected[:disabled]]
+        else [selected, nil]
+        end
+      end
+
+      # Ruby: item.public_send(value)
+      def value_for_collection(item, value)
+        (item in ModelNaming::Model) ? ModelNaming::Model.read_attribute_for_validation(item, Kernel.to_s(value)) : nil
+      end
+
+      def prompt_text(prompt) = (prompt in String) ? prompt : "Please select"
+    end
+  end
+end

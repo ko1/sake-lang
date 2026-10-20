@@ -1,0 +1,101 @@
+# Port of rails-html-sanitizer-1.7.0/lib/rails/html/scrubbers.rb (partial: no scrub with the fallback Loofah safelist (tags/attributes are always set, as Rails' sanitizers set them); no SVG xlink:href/local-ref scrubbing)
+#
+# Rails' scrubbers subclass Loofah::Scrubber and are passed to `fragment.scrub!`; here they include the
+# Loofah::Scrubber mixin (scrub, direction), and TargetScrubber is `< PermitScrubber` with its two overrides.
+
+require "../../loofah/html4"
+
+module Rails
+  module HTML
+    class PermitScrubber
+      attr_reader tags, attributes, prune
+      include Loofah::Scrubber
+
+      def make(prune: false) = PermitScrubber.new(nil, nil, prune)
+
+      def direction(s) = @prune ? :top_down : :bottom_up
+
+      def set_tags(s, tags) = @tags = validate!(s, Set.new(tags), :tags)
+      def set_attributes(s, attributes) = @attributes = validate!(s, Set.new(attributes), :attributes)
+
+      def scrub(s, node)
+        if Loofah::HTML5::Scrub.cdata_needs_escaping?(node)
+          Loofah::Node.set_content(node, Loofah::HTML5::Scrub.escape_tags(Loofah::Node.content(node)))
+          return :continue
+        end
+        return :continue if skip_node?(s, node)
+        unless (Loofah::Node.element?(node) || Loofah::Node.comment?(node)) && keep_node?(s, node)
+          scrub_node(s, node)
+          return :stop
+        end
+        scrub_attributes(s, node)
+        :continue
+      end
+
+      # protected
+      def allowed_node?(s, node) = Set.include?(@tags || Set.new, Loofah::Node.name(node))
+      def skip_node?(s, node) = Loofah::Node.text?(node)
+      def scrub_attribute?(s, name) = !Set.include?(@attributes || Set.new, name)
+      def keep_node?(s, node) = allowed_node?(s, node)
+
+      def scrub_node(s, node)
+        Loofah::Node.before(node, Loofah::Node.children(node)) unless @prune
+        Loofah::Node.remove(node)
+      end
+
+      def scrub_attributes(s, node)
+        Array.each(Array.dup(Loofah::Node.attrs(node))) do |attr|
+          if scrub_attribute?(s, Loofah::Attr.name(attr))
+            Loofah::Node.remove_attribute(node, Loofah::Attr.name(attr))
+          else
+            scrub_attribute(s, node, attr)
+          end
+        end
+        Loofah::HTML5::Scrub.scrub_css_attribute(node)
+      end
+
+      def validate!(s, var, name)
+        if name == :tags
+          Array.each(String["mglyph", "malignmark", "noscript"]) do |tag|
+            if Set.include?(var, tag)
+              warn("WARNING: '#{tag}' tags cannot be allowed by the PermitScrubber and will be scrubbed")
+              Set.delete(var, tag)
+            end
+          end
+        end
+        var
+      end
+
+      def scrub_attribute(s, node, attr)
+        name = Loofah::Attr.name(attr)
+        return nil if Set.include?(Loofah::HTML5::SafeList.attr_val_is_uri, name) && Loofah::HTML5::Scrub.scrub_uri_attribute(node, attr)
+        value = Loofah::Attr.value(attr) || ""
+        Loofah::Node.remove_attribute(node, name) if name == "src" && !String.match?(value, /[^[:space:]]/)
+        Loofah::HTML5::Scrub.force_correct_attribute_escaping!(node)
+      end
+    end
+
+    class TargetScrubber < PermitScrubber
+      def make_target = TargetScrubber.new(nil, nil, false)
+      def allowed_node?(s, node) = !Set.include?(@tags || Set.new, Loofah::Node.name(node))
+      def scrub_attribute?(s, name) = Set.include?(@attributes || Set.new, name)
+    end
+
+    class TextOnlyScrubber
+      attr_reader ignored
+      include Loofah::Scrubber
+
+      def direction(s) = :bottom_up
+
+      def scrub(s, node)
+        if Loofah::Node.text?(node)
+          :continue
+        else
+          Loofah::Node.before(node, Loofah::Node.children(node))
+          Loofah::Node.remove(node)
+          :stop
+        end
+      end
+    end
+  end
+end

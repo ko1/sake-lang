@@ -1,0 +1,94 @@
+# Port of actionview-8.1.3/lib/action_view/template.rb, template/types.rb, template/handlers.rb (the registry), template/text.rb and template/html.rb (partial: no compile step at run time, no instrumentation, no error highlighting, no Inline/RawFile/Renderable templates)
+#
+# Rails compiles a template the first time it renders, with module_eval, into a method of the view class, and
+# Template#render calls it with `view._run(method_name, ...)` (public_send). Here every template under the view
+# paths is compiled before the program runs (generate/templates.sake writes the functions into the view class), so
+# a Template found at run time names its compiled function by `method_name`, and `render` yields to the caller,
+# which calls that function with the locals as typed keywords (the generated `case` over method names is Rails'
+# public_send). The method names are Rails' without the hash and object id, plus the locals for a template
+# without strict locals (Rails compiles one method per set of locals too).
+
+require "template/error"
+require "buffers"
+
+module ActionView
+  class Template
+    attr_reader identifier, handler, locals, format, variant, virtual_path, variable, strict_locals, kind, body
+
+    # Ruby: Template::Error (template/error.rb) wraps what a template raised, with the same message
+    class Error < StandardError
+      attr_reader template_identifier
+    end
+
+    module Types
+      module_function
+      # Ruby: Template::Types.symbols (Mime::SET's when ActionDispatch is loaded; ActionView's own list here)
+      def symbols = Symbol[:html, :text, :js, :css, :xml, :json]
+      def valid_symbols?(syms) = Array.all?(syms) { |s| Array.include?(symbols, s) }
+    end
+
+    module Handlers
+      module_function
+      def extensions = Symbol[:raw, :erb, :html, :builder, :ruby]
+      def default_format(handler) = nil
+    end
+
+    def strict_locals_regex = /\#\s+locals:\s+\((.*?)\)(?=\s*-?%>|\s*$)/m
+
+    # Ruby: Template.new(source, identifier, handler, locals:, format:, variant:, virtual_path:)
+    def make(source, identifier, handler, locals:, format: nil, variant: nil, virtual_path: nil)
+      variable = nil
+      if virtual_path
+        base = String.end_with?(virtual_path, "/") ? "" : File.basename(virtual_path)
+        m = String.match(base, /\A_?(.*?)(?:\.\w+)*\z/)
+        variable = m ? String.to_sym(m[1] || "") : nil
+      end
+      sm = String.match(source, strict_locals_regex)
+      strict = sm ? String.rstrip(sm[1] || "") : nil
+      Template.new(identifier, handler, locals, format, variant, virtual_path, variable, strict, :template, nil)
+    end
+
+    # Ruby: Template::Text.new(string) and Template::HTML.new(string, type): the body is given
+    def text(string) = Template.new("text template", :raw, Symbol[], :text, nil, nil, nil, nil, :text, string)
+    def html(string) = Template.new("html template", :raw, Symbol[], :html, nil, nil, nil, nil, :html, string)
+
+    def strict_locals?(t) = @strict_locals != nil
+    def short_identifier(t) = @identifier
+    def inspect(t) = "#<ActionView::Template #{@identifier} locals=#{Kernel.inspect(@locals)}>"
+    def type(t) = @format
+
+    # Ruby: "_#{identifier_method_name}__#{@identifier.hash}_#{__id__}"; here the identifier and the locals' names
+    def method_name(t)
+      m = "_#{identifier_method_name(t)}"
+      m += "__#{Array.join(Array.map(Array.sort(@locals)) { |l| Symbol.to_s(l) }, "_")}" if !strict_locals?(t) && !Array.empty?(@locals)
+      m
+    end
+
+    def identifier_method_name(t) = String.gsub(short_identifier(t), /[^a-z_]/, "_")
+
+    # Ruby: render(view, locals, buffer = nil, implicit_locals: [], add_to_stack: true, &block); the block runs
+    # the compiled function with the buffer (Rails' public_send inside view._run)
+    def render(t, view, buffer = nil, add_to_stack: true)
+      if @kind != :template
+        return ActiveSupport::CoreExt::ERBUtil.html_escape(@body || "") if @kind == :html
+        return String.html_safe(@body || "")
+      end
+      buf = buffer || OutputBuffer.make
+      begin
+        Context._run(view, t, buf, add_to_stack) { yield(buf) }
+      rescue Template::Error => e
+        raise e
+      rescue MissingTemplate => e
+        raise e
+      rescue => e
+        raise Template::Error.new(Exception.message(e), @identifier)
+      end
+      buffer ? nil : OutputBuffer.to_s(buf)
+    end
+
+    # (Sake only) a template found at run time that the generator did not compile for these locals
+    def not_compiled(t)
+      raise Template::Error.new("#{@identifier} is not compiled for the locals #{Kernel.inspect(@locals)} (the template was added or its render call is not one the generator reads)", @identifier)
+    end
+  end
+end

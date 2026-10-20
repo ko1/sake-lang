@@ -1,0 +1,151 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/tags/{text_field,placeholderable,password_field,hidden_field,file_field,number_field,range_field,color_field,search_field,tel_field,url_field,email_field}.rb
+#
+# Ruby's `field_type` (the class name without "Field", downcased) is a function each class defines; an
+# overriding render calls the parent's as super_render (Sake has no super).
+
+require "base"
+require "translator"
+require "../../../../activesupport/active_support/core_ext/string/inflections"
+
+module ActionView
+  module Helpers
+    module Tags
+      # Ruby: Placeholderable#initialize (`super`, then the placeholder from the translation), as a function
+      module Placeholderable
+        module_function
+
+        def placeholder(object, object_name, method_name, tag_value)
+          placeholder = (tag_value in String) ? tag_value : nil
+          method_and_value = tag_value == true ? method_name : "#{method_name}.#{tag_value}"
+          placeholder ||= Translator.translate(Translator.make(object, object_name, method_and_value, scope: "helpers.placeholder"))
+          placeholder || String.humanize(method_name)
+        end
+      end
+
+      class TextField < Base
+        def field_type(t) = "text"
+
+        def after_initialize(t) = super_after_initialize(t)
+
+        def super_after_initialize(t)
+          tag_value = @options[:placeholder]
+          @options[:placeholder] = Placeholderable.placeholder(@object, @object_name, @method_name, tag_value) if tag_value != nil && tag_value != false
+        end
+
+        def render(t) = super_render(t)
+
+        def super_render(t)
+          options = Hash.stringify_keys(@options)
+          options["size"] = options["maxlength"] unless Hash.key?(options, "size")
+          options["type"] ||= field_type(t)
+          options["value"] = Hash.key?(options, "value") ? options["value"] : value_before_type_cast(t) unless field_type(t) == "file"
+          add_default_name_and_field(t, options)
+          tag(t, "input", options)
+        end
+      end
+
+      class PasswordField < TextField
+        def field_type(t) = "password"
+
+        def render(t)
+          @options = Hash.merge(Hash.of(value: nil), @options)
+          super_render(t)
+        end
+      end
+
+      class HiddenField < TextField
+        def field_type(t) = "hidden"
+
+        def render(t)
+          @options = Hash.merge(Hash.of(autocomplete: "off"), @options) unless FormTagHelper.remove_hidden_field_autocomplete(@template_object)
+          super_render(t)
+        end
+      end
+
+      class FileField < TextField
+        def field_type(t) = "file"
+
+        def render(t)
+          include_hidden = Hash.delete(@options, :include_hidden)
+          accept = @options[:accept]
+          @options[:accept] = Array.join(Array.map(accept) { |a| Kernel.to_s(a) }, ",") if accept in Array
+          options = Hash.stringify_keys(@options)
+          add_default_name_and_field(t, options)
+          if options["multiple"] && include_hidden
+            ActiveSupport::SafeBuffer.+(hidden_field_for_multiple_file(t, options), super_render(t))
+          else
+            super_render(t)
+          end
+        end
+
+        # private
+        def hidden_field_for_multiple_file(t, options)
+          tag_options = Hash.of("name" => options["name"], "type" => "hidden", "value" => "")
+          tag_options["autocomplete"] = "off" unless FormTagHelper.remove_hidden_field_autocomplete(@template_object)
+          tag(t, "input", tag_options)
+        end
+      end
+
+      class NumberField < TextField
+        def field_type(t) = "number"
+
+        def render(t)
+          options = Hash.stringify_keys(@options)
+          range = Hash.delete(options, "in") || Hash.delete(options, "within")
+          Hash.update(options, Hash.of("min" => Range.min(range), "max" => Range.max(range))) if range in Range
+          @options = options
+          super_render(t)
+        end
+      end
+
+      class RangeField < NumberField
+        def field_type(t) = "range"
+      end
+
+      class ColorField < TextField
+        def field_type(t) = "color"
+
+        def render(t)
+          options = Hash.stringify_keys(@options)
+          options["value"] ||= ColorField.validate_color_string(value(t))
+          @options = options
+          super_render(t)
+        end
+
+        # private
+        def validate_color_string(string)
+          (string in String) && String.match?(string, /#[0-9a-fA-F]{6}/) ? String.downcase(string) : "#000000"
+        end
+      end
+
+      class SearchField < TextField
+        def field_type(t) = "search"
+
+        # Ruby: autosave: true takes the request's host (no request here: autosave needs a String)
+        def render(t)
+          options = Hash.stringify_keys(@options)
+          if options["autosave"]
+            options["results"] ||= 10
+          end
+          if options["onsearch"]
+            options["incremental"] = true unless Hash.key?(options, "incremental")
+          end
+          @options = options
+          super_render(t)
+        end
+      end
+
+      class TelField < TextField
+        def field_type(t) = "tel"
+      end
+
+      class UrlField < TextField
+        def field_type(t) = "url"
+      end
+
+      class EmailField < TextField
+        def field_type(t) = "email"
+      end
+    end
+  end
+end

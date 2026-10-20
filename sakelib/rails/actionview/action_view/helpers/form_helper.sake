@@ -1,0 +1,448 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/form_helper.rb (partial: no nested attributes (fields_for :comments on an `accepts_nested_attributes_for` association: respond_to?("comments_attributes=")), no custom builder classes (builder: is a Class), no `object[]` auto-index from the view's instance variable, no direct_upload)
+#
+# A mixin of the view, and the FormBuilder class. Rails' FormBuilder defines its field helpers with
+# CodeGenerator over `field_helpers` (`def text_field(method, options = {}) = @template.text_field(@object_name,
+# method, objectify_options(options))`); here they are written out, each calling the view's helper through
+# `FormHelper.text_field(@template, ...)` (the builder's template is the view). Rails' mattr_accessors are
+# functions with the values an app's load_defaults 8.1 gives (ids on, no remote forms).
+
+require "../../../activesupport/active_support/core_ext/hash/keys"
+require "../../../activesupport/active_support/core_ext/string/inflections"
+require "form_tag_helper"
+require "form_options_helper"
+require "tags"
+require "../model_naming"
+require "../record_identifier"
+
+module ActionView
+  module Helpers
+    module FormHelper
+      include FormTagHelper
+
+      # ActionDispatch::Routing::UrlFor's (the view includes RoutingUrlFor)
+      def polymorphic_path(v, record_or_hash_or_array, options = Hash.new) = raise(NotImplementedError)
+      # RecordIdentifier's (Rails: include RecordIdentifier)
+      def dom_class(v, record_or_class, prefix = nil) = raise(NotImplementedError)
+      def dom_id(v, record_or_class, prefix = nil) = raise(NotImplementedError)
+
+      # Ruby: mattr_accessor :form_with_generates_remote_forms (load_defaults 6.1: false), :form_with_generates_ids
+      # (5.2: true), :multiple_file_field_include_hidden (7.0: true)
+      def form_with_generates_remote_forms(v) = false
+      def form_with_generates_ids(v) = true
+      def multiple_file_field_include_hidden(v) = true
+
+      def form_for(v, record, options = nil, **kw)
+        raise ArgumentError, "Missing block" unless block_given?
+        options = FormTagHelper.with_keywords(options, kw)
+        model = false
+        object_name = nil
+        case record
+        in String | Symbol then object_name = record
+        else
+          model = record
+          object = _object_for_form_builder(v, record)
+          raise ArgumentError, "First argument in form cannot contain nil or be empty" unless object
+          as = options[:as]
+          object_name = (as in String | Symbol) ? as : ModelNaming::Model.param_key(ModelNaming.convert_to_model(object))
+          apply_form_for_options!(v, object, options)
+        end
+        remote = Hash.delete(options, :remote)
+        if remote && !embed_authenticity_token_in_remote_forms(v) && Object.blank?(options[:authenticity_token])
+          options[:authenticity_token] = false
+        end
+        options[:scope] = object_name
+        options[:local] = !remote
+        options[:skip_default_ids] = false
+        options[:allow_method_names_outside_object] = Hash.fetch(options, :allow_method_names_outside_object, false)
+        url = case options[:url]
+              in String | Hash | Array | ModelNaming::Model | false => u then u
+              else nil
+              end
+        format = case options[:format]
+                 in String | Symbol => fmt then fmt
+                 else nil
+                 end
+        form_with_options(v, model, object_name, url, format, options) { |f| yield(f) }
+      end
+
+      def apply_form_for_options!(v, object, options)
+        object = ModelNaming.convert_to_model(object)
+        as = options[:as]
+        namespace = options[:namespace]
+        action = ModelNaming::Model.persisted?(object) ? :edit : :new
+        h = options[:html]
+        html = (h in Hash) ? h : Hash.new
+        defaults = Hash.of(class: as ? "#{action}_#{as}" : dom_class(v, object, action),
+                           id: Object.presence(Array.join(Array.compact(as ? Any[namespace, action, as] : Any[namespace, dom_id(v, object, action)]), "_")))
+        options[:html] = Hash.merge(defaults, html)
+      end
+
+      def form_with(v, model: false, scope: nil, url: nil, format: nil, **options)
+        return form_with_options(v, model, scope, url, format, options) { |f| yield(f) } if block_given?
+        form_with_options(v, model, scope, url, format, options)
+      end
+
+      # (Sake only) form_with with its options as a Hash (Ruby's `**options` passed on from form_for)
+      def form_with_options(v, model, scope, url, format, options)
+        raise ArgumentError, "Passed nil to the :model argument, expect an object or false" if model == nil
+        Hash.delete(options, :url)
+        Hash.delete(options, :format)
+        Hash.delete(options, :scope)
+        options = Hash.merge(Hash.of(allow_method_names_outside_object: true, skip_default_ids: !form_with_generates_ids(v)), options)
+        record = nil
+        case model
+        in Array | ModelNaming::Model
+          if url != false
+            url ||= format == nil ? polymorphic_path(v, model, Hash.new) : polymorphic_path(v, model, Hash.of(format: format))
+          end
+          last = ModelNaming.convert_to_model(_object_for_form_builder(v, model))
+          last => ModelNaming::Model
+          record = last
+          scope ||= ModelNaming::Model.param_key(last)
+        else nil
+        end
+        if block_given?
+          builder = instantiate_builder(v, scope, record, options)
+          output = capture(v) { yield(builder) }
+          options[:multipart] ||= FormBuilder.multipart?(builder)
+          html_options = html_options_for_form_with(v, url, record, options)
+          form_tag_with_body(v, html_options, output)
+        else
+          html_options = html_options_for_form_with(v, url, record, options)
+          form_tag_html(v, html_options)
+        end
+      end
+
+      def fields_for(v, record_name, record_object = nil, options = nil, **kw)
+        options = Hash.merge(Hash.of(allow_method_names_outside_object: false, skip_default_ids: false), FormTagHelper.with_keywords(options, kw))
+        fields_with(v, record_name, record_object, options) { |f| yield(f) }
+      end
+
+      def fields(v, scope = nil, model: nil, **options)
+        fields_with(v, scope, model, options) { |f| yield(f) }
+      end
+
+      # (Sake only) fields with its options as a Hash
+      def fields_with(v, scope, model, options)
+        options = Hash.merge(Hash.of(allow_method_names_outside_object: true, skip_default_ids: !form_with_generates_ids(v)), options)
+        record = nil
+        case model
+        in Array | ModelNaming::Model
+          last = ModelNaming.convert_to_model(_object_for_form_builder(v, model))
+          last => ModelNaming::Model
+          record = last
+          scope ||= ModelNaming::Model.param_key(last)
+        else nil
+        end
+        builder = instantiate_builder(v, scope, record, options)
+        capture(v) { yield(builder) }
+      end
+
+      def label(v, object_name, method, content_or_options = nil, options = nil, **kw)
+        options = FormTagHelper.with_keywords(options, kw)
+        content = content_or_options
+        if content_or_options in Hash
+          options = Hash.merge(options, content_or_options)
+          content = nil
+        end
+        tag = Tags::Label.new(object_name: object_name, method_name: method, template_object: v, options: options, content: content)
+        return Tags::Label.render(tag) { |builder| yield(builder) } if block_given?
+        Tags::Label.render(tag)
+      end
+
+      def text_field(v, object_name, method, options = nil, **kw) = Tags::TextField.render(Tags::TextField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def password_field(v, object_name, method, options = nil, **kw) = Tags::PasswordField.render(Tags::PasswordField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def hidden_field(v, object_name, method, options = nil, **kw) = Tags::HiddenField.render(Tags::HiddenField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+
+      def file_field(v, object_name, method, options = nil, **kw)
+        options = Hash.merge(Hash.of(include_hidden: multiple_file_field_include_hidden(v)), FormTagHelper.with_keywords(options, kw))
+        Tags::FileField.render(Tags::FileField.new(object_name: object_name, method_name: method, template_object: v, options: Hash.dup(options)))
+      end
+
+      def textarea(v, object_name, method, options = nil, **kw) = Tags::TextArea.render(Tags::TextArea.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def text_area(v, object_name, method, options = nil, **kw) = textarea(v, object_name, method, FormTagHelper.with_keywords(options, kw))
+
+      def checkbox(v, object_name, method, options = nil, checked_value = "1", unchecked_value = "0")
+        Tags::CheckBox.render(Tags::CheckBox.new(object_name: object_name, method_name: method, template_object: v, options: options || Hash.new, checked_value: checked_value, unchecked_value: unchecked_value))
+      end
+
+      def check_box(v, object_name, method, options = nil, checked_value = "1", unchecked_value = "0") = checkbox(v, object_name, method, options, checked_value, unchecked_value)
+
+      def radio_button(v, object_name, method, tag_value, options = nil, **kw)
+        Tags::RadioButton.render(Tags::RadioButton.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw), tag_value: tag_value))
+      end
+
+      def color_field(v, object_name, method, options = nil, **kw) = Tags::ColorField.render(Tags::ColorField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def search_field(v, object_name, method, options = nil, **kw) = Tags::SearchField.render(Tags::SearchField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def telephone_field(v, object_name, method, options = nil, **kw) = Tags::TelField.render(Tags::TelField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def phone_field(v, object_name, method, options = nil, **kw) = telephone_field(v, object_name, method, FormTagHelper.with_keywords(options, kw))
+      def date_field(v, object_name, method, options = nil, **kw) = Tags::DateField.render(Tags::DateField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def time_field(v, object_name, method, options = nil, **kw) = Tags::TimeField.render(Tags::TimeField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def datetime_field(v, object_name, method, options = nil, **kw) = Tags::DatetimeLocalField.render(Tags::DatetimeLocalField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def datetime_local_field(v, object_name, method, options = nil, **kw) = datetime_field(v, object_name, method, FormTagHelper.with_keywords(options, kw))
+      def month_field(v, object_name, method, options = nil, **kw) = Tags::MonthField.render(Tags::MonthField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def week_field(v, object_name, method, options = nil, **kw) = Tags::WeekField.render(Tags::WeekField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def url_field(v, object_name, method, options = nil, **kw) = Tags::UrlField.render(Tags::UrlField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def email_field(v, object_name, method, options = nil, **kw) = Tags::EmailField.render(Tags::EmailField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def number_field(v, object_name, method, options = nil, **kw) = Tags::NumberField.render(Tags::NumberField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+      def range_field(v, object_name, method, options = nil, **kw) = Tags::RangeField.render(Tags::RangeField.new(object_name: object_name, method_name: method, template_object: v, options: FormTagHelper.with_keywords(options, kw)))
+
+      # Ruby: object.is_a?(Array) ? object.last : object
+      def _object_for_form_builder(v, object) = (object in Array) ? Array.last(object) : object
+
+      # private
+      def html_options_for_form_with(v, url_for_options, model, options)
+        h = options[:html]
+        html = (h in Hash) ? Hash.dup(h) : Hash.new
+        local = Hash.key?(options, :local) ? options[:local] : !form_with_generates_remote_forms(v)
+        skip_enforcing_utf8 = options[:skip_enforcing_utf8]
+        html_options = Hash.merge!(Hash.slice(options, :id, :class, :multipart, :method, :data, :authenticity_token), html)
+        html_options[:remote] = Hash.delete(html, :remote) || !local
+        html_options[:method] ||= :patch if (model in ModelNaming::Model) && ModelNaming::Model.persisted?(model)
+        if skip_enforcing_utf8 == nil
+          html_options[:enforce_utf8] = options[:enforce_utf8] if Hash.key?(options, :enforce_utf8)
+        else
+          html_options[:enforce_utf8] = !skip_enforcing_utf8
+        end
+        html_options_for_form(v, url_for_options == nil ? Hash.new : url_for_options, html_options)
+      end
+
+      # Ruby: instantiate_builder(record_name, record_object, options); options[:builder] (a Class) is not taken
+      def instantiate_builder(v, record_name, record_object, options)
+        object = record_object
+        object_name = nil
+        case record_name
+        in String | Symbol then object_name = Kernel.to_s(record_name)
+        in nil then nil
+        else
+          object = record_name
+          object_name = ModelNaming::Model.param_key(ModelNaming.convert_to_model(record_name))
+        end
+        FormBuilder.make(object_name, object, v, options)
+      end
+    end
+
+    class FormBuilder
+      attr_accessor object_name, object, options, template
+      attr_accessor multipart, index, default_options, default_html_options, nested_child_index, auto_index, emitted_hidden_id
+
+      # Ruby: FormBuilder.new(object_name, object, template, options)
+      def make(object_name, object, template, options)
+        default_options = options ? Hash.slice(options, :index, :namespace, :skip_default_ids, :allow_method_names_outside_object) : Hash.new
+        default_html_options = Hash.except(default_options, :skip_default_ids, :allow_method_names_outside_object)
+        FormBuilder.convert_to_legacy_options(options)
+        index = options[:index] || options[:child_index]
+        FormBuilder.new(object_name, object, options, template, nil, index, default_options, default_html_options, Hash.new, nil, nil)
+      end
+
+      def multipart?(f) = @multipart
+      def set_multipart(f, multipart)
+        @multipart = multipart
+        parent_builder = @options[:parent_builder]
+        FormBuilder.set_multipart(parent_builder, multipart) if parent_builder in FormBuilder
+      end
+
+      def to_partial_path(f) = "form"
+      def to_model(f) = f
+
+      def id(f)
+        h = @options[:html]
+        ((h in Hash) ? h[:id] : nil) || @options[:id]
+      end
+
+      def field_id(f, method, *suffixes, namespace: @options[:namespace], index: @options[:index])
+        FormTagHelper.field_id_of(@object_name, method, suffixes, index, namespace)
+      end
+
+      def field_name(f, method, *methods, multiple: false, index: @options[:index])
+        name = Hash.key?(@options, :as) ? @options[:as] : @object_name
+        FormTagHelper.field_name_of(name, method, methods, multiple, index)
+      end
+
+      # Ruby: the field helpers defined with CodeGenerator over field_helpers
+      def text_field(f, method, options = nil, **kw) = FormHelper.text_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def password_field(f, method, options = nil, **kw) = FormHelper.password_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def textarea(f, method, options = nil, **kw) = FormHelper.textarea(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def text_area(f, method, options = nil, **kw) = FormHelper.textarea(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def color_field(f, method, options = nil, **kw) = FormHelper.color_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def search_field(f, method, options = nil, **kw) = FormHelper.search_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def telephone_field(f, method, options = nil, **kw) = FormHelper.telephone_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def phone_field(f, method, options = nil, **kw) = FormHelper.telephone_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def date_field(f, method, options = nil, **kw) = FormHelper.date_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def time_field(f, method, options = nil, **kw) = FormHelper.time_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def datetime_field(f, method, options = nil, **kw) = FormHelper.datetime_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def datetime_local_field(f, method, options = nil, **kw) = FormHelper.datetime_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def month_field(f, method, options = nil, **kw) = FormHelper.month_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def week_field(f, method, options = nil, **kw) = FormHelper.week_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def url_field(f, method, options = nil, **kw) = FormHelper.url_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def email_field(f, method, options = nil, **kw) = FormHelper.email_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def number_field(f, method, options = nil, **kw) = FormHelper.number_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      def range_field(f, method, options = nil, **kw) = FormHelper.range_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+
+      def fields_for(f, record_name, record_object = nil, fields_options = nil, **kw)
+        fields_options = FormTagHelper.with_keywords(fields_options, kw)
+        fields_options[:namespace] = @options[:namespace]
+        fields_options[:parent_builder] = f
+        record = record_object
+        name = nil
+        case record_name
+        in String | Symbol then name = Kernel.to_s(record_name)
+        in nil then raise ArgumentError, "fields_for needs a record name or a record"
+        else
+          last = ModelNaming.convert_to_model(FormHelper._object_for_form_builder(@template, record_name))
+          last => ModelNaming::Model
+          record = last
+          name = ModelNaming::Model.param_key(last)
+        end
+        object_name = @object_name
+        index = if Hash.key?(@options, :index)
+                  @options[:index]
+                elsif @auto_index
+                  object_name = String.delete_suffix(Kernel.to_s(object_name), "[]")
+                  @auto_index
+                end
+        full_name = if index
+                      "#{object_name}[#{index}][#{name}]"
+                    elsif String.end_with?(name, "[]") && (record in ModelNaming::Model)
+                      "#{object_name}[#{String.[](name, 0..-3)}][#{ModelNaming::Model.to_param(record)}]"
+                    else
+                      "#{object_name}[#{name}]"
+                    end
+        fields_options[:child_index] = index
+        FormHelper.fields_for(@template, full_name, record, fields_options) { |ff| yield(ff) }
+      end
+
+      def fields(f, scope = nil, model: nil, **options)
+        options[:allow_method_names_outside_object] = true
+        options[:skip_default_ids] = !FormHelper.form_with_generates_ids(@template)
+        FormBuilder.convert_to_legacy_options(options)
+        return fields_for(f, scope || model, model, options) { |ff| yield(ff) } if scope
+        fields_for(f, model, model, options) { |ff| yield(ff) }
+      end
+
+      def label(f, method, text = nil, options = nil, **kw)
+        opts = objectify_options(f, FormTagHelper.with_keywords(options, kw))
+        return FormHelper.label(@template, @object_name, method, text, opts) { |b| yield(b) } if block_given?
+        FormHelper.label(@template, @object_name, method, text, opts)
+      end
+
+      def checkbox(f, method, options = nil, checked_value = "1", unchecked_value = "0")
+        FormHelper.checkbox(@template, @object_name, method, objectify_options(f, options || Hash.new), checked_value, unchecked_value)
+      end
+
+      def check_box(f, method, options = nil, checked_value = "1", unchecked_value = "0") = checkbox(f, method, options, checked_value, unchecked_value)
+
+      def radio_button(f, method, tag_value, options = nil, **kw)
+        FormHelper.radio_button(@template, @object_name, method, tag_value, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      end
+
+      def hidden_field(f, method, options = nil, **kw)
+        @emitted_hidden_id = true if Kernel.to_s(method) == "id"
+        FormHelper.hidden_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      end
+
+      def file_field(f, method, options = nil, **kw)
+        set_multipart(f, true)
+        FormHelper.file_field(@template, @object_name, method, objectify_options(f, FormTagHelper.with_keywords(options, kw)))
+      end
+
+      def submit(f, value = nil, options = nil, **kw)
+        options = FormTagHelper.with_keywords(options, kw)
+        if value in Hash
+          options = value
+          value = nil
+        end
+        FormTagHelper.submit_tag(@template, value || submit_default_value(f), options)
+      end
+
+      def button(f, value = nil, options = nil, **kw)
+        options = FormTagHelper.with_keywords(options, kw)
+        case value
+        in Hash
+          options = value
+          value = nil
+        in Symbol
+          options = Hash.merge(Hash.of(name: field_name(f, value), id: field_id(f, value)), options)
+          value = nil
+        else nil
+        end
+        value ||= submit_default_value(f)
+        value = CaptureHelper.capture(@template) { yield(value) } if block_given?
+        formmethod = options[:formmethod]
+        if Object.present?(Kernel.to_s(formmethod || "")) && !String.match?(Kernel.to_s(formmethod), /post|get/i) && !Hash.key?(options, :name) && !Hash.key?(options, :value)
+          Hash.merge!(options, Hash.of(formmethod: :post, name: "_method", value: formmethod))
+        end
+        FormTagHelper.button_tag(@template, value, options)
+      end
+
+      def emitted_hidden_id?(f) = @emitted_hidden_id == true
+
+      # Ruby: FormOptionsHelper's FormBuilder methods
+      def select(f, method, choices = nil, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        html = Hash.merge(@default_html_options, html_options || Hash.new)
+        return FormOptionsHelper.select(@template, @object_name, method, choices, objectify_options(f, options), html) { yield } if block_given?
+        FormOptionsHelper.select(@template, @object_name, method, choices, objectify_options(f, options), html)
+      end
+
+      def collection_select(f, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        FormOptionsHelper.collection_select(@template, @object_name, method, collection, value_method, text_method, objectify_options(f, options), Hash.merge(@default_html_options, html_options || Hash.new))
+      end
+
+      def grouped_collection_select(f, method, collection, group_method, group_label_method, option_key_method, option_value_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        FormOptionsHelper.grouped_collection_select(@template, @object_name, method, collection, group_method, group_label_method, option_key_method, option_value_method,
+                                                    objectify_options(f, options), Hash.merge(@default_html_options, html_options || Hash.new))
+      end
+
+      def collection_checkboxes(f, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        html = Hash.merge(@default_html_options, html_options || Hash.new)
+        return FormOptionsHelper.collection_checkboxes(@template, @object_name, method, collection, value_method, text_method, objectify_options(f, options), html) { |b| yield(b) } if block_given?
+        FormOptionsHelper.collection_checkboxes(@template, @object_name, method, collection, value_method, text_method, objectify_options(f, options), html)
+      end
+
+      def collection_check_boxes(f, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        collection_checkboxes(f, method, collection, value_method, text_method, options, html_options)
+      end
+
+      def collection_radio_buttons(f, method, collection, value_method, text_method, options = nil, html_options = nil, **kw)
+        options, html_options = FormOptionsHelper.fill_with_keywords(options, html_options, kw)
+        html = Hash.merge(@default_html_options, html_options || Hash.new)
+        return FormOptionsHelper.collection_radio_buttons(@template, @object_name, method, collection, value_method, text_method, objectify_options(f, options), html) { |b| yield(b) } if block_given?
+        FormOptionsHelper.collection_radio_buttons(@template, @object_name, method, collection, value_method, text_method, objectify_options(f, options), html)
+      end
+
+      # private
+      def objectify_options(f, options)
+        result = Hash.merge(@default_options, options)
+        result[:object] = @object
+        result
+      end
+
+      # Ruby: I18n.t("helpers.submit.#{key}", model: model) with actionview's en.yml (Create/Update/Save %{model})
+      def submit_default_value(f)
+        object = @object
+        key = :submit
+        model = String.humanize(Kernel.to_s(@object_name))
+        if object in ModelNaming::Model
+          key = ModelNaming::Model.persisted?(object) ? :update : :create
+          model = ModelNaming::Model.model_name_human(object)
+        end
+        case key
+        in :create then "Create #{model}"
+        in :update then "Update #{model}"
+        else "Save #{model}"
+        end
+      end
+
+      def convert_to_legacy_options(options)
+        if Hash.key?(options, :skip_id)
+          options[:include_id] = !Hash.delete(options, :skip_id)
+        end
+      end
+    end
+  end
+end

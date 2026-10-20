@@ -1,0 +1,242 @@
+# Port of actionview-8.1.3/lib/action_view/helpers/asset_tag_helper.rb (partial: no preload Link headers (send_preload_links_header: the view has no response and Sake's Request no early hints), no records as sources (polymorphic_url), picture_tag's block gets no argument)
+#
+# A mixin of the view. Rails' `*sources` with a trailing options Hash is `*sources, **options`; Rails stringifies
+# the option keys, so the tags' attributes come out in Rails' order. mattr_accessors (image_loading,
+# preload_links_header, auto_include_nonce_for_scripts, ...) are functions with Rails' defaults (nil) that a view
+# class overrides. Template::Types[...] is ActionDispatch's Mime (with actionpack loaded, Rails' too).
+
+require "asset_url_helper"
+require "tag_helper"
+require "csp_helper"
+require "../../../actionpack/action_dispatch/http/mime_types"
+
+module ActionView
+  module Helpers
+    module AssetTagHelper
+      include AssetUrlHelper
+      include TagHelper
+
+      # content_security_policy_nonce (Rails: a controller helper_method) is CspHelper's
+      include CspHelper
+
+      # Ruby: mattr_accessor :image_loading, :image_decoding, :preload_links_header, :apply_stylesheet_media_default,
+      # :auto_include_nonce_for_scripts, :auto_include_nonce_for_styles (nil outside an app)
+      def image_loading(v) = nil
+      def image_decoding(v) = nil
+      def preload_links_header(v) = nil
+      def apply_stylesheet_media_default(v) = nil
+      def auto_include_nonce_for_scripts(v) = nil
+      def auto_include_nonce_for_styles(v) = nil
+
+      def javascript_include_tag(v, *sources, **opts)
+        options = AssetTagHelper.stringify_keys(opts)
+        path_options = AssetTagHelper.extract_path_options!(options)
+        use_preload_links_header = options["preload_links_header"] == nil ? preload_links_header(v) : Hash.delete(options, "preload_links_header")
+        crossorigin = Hash.delete(options, "crossorigin")
+        crossorigin = "anonymous" if crossorigin == true
+        tags = Array.map(Array.uniq(sources)) do |source|
+          href = path_to_javascript(v, source, path_options)
+          tag_options = Hash.merge(Hash.of("src" => href, "crossorigin" => crossorigin), options)
+          if tag_options["nonce"] == true || (!Hash.key?(tag_options, "nonce") && auto_include_nonce_for_scripts(v))
+            tag_options["nonce"] = content_security_policy_nonce(v)
+          elsif tag_options["nonce"] == false
+            Hash.delete(tag_options, "nonce")
+          end
+          Object.html_text(content_tag(v, "script", "", tag_options))
+        end
+        String.html_safe(Array.join(tags, "\n"))
+      end
+
+      def stylesheet_link_tag(v, *sources, **opts)
+        options = AssetTagHelper.stringify_keys(opts)
+        path_options = AssetTagHelper.extract_path_options!(options)
+        use_preload_links_header = options["preload_links_header"] == nil ? preload_links_header(v) : Hash.delete(options, "preload_links_header")
+        crossorigin = Hash.delete(options, "crossorigin")
+        crossorigin = "anonymous" if crossorigin == true
+        tags = Array.map(Array.uniq(sources)) do |source|
+          href = path_to_stylesheet(v, source, path_options)
+          tag_options = Hash.merge(Hash.of("rel" => "stylesheet", "crossorigin" => crossorigin, "href" => href), options)
+          if tag_options["nonce"] == true || (!Hash.key?(tag_options, "nonce") && auto_include_nonce_for_styles(v))
+            tag_options["nonce"] = content_security_policy_nonce(v)
+          elsif tag_options["nonce"] == false
+            Hash.delete(tag_options, "nonce")
+          end
+          if apply_stylesheet_media_default(v) && Object.blank?(tag_options["media"])
+            tag_options["media"] = "screen"
+          end
+          Object.html_text(tag(v, :link, tag_options))
+        end
+        String.html_safe(Array.join(tags, "\n"))
+      end
+
+      # Ruby: auto_discovery_link_tag(type = :rss, url_options = {}, tag_options = {}); a Hash of url_options goes
+      # through url_for (the routes); a String is the URL
+      def auto_discovery_link_tag(v, type = :rss, url_options = "", tag_options = nil)
+        tag_options ||= Hash.new
+        if !(type == :rss || type == :atom || type == :json) && Object.blank?(tag_options[:type])
+          raise ArgumentError, "You should pass :type tag_option key explicitly, because you have passed #{type} type other than :rss, :atom, or :json."
+        end
+        mime = Mime.[](type)
+        tag(v, "link", Hash.of("rel" => tag_options[:rel] || "alternate",
+                               "type" => tag_options[:type] || (mime ? Mime::Type.to_s(mime) : Kernel.to_s(type)),
+                               "title" => tag_options[:title] || String.upcase(Kernel.to_s(type)),
+                               "href" => url_options))
+      end
+
+      def favicon_link_tag(v, source = "favicon.ico", **options)
+        skip = Hash.delete(options, :skip_pipeline)
+        tag(v, "link", Hash.merge(Hash.of(rel: "icon", type: "image/x-icon", href: path_to_image(v, source, skip_pipeline: skip)), options))
+      end
+
+      def preload_link_tag(v, source, **options)
+        skip = Hash.delete(options, :skip_pipeline)
+        href = path_to_asset(v, source, skip_pipeline: skip)
+        extname = String.delete(String.downcase(File.extname(Kernel.to_s(source))), ".")
+        given_type = Hash.delete(options, :type)
+        mime = Mime.[](extname)
+        mime_type = given_type || (mime ? Mime::Type.to_s(mime) : nil)
+        as_type = Hash.delete(options, :as) || AssetTagHelper.resolve_link_as(extname, mime_type)
+        crossorigin = Hash.delete(options, :crossorigin)
+        crossorigin = "anonymous" if crossorigin == true || (Object.blank?(crossorigin) && as_type == "font")
+        fetchpriority = Hash.delete(options, :fetchpriority)
+        Hash.delete(options, :nopush)
+        rel = mime_type == "module" || mime_type == :module ? "modulepreload" : "preload"
+        nonce = content_security_policy_nonce(v)
+        req = request(v)
+        directives = req ? ActionDispatch::Request.content_security_policy_nonce_directives(req) : nil
+        add_nonce = nonce != nil && directives != nil && Array.include?(directives, "#{as_type}-src")
+        options[:nonce] = nonce if add_nonce
+        attrs = Hash.merge(Hash.of(rel: rel, href: href, as: as_type, type: mime_type, crossorigin: crossorigin, fetchpriority: fetchpriority), options)
+        TagHelper::TagBuilder.self_closing_tag_string(tag_builder(v), "link", attrs, true, ">")
+      end
+
+      def image_tag(v, source, options = nil, **opts)
+        options = AssetUrlHelper.merge_options(options, opts)
+        AssetTagHelper.check_for_image_tag_errors(options)
+        skip_pipeline = Hash.delete(options, :skip_pipeline)
+        options[:src] = resolve_asset_source(v, "image", source, skip_pipeline)
+        srcset = options[:srcset]
+        if srcset && !(srcset in String)
+          pairs = case srcset
+                  in Hash then Hash.map(srcset) { |src_path, size| "#{path_to_image(v, src_path, skip_pipeline: skip_pipeline)} #{size}" }
+                  in Array then Array.map(srcset) { |pair| (pair in Array) ? "#{path_to_image(v, pair[0], skip_pipeline: skip_pipeline)} #{pair[1]}" : "" }
+                  else String[]
+                  end
+          options[:srcset] = Array.join(pairs, ", ")
+        end
+        if options[:size]
+          dims = AssetTagHelper.extract_dimensions(Hash.delete(options, :size))
+          options[:width] = dims ? dims[0] : nil
+          options[:height] = dims ? dims[1] : nil
+        end
+        loading = image_loading(v)
+        options[:loading] ||= loading if loading
+        decoding = image_decoding(v)
+        options[:decoding] ||= decoding if decoding
+        tag(v, "img", options)
+      end
+
+      # Ruby: picture_tag(*sources, &block); the img's options are `image:`
+      def picture_tag(v, *sources, image: nil, **options)
+        sources = Array.flatten(sources)
+        image_options = image || Hash.new
+        skip_pipeline = Hash.delete(options, :skip_pipeline)
+        inner = if block_given?
+                  String.html_safe(Object.html_text(capture(v) { yield }))
+                elsif Array.size(sources) <= 1
+                  image_tag(v, Array.last(sources), image_options)
+                else
+                  source_tags = Array.map(sources) do |source|
+                    mime = Mime.[](String.[](File.extname(Kernel.to_s(source)), 1..) || "")
+                    tag(v, "source", Hash.of(srcset: resolve_asset_source(v, "image", source, skip_pipeline), type: mime ? Mime::Type.to_s(mime) : nil))
+                  end
+                  Array.push(source_tags, image_tag(v, Array.last(sources), image_options))
+                  safe_join(v, source_tags)
+                end
+        content_tag(v, "picture", inner, options)
+      end
+
+      def video_tag(v, *sources, **opts)
+        options = Hash.dup(opts)
+        public_poster_folder = Hash.delete(options, :poster_skip_pipeline)
+        skip_pipeline = Hash.delete(options, :skip_pipeline)
+        poster = options[:poster]
+        options[:poster] = path_to_image(v, poster, skip_pipeline: public_poster_folder) if poster
+        if options[:size]
+          dims = AssetTagHelper.extract_dimensions(Hash.delete(options, :size))
+          options[:width] = dims ? dims[0] : nil
+          options[:height] = dims ? dims[1] : nil
+        end
+        multiple_sources_tag_builder(v, "video", Array.flatten(sources), options, skip_pipeline)
+      end
+
+      def audio_tag(v, *sources, **opts)
+        options = Hash.dup(opts)
+        skip_pipeline = Hash.delete(options, :skip_pipeline)
+        multiple_sources_tag_builder(v, "audio", Array.flatten(sources), options, skip_pipeline)
+      end
+
+      # private
+      def multiple_sources_tag_builder(v, type, sources, options, skip_pipeline)
+        if Array.size(sources) > 1
+          inner = safe_join(v, Array.map(sources) { |source| tag(v, "source", Hash.of(src: resolve_asset_source(v, type, source, skip_pipeline))) })
+          content_tag(v, type, inner, options)
+        else
+          options[:src] = resolve_asset_source(v, type, Array.first(sources), skip_pipeline)
+          content_tag(v, type, nil, options)
+        end
+      end
+
+      def resolve_asset_source(v, asset_type, source, skip_pipeline)
+        case source
+        in Symbol | String then path_to_asset(v, source, type: String.to_sym(asset_type), skip_pipeline: skip_pipeline)
+        else raise ArgumentError, "Can't resolve #{asset_type} into URL: #{Kernel.inspect(source)}"
+        end
+      end
+
+      module_function
+
+      # Ruby: options.stringify_keys
+      def stringify_keys(opts)
+        out = Hash.new
+        Hash.each(opts) { |k, val| out[Kernel.to_s(k)] = val }
+        out
+      end
+
+      # Ruby: options.extract!("protocol", "extname", "host", "skip_pipeline").symbolize_keys
+      def extract_path_options!(options)
+        out = Hash.new
+        Array.each(String["protocol", "extname", "host", "skip_pipeline"]) do |k|
+          out[String.to_sym(k)] = Hash.delete(options, k) if Hash.key?(options, k)
+        end
+        out
+      end
+
+      def extract_dimensions(size)
+        s = Kernel.to_s(size)
+        if String.match?(s, /\A\d+(?:\.\d+)?x\d+(?:\.\d+)?\z/)
+          String.split(s, "x")
+        elsif String.match?(s, /\A\d+(?:\.\d+)?\z/)
+          String[s, s]
+        end
+      end
+
+      def check_for_image_tag_errors(options)
+        if options[:size] && (options[:height] || options[:width])
+          raise ArgumentError, "Cannot pass a :size option with a :height or :width option"
+        end
+      end
+
+      def resolve_link_as(extname, mime_type)
+        case extname
+        in "js" then "script"
+        in "css" then "style"
+        in "vtt" then "track"
+        else
+          first = Array.first(String.split(Kernel.to_s(mime_type), "/"))
+          Array.include?(String["audio", "video", "font", "image"], first) ? first : nil
+        end
+      end
+    end
+  end
+end

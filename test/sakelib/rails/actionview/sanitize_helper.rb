@@ -1,0 +1,32 @@
+gem "actionview", "8.1.3"
+require "action_view"
+
+view = ActionView::Base.empty
+
+inputs = [
+  "<script>alert(1)</script>hi", "<p onclick=\"x()\">a</p>", "<a href=\"javascript:alert(1)\">x</a>",
+  "<a href=\"http://x.com/?a=1&b=2\" title=\"t\">ok</a>", "<b>bold</b> <i>it</i> <u>u</u>",
+  "a &amp; b &lt; c &nbsp; d &copy; &#65; &#x42;", "<!-- comment -->text", "<img src=\"x.png\" onerror=\"e\">",
+  "<div><span style=\"color:red\">s</span></div>", "unclosed <b>bold", "<p>a<p>b", "1 < 2 and 3 > 2",
+  "<br/><hr>", "<a href=\"  JaVaScRiPt:x\">y</a>", "<style>p{}</style>x", "<IMG SRC=\"a.png\" ALT='q\"q'>",
+  "<a href='/rel'>r</a>", "<a href=\"data:text/html,x\">d</a>", "<img src=\" \">", "tom & jerry", "<foo>bar</foo>",
+  "<p class=\"a\" id=\"b\">c</p>", "<a href=\"mailto:a@b\">m</a>", "</p>stray", "\"quotes\" 'single'",
+  "<b><i>nested</b></i>", "<ul><li>1<li>2</ul>", "<span title=\"a&amp;b &lt;c&gt; é &quot;q&quot;\">x</span>",
+  "<span title='both \" and &#39;'>x</span>", "<a href=\"/a b?c=1&d=<2>\">x</a>", "<a href=\" /lead\">x</a>",
+  "<input disabled value=x>", "é &eacute; &hellip; &mdash; &foo; & x &amp b", "<div><p>a</p><p>b</p></div>",
+  "<div>t<p>a</p>u</div>", "<div><b>a</b><b>b</b></div>", "<table><tr><td>1</td><td>2</td></tr></table>",
+  "<dl><dt>a<dd>b</dl>", "<span><div>a</div><div>b</div></span>", "<a href=\"&#106;avascript:alert(1)\">e</a>",
+  "<a href=\"java\nscript:alert(1)\">n</a>", "<img src=\"data:image/png;base64,AA\">", "<div><!-- c --><b>x</b></div>",
+  "<script>a < b && c</script>", "<div id=\"a\" class='b'>v</div>", "", nil,
+]
+inputs.each do |input|
+  p input
+  p view.sanitize(input)
+  p view.strip_tags(input)
+  p view.strip_links(input)
+end
+p view.sanitize("<b>a</b><i>b</i><a href='x' class='c'>l</a>", tags: %w(b a), attributes: %w(href))
+p view.sanitize("<p style='color: red'>s</p>", tags: %w(p), attributes: %w(style))
+p view.sanitize("<b>safe</b>").html_safe?
+p view.sanitize_css("color: red; background: url(javascript:x); width: 10px; behavior: x")
+p view.sanitize_css("margin: 0 auto; font-family: 'Helvetica'; color: rgb(1,2,3) !important; border: 1px solid evil")
