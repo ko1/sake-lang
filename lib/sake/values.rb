@@ -146,7 +146,8 @@ module Sake
       when IOValue then "IO"
       else
         # Ruby's own objects for the concurrency and network operations (stdlib_net.rb).
-        name = { "Thread::Queue" => "Queue", "Thread::Mutex" => "Mutex", "TCPServer" => "TCPServer", "TCPSocket" => "Socket", "OpenSSL::SSL::SSLSocket" => "Socket" }[v.class.name]
+        name = { "Thread::Queue" => "Queue", "Thread::Mutex" => "Mutex", "TCPServer" => "TCPServer", "TCPSocket" => "Socket", "OpenSSL::SSL::SSLSocket" => "Socket",
+                 "SQLite3::Database" => "SQLite3::Database" }[v.class.name]
         name or raise "BUG: not a Sake value: #{v.inspect}"
       end
     end
@@ -211,7 +212,7 @@ module Sake
       when Set then "Set[#{v.map { inspect(_1) }.join(", ")}]"
       when Range then "#{v.begin.nil? ? "" : inspect(v.begin)}#{v.exclude_end? ? "..." : ".."}#{v.end.nil? ? "" : inspect(v.end)}"
       when ThreadValue, ::Thread::Queue, ::Thread::Mutex then "#<#{type_of(v)}>"
-      else v.class.name.to_s.match?(/\A(TCPServer|TCPSocket|OpenSSL::SSL::SSLSocket)\z/) ? "#<#{type_of(v)}>" : v.inspect
+      else v.class.name.to_s.match?(/\A(TCPServer|TCPSocket|OpenSSL::SSL::SSLSocket|SQLite3::Database)\z/) ? "#<#{type_of(v)}>" : v.inspect
       end
     end
 

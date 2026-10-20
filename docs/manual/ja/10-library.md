@@ -73,6 +73,7 @@ Ruby では require するが Sake では組み込みの操作になっている
 | `open3` | `Open3.capture2`、`capture2e`、`capture3`、`Kernel.system` |
 | `set` | `Set.of(...)`、`Set.add` ...（[値と型](03-values.md)） |
 | `socket` | `TCPServer`、`Socket`（TCP のみ） |
+| `sqlite3`（gem） | `SQLite3::Database`（[SQLite3::Database](ref/SQLite3-Database.md)） |
 
 ### gem に倣った小さなライブラリ
 

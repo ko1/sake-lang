@@ -41,9 +41,12 @@ def operations
     out << "\n### #{ns}\n\n#{sigs.join(" · ")}\n"
   end
   named, scoped = Sake::Resolver::BUILTIN_EXCEPTIONS.partition { !_1.include?("::") }
+  sqlite = scoped & Sake::Stdlib::SQLITE3_EXCEPTIONS
+  scoped -= sqlite
   out << "\n### Exception types\n\n#{named.map { "`#{_1}`" }.join(" · ")}: each has `T.new(message)`, "
   out << "`T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. "
-  out << "Only in `rescue`: #{scoped.map { "`#{_1}`" }.join(" · ")}.\n"
+  out << "Only in `rescue`: #{scoped.map { "`#{_1}`" }.join(" · ")}; under `SQLite3::Exception`: "
+  out << "#{sqlite.map { "`#{_1.delete_prefix("SQLite3::")}`" }.join(" · ")} (written `SQLite3::SQLException`).\n"
   out
 end
 

@@ -350,6 +350,10 @@ p(v)
   fileutils pathname tempfile stringio logger benchmark net_http uri cgi ipaddr webrick monitor
   timeout bigdecimal matrix prime securerandom erb; gems colorize thor rack httparty redis money
   jwt kramdown liquid i18n faker concurrent_ruby rspec minitest. Each has `sakelib/notes/NAME.md`.
+- SQLite is built in (Ruby's sqlite3 gem, no `require`): `db = SQLite3::Database.new(":memory:")`,
+  `SQLite3::Database.execute(db, sql, Any[binds])` gives rows (an Array of Arrays of Integer|Float|String|nil;
+  binds are Integer, Float, String, nil), `execute2` (column names first), `execute_batch`, `last_insert_row_id`,
+  `changes`, `transaction(db) { |d| }` (rolls back when the block raises), `close`. Errors: `rescue SQLite3::ConstraintException`, ...
 - Tests with minitest: `suite = Minitest.suite("x")`, `Minitest.test(suite, "name") { |t|
   Minitest.assert_equal(t, want, got) }`, `Minitest.run(suite)`.
 

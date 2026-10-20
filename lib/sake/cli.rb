@@ -192,7 +192,7 @@ module Sake
     # The typer's findings for the chosen items, as diagnostics.
     def strict_diagnostics(program, items, typer)
       typer.findings.map { |c, item| [c, mixed?(program, typer, c, item) ? "mixed" : item] }.select { |_, item| items.include?(item) }.sort_by { |c, _| [c.file ? 0 : 1, c.file.to_s, c.line, c.column] }.map do |c, item|
-        what = { "pair" => "the operands", "index" => "the index", "value" => "the value", "range" => "the Range's first value" }.fetch(c.arg) { c.arg.to_s.end_with?(":") ? "keyword `#{c.arg}`" : "argument #{c.arg}" }
+        what = { "pair" => "the operands", "index" => "the index", "value" => "the value", "range" => "the Range's first value", "binds" => "a bind value" }.fetch(c.arg) { c.arg.to_s.end_with?(":") ? "keyword `#{c.arg}`" : "argument #{c.arg}" }
         wants = c.expected.split("|") unless c.arg == "pair"
         msg, hints =
           case item
@@ -213,7 +213,8 @@ module Sake
             end
             # Rows such as Any["Tokyo", 13_960_000, 2194.07]: each position has a type that the Array loses.
             fails = typer.type_names(typer.operand_pair?(c) ? c.failing.map(&:first) : c.failing) - ["Nil"]
-            if %w[type mixed].include?(item) && c.node && !fails.empty? && field_reading_region(program, c.node).match?(/\w\[[^\]]+\]/) &&
+            if %w[type mixed].include?(item) && c.node && !fails.empty? && c.arg != "binds" && # SQLite3 binds stay an Array
+               field_reading_region(program, c.node).match?(/\w\[[^\]]+\]/) &&
                typer.mixed_arrays.any? { |names| (fails - names).empty? && !(names - fails).empty? }
               hints << "an Array here holds several types, one per position; to keep each position's type, make it a Tuple `[a, b]` (or a Record `{name: a}`)"
             end

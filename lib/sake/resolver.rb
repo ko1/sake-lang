@@ -54,11 +54,12 @@ module Sake
     # Raised by operations, and rescuable by name. Program errors (NOT_RESCUABLE) are what the checks before
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
-                            RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError EOFError ThreadError].freeze
+                            RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError EOFError ThreadError
+                            SQLite3::Exception].concat(Stdlib::SQLITE3_EXCEPTIONS).freeze
     NOT_RESCUABLE = %w[SystemStackError NotImplementedError LocalJumpError].freeze
     # Ruby's subclasses among the built-in exceptions: `rescue IndexError` also catches KeyError.
     BUILTIN_EXCEPTION_PARENT = { "KeyError" => "IndexError", "EOFError" => "IOError", "FloatDomainError" => "RangeError",
-                                 "Math::DomainError" => "ArgumentError" }.freeze
+                                 "Math::DomainError" => "ArgumentError" }.merge(Stdlib::SQLITE3_EXCEPTIONS.to_h { [_1, "SQLite3::Exception"] }).freeze
     CATCH_ALL = %w[StandardError Exception].freeze # Ruby's names for "any rescuable error" (a bare rescue in Sake)
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 

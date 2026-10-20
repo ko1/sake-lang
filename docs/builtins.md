@@ -746,6 +746,20 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Regexp.timeout(x)`
 - `Regexp.union(*String|Regexp|Array)`
 
+## SQLite3::Database
+
+- `SQLite3::Database.!=(x, Any)`
+- `SQLite3::Database.==(x, Any)`
+- `SQLite3::Database.changes(x)`
+- `SQLite3::Database.close(x)`
+- `SQLite3::Database.closed?(x)`
+- `SQLite3::Database.execute(x, String, [Array])`
+- `SQLite3::Database.execute2(x, String, [Array])`
+- `SQLite3::Database.execute_batch(x, String)`
+- `SQLite3::Database.last_insert_row_id(x)`
+- `SQLite3::Database.new(String)`
+- `SQLite3::Database.transaction(x) { }`
+
 ## Set
 
 - `Set.!=(x, Any)`
@@ -1136,4 +1150,4 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Exception types
 
-Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError`, `EOFError`, `ThreadError` has `T.new(message)`, `T.message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception, `Exception.backtrace(e)` its backtrace (an Array of `"FILE:LINE:in 'FUNCTION'"`, nil before it is raised) and `Exception.cause(e)` the exception being rescued when it was raised (or nil); `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError` can only be named in `rescue`.
+Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError`, `EOFError`, `ThreadError` has `T.new(message)`, `T.message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception, `Exception.backtrace(e)` its backtrace (an Array of `"FILE:LINE:in 'FUNCTION'"`, nil before it is raised) and `Exception.cause(e)` the exception being rescued when it was raised (or nil); `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError`, `SQLite3::Exception`, `SQLite3::SQLException`, `SQLite3::ConstraintException`, `SQLite3::BusyException`, `SQLite3::LockedException`, `SQLite3::ReadOnlyException`, `SQLite3::MisuseException`, `SQLite3::RangeException`, `SQLite3::MismatchException`, `SQLite3::CantOpenException`, `SQLite3::NotADatabaseException`, `SQLite3::IOException`, `SQLite3::FullException`, `SQLite3::TooBigException`, `SQLite3::AbortException`, `SQLite3::InterruptException`, `SQLite3::PermissionException`, `SQLite3::CorruptException`, `SQLite3::InternalException`, `SQLite3::MemoryException`, `SQLite3::NotFoundException`, `SQLite3::ProtocolException`, `SQLite3::EmptyException`, `SQLite3::SchemaChangedException`, `SQLite3::AuthorizationException`, `SQLite3::FormatException`, `SQLite3::UnsupportedException` can only be named in `rescue`; `rescue SQLite3::Exception` catches every `SQLite3::` one.

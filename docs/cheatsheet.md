@@ -352,6 +352,10 @@ p(v)
   fileutils pathname tempfile stringio logger benchmark net_http uri cgi ipaddr webrick monitor
   timeout bigdecimal matrix prime securerandom erb; gems colorize thor rack httparty redis money
   jwt kramdown liquid i18n faker concurrent_ruby rspec minitest. Each has `sakelib/notes/NAME.md`.
+- SQLite is built in (Ruby's sqlite3 gem, no `require`): `db = SQLite3::Database.new(":memory:")`,
+  `SQLite3::Database.execute(db, sql, Any[binds])` gives rows (an Array of Arrays of Integer|Float|String|nil;
+  binds are Integer, Float, String, nil), `execute2` (column names first), `execute_batch`, `last_insert_row_id`,
+  `changes`, `transaction(db) { |d| }` (rolls back when the block raises), `close`. Errors: `rescue SQLite3::ConstraintException`, ...
 - Tests with minitest: `suite = Minitest.suite("x")`, `Minitest.test(suite, "name") { |t|
   Minitest.assert_equal(t, want, got) }`, `Minitest.run(suite)`.
 
@@ -459,6 +463,10 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 `!=(x, Any)` · `==(x, Any)` · `=~(x, Any)` · `casefold?(x)` · `encoding(x)` · `escape(String)` · `fixed_encoding?(x)` · `match(x, String, [Integer])` · `match?(x, String, [Integer])` · `named_captures(x)` · `names(x)` · `new(String, [String])` · `options(x)` · `source(x)` · `timeout(x)` · `union(*String|Regexp|Array)`
 
+### SQLite3::Database
+
+`!=(x, Any)` · `==(x, Any)` · `changes(x)` · `close(x)` · `closed?(x)` · `execute(x, String, [Array])` · `execute2(x, String, [Array])` · `execute_batch(x, String)` · `last_insert_row_id(x)` · `new(String)` · `transaction(x) { }`
+
 ### Set
 
 `!=(x, Any)` · `&(x, Any)` · `-(x, Any)` · `==(x, Any)` · `add(x, Any)` · `add?(x, Any)` · `all?(x) { }` · `any?(x) { }` · `chunk_while(x) { }` · `classify(x) { }` · `clear(x)` · `collect(x) { }` · `collect!(x) { }` · `collect_concat(x) { }` · `compact(x)` · `count(x) [{ }]` · `cycle(x, Integer) { }` · `delete(x, Any)` · `delete?(x, Any)` · `delete_if(x) { }` · `detect(x) { }` · `difference(x, Set)` · `disjoint?(x, Set)` · `drop(x, Integer)` · `drop_while(x) { }` · `each(x) { }` · `each_cons(x, Integer) { }` · `each_entry(x) { }` · `each_slice(x, Integer) { }` · `each_with_index(x) { }` · `each_with_object(x, Any) { }` · `empty?(x)` · `entries(x)` · `filter(x) { }` · `filter!(x) { }` · `filter_map(x) { }` · `find(x) { }` · `find_all(x) { }` · `find_index(x) { }` · `first(x)` · `flat_map(x) { }` · `flatten(x)` · `group_by(x) { }` · `include?(x, Any)` · `inject(x, Any) { }` · `intersect?(x, Set)` · `intersection(x, Set)` · `join(x, [String])` · `keep_if(x) { }` · `length(x)` · `map(x) { }` · `map!(x) { }` · `max(x)` · `max_by(x) { }` · `member?(x, Any)` · `merge(x, Set)` · `min(x)` · `min_by(x) { }` · `minmax(x)` · `minmax_by(x) { }` · `new([Array])` · `Set[*Any]` · `none?(x) { }` · `of(*Any)` · `one?(x) { }` · `partition(x) { }` · `proper_subset?(x, Set)` · `proper_superset?(x, Set)` · `reduce(x, Any) { }` · `reject(x) { }` · `reject!(x) { }` · `replace(x, Set)` · `reverse_each(x) { }` · `select(x) { }` · `select!(x) { }` · `size(x)` · `slice_after(x) { }` · `slice_before(x) { }` · `slice_when(x) { }` · `sort(x)` · `sort_by(x) { }` · `subset?(x, Set)` · `subtract(x, Any)` · `sum(x, [Integer|Float|Rational|Complex])` · `superset?(x, Set)` · `take(x, Integer)` · `take_while(x) { }` · `tally(x)` · `to_a(x)` · `to_set(x)` · `union(x, Set)` · `uniq(x)` · `zip(x, *Array)` · `|(x, Any)`
@@ -497,4 +505,4 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Exception types
 
-`RuntimeError` · `ArgumentError` · `KeyError` · `IndexError` · `ZeroDivisionError` · `RangeError` · `IOError` · `EncodingError` · `RegexpError` · `FloatDomainError` · `NoMatchingPatternError` · `TypeError` · `EOFError` · `ThreadError`: each has `T.new(message)`, `T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. Only in `rescue`: `Math::DomainError`.
+`RuntimeError` · `ArgumentError` · `KeyError` · `IndexError` · `ZeroDivisionError` · `RangeError` · `IOError` · `EncodingError` · `RegexpError` · `FloatDomainError` · `NoMatchingPatternError` · `TypeError` · `EOFError` · `ThreadError`: each has `T.new(message)`, `T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. Only in `rescue`: `Math::DomainError` · `SQLite3::Exception`; under `SQLite3::Exception`: `SQLException` · `ConstraintException` · `BusyException` · `LockedException` · `ReadOnlyException` · `MisuseException` · `RangeException` · `MismatchException` · `CantOpenException` · `NotADatabaseException` · `IOException` · `FullException` · `TooBigException` · `AbortException` · `InterruptException` · `PermissionException` · `CorruptException` · `InternalException` · `MemoryException` · `NotFoundException` · `ProtocolException` · `EmptyException` · `SchemaChangedException` · `AuthorizationException` · `FormatException` · `UnsupportedException` (written `SQLite3::SQLException`).

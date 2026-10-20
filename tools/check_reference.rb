@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Checks the built-in reference chapters, docs/manual/{ja,en}/ref/NS.md, against the registry:
+# Checks the built-in reference chapters, docs/manual/{ja,en}/ref/NS.md (A-B.md for A::B), against the registry:
 #   - every operation of the namespace has a `## name` section (aliases share one: `## find, detect`),
 #     and no section names an operation that does not exist;
 #   - each section carries the exact signature line of each of its operations (`Array.first(x, [Integer])`);
@@ -73,11 +73,14 @@ def sections(text)
   out
 end
 
+# A nested namespace's chapter is A-B.md (SQLite3::Database: SQLite3-Database.md); its first line names it A::B.
+def chapter_file(ns) = "#{ns.gsub("::", "-")}.md"
+
 def check_chapter(ns, lang, errors)
-  path = File.join(REF[lang], "#{ns}.md")
-  return errors << "#{lang}/ref/#{ns}.md: missing" unless File.exist?(path)
+  path = File.join(REF[lang], chapter_file(ns))
+  rel = "#{lang}/ref/#{chapter_file(ns)}"
+  return errors << "#{rel}: missing" unless File.exist?(path)
   text = File.read(path)
-  rel = "#{lang}/ref/#{ns}.md"
   errors << "#{rel}: the first line must be `# #{ns}`" unless text.start_with?("# #{ns}\n")
   ops = operations(ns)
   seen = {}
@@ -171,7 +174,7 @@ if __FILE__ == $0
   when "--coverage"
     all.each do |ns|
       n = operations(ns).size
-      done = REF.keys.map { |lang| (path = File.join(REF[lang], "#{ns}.md"); File.exist?(path) ? sections(File.read(path)).sum { _1.names.size } : 0) }
+      done = REF.keys.map { |lang| (path = File.join(REF[lang], chapter_file(ns)); File.exist?(path) ? sections(File.read(path)).sum { _1.names.size } : 0) }
       puts format("%-12s %4d ops  ja %4d  en %4d", ns, n, *done)
     end
   else

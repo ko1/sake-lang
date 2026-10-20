@@ -351,6 +351,36 @@ p(got)                                     # => [1, 2, 3]
 - **Errors.** An error inside a thread is raised by `Thread.value` or `Thread.join`. A thread that is never joined ends silently when it fails, and every thread stops when the main program ends.
 - **Checking.** The typer runs a thread's block once, at `Thread.new`: its value is the type of `Thread.value`; a Queue's element type is the union of what is pushed (`Queue.pop` adds nil). Interleavings are not analyzed; each operation still checks its arguments while running.
 
+## SQLite
+
+SQLite3::Database is a connection to an SQLite database, through Ruby's sqlite3 gem (built in, so nothing is required). The first ones you use are `SQLite3::Database.new(path)` and `SQLite3::Database.execute(db, sql, Any[binds])`. Details: [SQLite3::Database](ref/SQLite3-Database.md).
+
+```ruby
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute(db, "create table t (id integer primary key, name text unique)")
+SQLite3::Database.execute(db, "insert into t (name) values (?)", Any["ann"])
+p(SQLite3::Database.last_insert_row_id(db))         # => 1
+p(SQLite3::Database.execute(db, "select * from t"))  # => [[1, "ann"]]
+begin
+  SQLite3::Database.transaction(db) { |d|
+    SQLite3::Database.execute(d, "insert into t (name) values ('bob')")
+    SQLite3::Database.execute(d, "insert into t (name) values ('ann')")
+  }
+rescue SQLite3::ConstraintException => e
+  puts(Exception.message(e))                         # => UNIQUE constraint failed: t.name
+end
+p(SQLite3::Database.execute2(db, "select name from t"))   # => [["name"], ["ann"]]
+```
+
+| Operation | Result |
+|---|---|
+| `SQLite3::Database.new(path)` · `close(db)` · `closed?(db)` | a SQLite3::Database (`":memory:"`: in memory) · nil · true/false |
+| `execute(db, sql, [binds])` · `execute2(db, sql, [binds])` · `execute_batch(db, sql)` | the rows (an Array of Arrays of Integer, Float, String or nil) · the column names, then the rows · nil |
+| `last_insert_row_id(db)` · `changes(db)` · `transaction(db) { \|d\| }` | Integer · Integer · the block's value (rolled back, and the error raised again, when the block raises) |
+
+- **Binds.** An Array (`Any[...]`) of Integer, Float, String and nil, filling `?` in order; another type is a static `type` problem.
+- **Errors.** The gem's classes with its messages: `SQLite3::SQLException`, `SQLite3::ConstraintException`, `SQLite3::BusyException`, ..., all caught by `rescue SQLite3::Exception`.
+
 ## Typed arrays
 
 `Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`, `Tuple[...]`, and `D[...]` for each class `D` create an Array whose element type is that type ([Values and types](03-values.md)). Every write is checked against the element type: a value of another type is a `type` problem statically and a `TypeError` at run time.

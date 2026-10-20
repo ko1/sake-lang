@@ -684,7 +684,7 @@ module Sake
 
     # The element type names of each Array holding two or more non-nil types (rows of mixed values).
     def mixed_arrays
-      @mixed_arrays ||= @sites.values.filter_map { |s| (n = type_names(s.elem) - %w[Nil]).size >= 2 ? n : nil }
+      @mixed_arrays ||= @sites.values.filter_map { |s| (n = type_names(s.elem) - %w[Nil]).size >= 2 && !db_row_sites[s.id] ? n : nil }
     end
 
     # The type names each field holds (and the elements of the containers in it), for fields holding two
@@ -864,6 +864,14 @@ module Sake
 
     # Exception types that only `raise` produces; built-in operations may raise the other kinds anywhere.
     def user_raised?(name) = name == "RuntimeError" || !Resolver::BUILTIN_EXCEPTIONS.include?(name)
+
+    # The built-in exceptions an operation may raise: SQLite3's only in a program that calls a SQLite3 operation.
+    def builtin_exceptions
+      @builtin_exceptions ||= begin
+        uses = @program.calls.each_value.any? { |h| h.each_value.any? { _1.is_a?(Builtin) && _1.namespace.start_with?("SQLite3::") } }
+        uses ? Resolver::BUILTIN_EXCEPTIONS : Resolver::BUILTIN_EXCEPTIONS - Stdlib::SQLITE3_EXCEPTIONS - ["SQLite3::Exception"]
+      end
+    end
 
     # Index.[]: a miss gives nil for Array and String; a Tuple has a fixed length, so a literal index
     # selects one position and any other index gives the union of all positions.
@@ -1600,7 +1608,8 @@ module Sake
         u(new_site(node, " #{name}", t("String")), t("Nil"))
       when "Exception.cause"
         record(node, name, 1, "Exception", a0)
-        u(of_atoms(@program.struct_types.select { |k, st| st.exception && !Resolver::NOT_RESCUABLE.include?(k) }.keys), t("Nil"))
+        sqlite3 = Resolver::BUILTIN_EXCEPTIONS - builtin_exceptions
+        u(of_atoms(@program.struct_types.select { |k, st| st.exception && !Resolver::NOT_RESCUABLE.include?(k) && !sqlite3.include?(k) }.keys), t("Nil"))
       else unknown("no signature for #{name}")
       end
     end

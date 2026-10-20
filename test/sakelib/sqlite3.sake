@@ -1,0 +1,107 @@
+# SQLite3::Database is built in; sqlite3.rb is the same program on Ruby's sqlite3 gem.
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute_batch(db, <<~SQL)
+  create table items (id integer primary key autoincrement, name text not null unique, price real, qty integer default 0, data blob);
+  create table log (id integer primary key, msg text);
+SQL
+Array.each(Any[["apple", 1.25, 10], ["bread", 2.5, 3], ["cheese", 7.0, 0]]) do |name, price, qty|
+  SQLite3::Database.execute(db, "insert into items (name, price, qty) values (?, ?, ?)", Any[name, price, qty])
+  p [SQLite3::Database.last_insert_row_id(db), SQLite3::Database.changes(db)]
+end
+SQLite3::Database.execute(db, "insert into items (name) values (?)", Any["dates"])
+p SQLite3::Database.execute(db, "select * from items order by id")
+p SQLite3::Database.execute(db, "select name, price * qty from items where qty > ? order by name", Any[0])
+p SQLite3::Database.execute(db, "select count(*), sum(qty), avg(price), max(name) from items")
+p SQLite3::Database.execute(db, "select ?, ?, ?, ?, typeof(?)", Any[1, -2.5, "text", nil, 2 ** 40])
+p SQLite3::Database.execute(db, "select ?1 || ?1, ?2", Any["ab", 3])
+p SQLite3::Database.execute(db, "select 'x' where 0")
+p SQLite3::Database.execute2(db, "select id, name as label from items where price < ?", Any[3])
+p SQLite3::Database.execute2(db, "select 1 as one where 0")
+SQLite3::Database.execute(db, "update items set qty = qty + 1 where price is not null")
+p SQLite3::Database.changes(db)
+SQLite3::Database.execute(db, "update items set data = x'cafe' where name = ?", Any["apple"])
+p SQLite3::Database.execute(db, "select data, length(data), hex(data) from items where name = 'apple'")
+p SQLite3::Database.execute(db, "select '日本', length('日本')")
+
+# Errors are the gem's classes, rescuable by name or by the base SQLite3::Exception.
+begin
+  SQLite3::Database.execute(db, "insert into items (name) values (?)", Any["apple"])
+rescue SQLite3::ConstraintException => e
+  puts "ConstraintException: #{Exception.message(e)}"
+end
+begin
+  SQLite3::Database.execute(db, "insert into items (price) values (1)")
+rescue SQLite3::Exception => e
+  puts "Exception: #{Exception.message(e)}"
+end
+begin
+  SQLite3::Database.execute(db, "select nope from items")
+rescue SQLite3::SQLException => e
+  puts "SQLException: #{Exception.message(e)}"
+end
+begin
+  SQLite3::Database.execute(db, "select ?", Any[1, 2])
+rescue SQLite3::RangeException => e
+  puts "RangeException: #{Exception.message(e)}"
+end
+begin
+  SQLite3::Database.execute_batch(db, "insert into log (msg) values ('a'); insert into nowhere values (1)")
+rescue SQLite3::SQLException => e
+  puts "SQLException: #{Exception.message(e)}"
+end
+p SQLite3::Database.execute(db, "select msg from log")
+
+# transaction: the block's value, committed; rolled back when the block raises, and the error raised again.
+v = SQLite3::Database.transaction(db) do |d|
+  SQLite3::Database.execute(d, "insert into log (msg) values (?)", Any["in"])
+  SQLite3::Database.execute(d, "select count(*) from log")
+end
+p v
+begin
+  SQLite3::Database.transaction(db) do |d|
+    SQLite3::Database.execute(d, "delete from log")
+    SQLite3::Database.execute(d, "insert into items (name) values ('bread')")
+  end
+rescue SQLite3::ConstraintException => e
+  puts "rolled back: #{Exception.message(e)}"
+end
+begin
+  SQLite3::Database.transaction(db) do |d|
+    SQLite3::Database.execute(d, "delete from log")
+    raise ArgumentError, "stop"
+  end
+rescue ArgumentError => e
+  puts "rolled back: #{Exception.message(e)}"
+end
+p SQLite3::Database.execute(db, "select id, msg from log")
+begin
+  SQLite3::Database.transaction(db) do |d|
+    SQLite3::Database.transaction(d) { |_| 1 }
+  end
+rescue SQLite3::SQLException => e
+  puts "nested: #{Exception.message(e)}"
+end
+
+# A file database: what one connection writes, another reads.
+path = "sqlite3_test.db"
+File.delete(path) if File.exist?(path)
+a = SQLite3::Database.new(path)
+SQLite3::Database.execute(a, "create table kv (k text primary key, v text)")
+SQLite3::Database.execute(a, "insert into kv values (?, ?)", Any["key", "value"])
+b = SQLite3::Database.new(path)
+p SQLite3::Database.execute(b, "select * from kv")
+p SQLite3::Database.closed?(a)
+SQLite3::Database.close(a)
+SQLite3::Database.close(b)
+p [SQLite3::Database.closed?(a), SQLite3::Database.close(a)]
+begin
+  SQLite3::Database.execute(a, "select 1")
+rescue ArgumentError => e
+  puts "ArgumentError: #{Exception.message(e)}"
+end
+File.delete(path)
+begin
+  SQLite3::Database.new("no/such/dir/x.db")
+rescue SQLite3::CantOpenException => e
+  puts "CantOpenException: #{Exception.message(e)}"
+end

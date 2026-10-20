@@ -888,7 +888,7 @@ module Sake
       n.rescues.each do |clause|
         names = clause.names
         if names.empty?
-          caught = raised.keys + Resolver::BUILTIN_EXCEPTIONS
+          caught = raised.keys + builtin_exceptions
         else
           clause.groups.each do |name, members|
             next unless members.any? { user_raised?(_1) }

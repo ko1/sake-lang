@@ -22,6 +22,7 @@ Sake's values look much like Ruby's, but every value carries one type tag, and e
 | Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
 | IO | `IO.stdout`, `File.open(path)` | one type for files and streams |
 | Thread, Mutex, Queue, TCPServer, Socket | `Thread.new { }`, `Mutex.new`, ... | concurrency and networking |
+| SQLite3::Database | `SQLite3::Database.new(path)` | a connection to an SQLite database ([SQLite3::Database](ref/SQLite3-Database.md)) |
 | class | `Point.new(x, y)` | record with mutable fields ([Classes](07-classes.md)) |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is truthy.

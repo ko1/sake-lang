@@ -1288,6 +1288,8 @@ block's results over every call that may compute it.
 | `TCPServer.new(host, port)` · `TCPServer.accept(s)` · `TCPServer.port(s)` · `TCPServer.close(s)` | a TCPServer (port 0 picks a free one) · a Socket (waits) · Integer · nil |
 | `Socket.connect(host, port)` · `Socket.gets(s)` · `Socket.read(s, n)` | a Socket · String or nil · String or nil (at most n bytes) |
 | `Socket.write(s, str)` · `Socket.close_write(s)` · `Socket.close(s)` | Integer · nil · nil |
+| `SQLite3::Database.new(path)` · `SQLite3::Database.execute(db, sql, [binds])` · `SQLite3::Database.execute2(db, sql, [binds])` | a SQLite3::Database (Ruby's sqlite3 gem; `":memory:"` works) · the rows, an Array of Arrays of Integer, Float, String or nil (binds: an Array of those) · the column names, then the rows |
+| `SQLite3::Database.execute_batch(db, sql)` · `last_insert_row_id(db)` · `changes(db)` · `transaction(db) { \|d\| }` · `close(db)` · `closed?(db)` | nil · Integer · Integer · the block's value (rolled back and raised again when the block raises) · nil · true/false; errors are the gem's `SQLite3::SQLException`, `SQLite3::ConstraintException`, ..., all under `SQLite3::Exception` |
 
 - **Variables in a thread.** A block shares the variables around it, as every block does. For a
   thread, the variables of the blocks around `Thread.new` (their parameters and locals), and the

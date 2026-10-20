@@ -1,0 +1,87 @@
+# SQLite3::Database (Ruby's sqlite3 gem): a table, inserts with binds, selects, a constraint rescued by class,
+# a transaction rolled back, last_insert_row_id / changes.
+db = SQLite3::Database.new(":memory:")
+p(db)
+SQLite3::Database.execute_batch(db, <<~SQL)
+  create table people (id integer primary key, name text not null unique, age integer, score real, note text);
+  create index people_age on people (age);
+SQL
+Array.each(Any[["ann", 31, 9.5], ["bob", 25, 7.25], ["cy", 40, 8.0]]) { |name, age, score|
+  SQLite3::Database.execute(db, "insert into people (name, age, score) values (?, ?, ?)", Any[name, age, score])
+  puts("#{name}: id #{SQLite3::Database.last_insert_row_id(db)}")
+}
+rows = SQLite3::Database.execute(db, "select id, name, age, score, note from people where age > ? order by age", Any[26])
+p(rows)
+# A row is an Array of Integer | Float | String | nil: a value is narrowed by a pattern before a typed operation.
+Array.each(rows) { |id, name, age, score, note|
+  score => Float
+  puts("#{id} #{name} #{age} #{Float.round(score, 1)} #{Kernel.inspect(note)}")
+}
+head, *body = SQLite3::Database.execute2(db, "select name, age * 2 as twice from people order by name")
+p(head, body)
+p(SQLite3::Database.execute2(db, "select name from people where id = ?", Any[99]))
+SQLite3::Database.execute(db, "update people set note = ? where age < ?", Any["young", 35])
+p(SQLite3::Database.changes(db))
+p(SQLite3::Database.execute(db, "select ?, ?, ?, ?", Any[nil, 1, 2.5, "x"]))
+p(SQLite3::Database.execute(db, "select x'00ff', 1 / 2, 1.0 / 2, null"))
+
+# A constraint violation, rescued by its class and then by the base class.
+begin
+  SQLite3::Database.execute(db, "insert into people (name) values (?)", Any["ann"])
+rescue SQLite3::ConstraintException => e
+  puts("constraint: #{Exception.message(e)}")
+end
+begin
+  SQLite3::Database.execute(db, "insert into people (age) values (1)")
+rescue SQLite3::Exception => e
+  p(e)
+end
+begin
+  SQLite3::Database.execute(db, "select * from nowhere")
+rescue SQLite3::ConstraintException
+  puts("not this one")
+rescue SQLite3::SQLException => e
+  puts("sql: #{Exception.message(e)}")
+end
+
+# A transaction: the block's value when it commits; rolled back, the error raised again, when the block raises.
+n = SQLite3::Database.transaction(db) { |d|
+  SQLite3::Database.execute(d, "insert into people (name, age) values ('dee', 22)")
+  SQLite3::Database.changes(d)
+}
+p(n)
+begin
+  SQLite3::Database.transaction(db) { |d|
+    SQLite3::Database.execute(d, "delete from people")
+    p(SQLite3::Database.execute(d, "select count(*) from people"))
+    SQLite3::Database.execute(d, "insert into people (name) values ('bob')")
+    SQLite3::Database.execute(d, "insert into people (name) values ('bob')")
+    puts("not reached")
+  }
+rescue SQLite3::ConstraintException => e
+  puts("rolled back: #{Exception.message(e)}")
+end
+begin
+  SQLite3::Database.transaction(db) { |d|
+    SQLite3::Database.execute(d, "delete from people where name = 'dee'")
+    raise ArgumentError, "changed my mind"
+  }
+rescue ArgumentError => e
+  p(e)
+end
+p(SQLite3::Database.execute(db, "select name from people order by id"))
+# break leaves the block and commits, as in Ruby.
+r = SQLite3::Database.transaction(db) { |d|
+  SQLite3::Database.execute(d, "update people set age = age + 1")
+  break "left early" if SQLite3::Database.changes(d) > 0
+  "kept going"
+}
+p(r, SQLite3::Database.execute(db, "select name, age from people order by id"))
+
+p(db == db, db == SQLite3::Database.new(":memory:"), SQLite3::Database.closed?(db))
+p(SQLite3::Database.close(db), SQLite3::Database.closed?(db), SQLite3::Database.close(db))
+begin
+  SQLite3::Database.execute(db, "select 1")
+rescue ArgumentError => e
+  puts("closed: #{Exception.message(e)}")
+end

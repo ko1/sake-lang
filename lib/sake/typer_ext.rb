@@ -19,6 +19,8 @@ module Sake
     # thread site id => {exception type => raise nodes} that its block may raise (value / join raise them).
     def thread_raises = (@thread_raises ||= {})
     def queue_sites = (@queue_sites ||= {})
+    # The Arrays of SQLite3 rows: their element types are the database's, which a Tuple cannot keep apart.
+    def db_row_sites = (@db_row_sites ||= {})
 
     def thread_site(node)
       id = site_id(node)
@@ -304,6 +306,15 @@ module Sake
       when "Queue.close" then a0
       when "Queue.size", "TCPServer.port", "Socket.write" then t("Integer")
       when "TCPServer.new" then t("TCPServer")
+      when "SQLite3::Database.new" then t("SQLite3::Database")
+      when "SQLite3::Database.execute", "SQLite3::Database.execute2"
+        record(node, name, "binds", Stdlib::SQLITE3_BIND_TYPES, elem_of(args[2])) if args[2]
+        row = new_site(node, " #{name} row", u(*%w[Integer Float String Nil].map { t(_1) }))
+        aux_site(node, "#{name} rows", row).tap { |rows| [row, rows].each { db_row_sites[_1[0][1]] = true } }
+      when "SQLite3::Database.execute_batch", "SQLite3::Database.close" then t("Nil")
+      when "SQLite3::Database.last_insert_row_id", "SQLite3::Database.changes" then t("Integer")
+      when "SQLite3::Database.closed?" then t("Boolean")
+      when "SQLite3::Database.transaction" then call_block(blk, [a0])
       when "TCPServer.accept", "Socket.connect", "Socket.connect_ssl" then t("Socket")
       when "TCPServer.close", "Socket.close", "Socket.close_write" then t("Nil")
       when "Socket.gets", "Socket.read", "IO.gets" then u(t("String"), t("Nil"))

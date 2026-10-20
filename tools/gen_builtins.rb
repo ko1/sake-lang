@@ -28,7 +28,7 @@ def build
   out << "`Exception.backtrace(e)` its backtrace (an Array of `\"FILE:LINE:in 'FUNCTION'\"`, nil before it is raised) "
   out << "and `Exception.cause(e)` the exception being rescued when it was raised (or nil); "
   out << "`Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). "
-  out << "#{scoped.map { "`#{_1}`" }.join(", ")} can only be named in `rescue`.\n"
+  out << "#{scoped.map { "`#{_1}`" }.join(", ")} can only be named in `rescue`; `rescue SQLite3::Exception` catches every `SQLite3::` one.\n"
   out
 end
 

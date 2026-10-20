@@ -351,6 +351,36 @@ p(got)                                     # => [1, 2, 3]
 - **エラー。** スレッドの中のエラーは `Thread.value` か `Thread.join` で上がります。join されないスレッドは失敗しても黙って終わり、メインが終わればすべてのスレッドが止まります。
 - **検査。** 型推論はスレッドのブロックを `Thread.new` で 1 度走らせます。その値が `Thread.value` の型、Queue の要素型は push されたものの和です（`Queue.pop` は nil を加える）。交互実行は解析せず、各操作が実行時に引数を検査します。
 
+## SQLite
+
+SQLite3::Database は SQLite のデータベースへの接続で、Ruby の sqlite3 gem を通します（組み込みなので require は要りません）。最初に使うのは `SQLite3::Database.new(path)` と `SQLite3::Database.execute(db, sql, Any[binds])` です。詳細は [SQLite3::Database](ref/SQLite3-Database.md) にあります。
+
+```ruby
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute(db, "create table t (id integer primary key, name text unique)")
+SQLite3::Database.execute(db, "insert into t (name) values (?)", Any["ann"])
+p(SQLite3::Database.last_insert_row_id(db))         # => 1
+p(SQLite3::Database.execute(db, "select * from t"))  # => [[1, "ann"]]
+begin
+  SQLite3::Database.transaction(db) { |d|
+    SQLite3::Database.execute(d, "insert into t (name) values ('bob')")
+    SQLite3::Database.execute(d, "insert into t (name) values ('ann')")
+  }
+rescue SQLite3::ConstraintException => e
+  puts(Exception.message(e))                         # => UNIQUE constraint failed: t.name
+end
+p(SQLite3::Database.execute2(db, "select name from t"))   # => [["name"], ["ann"]]
+```
+
+| 操作 | 結果 |
+|---|---|
+| `SQLite3::Database.new(path)` · `close(db)` · `closed?(db)` | SQLite3::Database（`":memory:"` はメモリ上）· nil · true/false |
+| `execute(db, sql, [binds])` · `execute2(db, sql, [binds])` · `execute_batch(db, sql)` | 行（Integer、Float、String、nil の Array の Array）· 列の名前と行 · nil |
+| `last_insert_row_id(db)` · `changes(db)` · `transaction(db) { \|d\| }` | Integer · Integer · ブロックの値（ブロックが例外を投げればロールバックして投げ直す） |
+
+- **bind。** Integer、Float、String、nil の Array（`Any[...]`）で、`?` を順に埋めます。他の型は静的な `type` の問題です。
+- **エラー。** gem のクラスとメッセージです: `SQLite3::SQLException`、`SQLite3::ConstraintException`、`SQLite3::BusyException` など。どれも `rescue SQLite3::Exception` で捕まえられます。
+
 ## 型付き Array
 
 `Integer[...]`、`Float[...]`、`Rational[...]`、`Complex[...]`、`String[...]`、`Symbol[...]`、`Tuple[...]`、および各クラス `D` の `D[...]` は、要素型がその型の Array を作ります（[値と型](03-values.md)）。書き込みは要素型と照合され、合わない値は静的には `type` の問題、実行時には `TypeError` です。

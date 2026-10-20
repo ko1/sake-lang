@@ -22,6 +22,7 @@ Sake の値は Ruby の値とほぼ同じ顔をしていますが、どの値も
 | Time | `Time.now`, `Time.at(0)`, `Time.new(2026, 10, 1)` | |
 | IO | `IO.stdout`, `File.open(path)` | ファイルとストリームの 1 つの型 |
 | Thread, Mutex, Queue, TCPServer, Socket | `Thread.new { }`, `Mutex.new`, ... | 並行とネットワーク |
+| SQLite3::Database | `SQLite3::Database.new(path)` | SQLite のデータベースへの接続（[SQLite3::Database](ref/SQLite3-Database.md)） |
 | クラス | `Point.new(x, y)` | 可変なフィールドを持つレコード（[クラス](07-classes.md)） |
 
 - **真偽。** 偽は `nil` と `false` だけです。`0` や `""` を含む他のすべての値は真です。
