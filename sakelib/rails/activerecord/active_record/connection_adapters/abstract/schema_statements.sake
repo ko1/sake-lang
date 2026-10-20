@@ -1,0 +1,191 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/abstract/schema_statements.rb (partial:
+# create_table, drop_table, add_column, add_index, remove_index (by name), columns, tables, views,
+# data_source(s), table_exists?, column_exists?, index_exists?, primary_key, index_name, type_to_sql,
+# add_timestamps; no change_table, foreign keys, check constraints, comments, rename, schema dumper)
+#
+# Ruby's keyword options are a Hash (`create_table(c, "posts", Hash.of(force: true)) { |t| ... }`).
+# Ruby's schema_cache (columns_hash, data_source_exists?) is read straight from the database here.
+
+module ActiveRecord
+  module ConnectionAdapters
+    module SchemaStatements
+      def data_source_sql(c, name = nil, type = nil) = raise(NotImplementedError)
+      def column_definitions(c, table_name) = raise(NotImplementedError)
+      def new_column_from_field(c, table_name, field, definitions) = raise(NotImplementedError)
+      def native_database_types(c) = raise(NotImplementedError)
+      def primary_keys(c, table_name) = raise(NotImplementedError)
+      def indexes(c, table_name) = raise(NotImplementedError)
+      def schema_creation(c) = raise(NotImplementedError)
+      def create_table_definition(c, name, options) = raise(NotImplementedError)
+
+      def table_options(c, table_name) = nil
+
+      # Ruby: schema_creation.accept(o); the adapter's SchemaCreation pastes the abstract one
+      def accept_schema(c, o)
+        (SchemaCreation|SQLite3::SchemaCreation).accept(schema_creation(c), o)
+      end
+
+      def data_sources(c) = query_values(c, data_source_sql(c), "SCHEMA")
+
+      def data_source_exists?(c, name)
+        return false if name == nil || Kernel.to_s(name) == ""
+        !Array.empty?(query_values(c, data_source_sql(c, name), "SCHEMA"))
+      end
+
+      def tables(c) = query_values(c, data_source_sql(c, nil, "BASE TABLE"), "SCHEMA")
+
+      def table_exists?(c, table_name)
+        return false if table_name == nil || Kernel.to_s(table_name) == ""
+        !Array.empty?(query_values(c, data_source_sql(c, table_name, "BASE TABLE"), "SCHEMA"))
+      end
+
+      def views(c) = query_values(c, data_source_sql(c, nil, "VIEW"), "SCHEMA")
+
+      def view_exists?(c, view_name)
+        !Array.empty?(query_values(c, data_source_sql(c, view_name, "VIEW"), "SCHEMA"))
+      end
+
+      def index_exists?(c, table_name, column_name = nil, options = Hash.new)
+        cols = column_name == nil ? nil : ((column_name in Array) ? Array.map(column_name) { |x| Kernel.to_s(x) } : Any[Kernel.to_s(column_name)])
+        Array.any?(indexes(c, table_name)) do |i|
+          (cols == nil || IndexDefinition.columns(i) == cols) &&
+            (!Hash.key?(options, :name) || IndexDefinition.name(i) == Kernel.to_s(options[:name])) &&
+            (!Hash.key?(options, :unique) || IndexDefinition.unique(i) == options[:unique])
+        end
+      end
+
+      # Returns an array of Column objects for the table specified by +table_name+.
+      def columns(c, table_name)
+        name = Kernel.to_s(table_name)
+        definitions = column_definitions(c, name)
+        Array.map(definitions) { |field| new_column_from_field(c, name, field, definitions) }
+      end
+
+      # Ruby's schema_cache.columns_hash(table_name)
+      def columns_hash(c, table_name)
+        h = Hash.new
+        Array.each(columns(c, table_name)) { |col| h[SQLite3::Column.name(col)] = col }
+        h
+      end
+
+      def column_exists?(c, table_name, column_name, type = nil)
+        n = Kernel.to_s(column_name)
+        Array.any?(columns(c, table_name)) { |col| SQLite3::Column.name(col) == n && (type == nil || SQLite3::Column.type(col) == type) }
+      end
+
+      # Returns just a table's primary key
+      def primary_key(c, table_name)
+        pk = primary_keys(c, table_name)
+        Array.size(pk) > 1 ? pk : Array.first(pk)
+      end
+
+      # Ruby: create_table(table_name, id: :primary_key, primary_key: nil, force: nil, **options) { |t| }
+      def create_table(c, table_name, options = Hash.new)
+        force = options[:force]
+        raise ArgumentError, "Options `:force` and `:if_not_exists` cannot be used simultaneously." if force && Hash.key?(options, :if_not_exists)
+        td = create_table_definition(c, Kernel.to_s(table_name), options)
+        TableDefinitionMethods.set_primary_key(td, table_name, Hash.fetch(options, :id, :primary_key), options[:primary_key], Hash.new)
+        yield td if block_given?
+        drop_table(c, table_name, Hash.of(if_exists: true)) if force
+        result = execute(c, accept_schema(c, td))
+        Array.each(TableDefinitionMethods.indexes(td)) do |column_name, index_options|
+          add_index(c, table_name, column_name, Hash.merge(index_options, Hash.of(if_not_exists: TableDefinitionMethods.if_not_exists(td))))
+        end
+        result
+      end
+
+      # Ruby: drop_table(*table_names, **options)
+      def drop_table(c, table_name, options = Hash.new)
+        execute(c, "DROP TABLE#{options[:if_exists] ? " IF EXISTS" : ""} #{quote_table_name(c, table_name)}")
+      end
+
+      def add_column(c, table_name, column_name, type, options = Hash.new)
+        return nil if options[:if_not_exists] == true && column_exists?(c, table_name, column_name)
+        opts = (type == :datetime && !Hash.key?(options, :precision) && supports_datetime_with_precision?(c)) ? Hash.merge(options, Hash.of(precision: 6)) : options
+        at = AlterTable.new(create_table_definition(c, Kernel.to_s(table_name), Hash.new))
+        AlterTable.add_column(at, column_name, type, opts)
+        execute(c, accept_schema(c, at))
+      end
+
+      def add_index(c, table_name, column_name, options = Hash.new)
+        index, algorithm, if_not_exists = add_index_options(c, table_name, column_name, options)
+        execute(c, accept_schema(c, CreateIndexDefinition.new(index, algorithm, if_not_exists)))
+      end
+
+      def add_index_options(c, table_name, column_name, options)
+        column_names = (column_name in Array) ? Array.map(column_name) { |x| Kernel.to_s(x) } : Any[Kernel.to_s(column_name)]
+        n = options[:name]
+        index_name = n ? Kernel.to_s(n) : index_name(c, table_name, column_names)
+        validate_index_length!(c, table_name, index_name, options[:internal] == true)
+        orders = options[:order]
+        index = IndexDefinition.new(Kernel.to_s(table_name), index_name, options[:unique] == true, column_names,
+                                    orders: (orders in Hash) ? orders : Hash.new, where: options[:where])
+        [index, nil, options[:if_not_exists] == true]
+      end
+
+      def index_name(c, table_name, column_names)
+        cols = (column_names in Array) ? column_names : Any[column_names]
+        "index_#{table_name}_on_#{Array.join(cols, "_and_")}"
+      end
+
+      def index_name_length(c) = 64
+
+      def validate_index_length!(c, table_name, new_name, internal = false)
+        if String.length(new_name) > index_name_length(c)
+          raise ArgumentError, "Index name '#{new_name}' on table '#{table_name}' is too long (#{String.length(new_name)} characters); the limit is #{index_name_length(c)} characters"
+        end
+      end
+
+      def remove_index(c, table_name, options = Hash.new)
+        return nil if options[:if_exists] && !index_exists?(c, table_name, nil, options)
+        execute(c, "DROP INDEX #{quote_column_name(c, Kernel.to_s(options[:name]))}")
+      end
+
+      def add_timestamps(c, table_name, options = Hash.new)
+        opts = Hash.dup(options)
+        opts[:null] = false if opts[:null] == nil
+        opts[:precision] = 6 unless Hash.key?(opts, :precision)
+        add_column(c, table_name, :created_at, :datetime, opts)
+        add_column(c, table_name, :updated_at, :datetime, opts)
+      end
+
+      def type_to_sql(c, type, limit = nil, precision = nil, scale = nil)
+        native = native_database_types(c)[type]
+        return Kernel.to_s(type) unless native
+        column_type_sql = (native in String) ? native : Kernel.to_s(native[:name])
+        if type == :decimal
+          if precision
+            column_type_sql += scale ? "(#{precision},#{scale})" : "(#{precision})"
+          elsif scale
+            raise ArgumentError, "Error adding decimal column: precision cannot be empty if scale is specified"
+          end
+        elsif (type == :datetime || type == :timestamp || type == :time) && precision
+          raise ArgumentError, "No #{native} type has precision of #{precision}. The allowed range of precision is from 0 to 6" unless (precision in Integer) && precision >= 0 && precision <= 6
+          column_type_sql += "(#{precision})"
+        elsif type != :primary_key && limit
+          column_type_sql += "(#{limit})"
+        end
+        column_type_sql
+      end
+
+      def quoted_columns_for_index(c, column_names, orders)
+        Array.map(column_names) do |name|
+          q = quote_column_name(c, name)
+          order = (orders in Hash) ? (orders[String.to_sym(Kernel.to_s(name))] || orders[Kernel.to_s(name)]) : orders
+          order && supports_index_sort_order?(c) ? "#{q} #{String.upcase(Kernel.to_s(order))}" : q
+        end.Array.join(", ")
+      end
+
+      def options_include_default?(c, options)
+        Hash.key?(options, :default) && !(options[:null] == false && options[:default] == nil)
+      end
+
+      def fetch_type_metadata(c, sql_type)
+        cast_type = lookup_cast_type(c, sql_type)
+        SqlTypeMetadata.new(sql_type: sql_type, type: ActiveModel::Type::Value.type(cast_type),
+                            limit: ActiveModel::Type::Value.limit(cast_type), precision: ActiveModel::Type::Value.precision(cast_type),
+                            scale: ActiveModel::Type::Value.scale(cast_type))
+      end
+    end
+  end
+end

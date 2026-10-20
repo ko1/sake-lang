@@ -1,0 +1,100 @@
+# Port of activemodel-8.1.3/lib/active_model/type/integer.rb and big_integer.rb (one file: BigInteger < Integer
+# repeats Integer's functions here)
+#
+# Ruby: Integer.new(limit: 8); here `new` takes the fields by keyword the same way (precision, scale, limit),
+# and initialize computes max and min.
+
+module ActiveModel
+  module Type
+    class Integer
+      attr_reader precision, scale, limit
+      private attr_accessor max, min
+      include Value
+      include Helpers::Immutable
+      include Helpers::Numeric
+
+      def default_limit = 4
+
+      def initialize(t)
+        @max = max_value(t)
+        @min = min_value(t)
+      end
+
+      def type(t) = :integer
+
+      def deserialize(t, value)
+        return nil if (value in nil) || value == ""
+        case value
+        in ::Integer then value
+        in ::Float then ::Float.to_i(value)
+        in ::String then ::String.to_i(value)
+        in true then 1
+        in false then 0
+        else Arithmetic.to_i(value)
+        end
+      end
+
+      def serialize(t, value)
+        v = case value
+            in ::Integer then value
+            in ::String
+              int = ::String.to_i(value)
+              return nil if int == 0 && value != "0" && non_numeric_string?(t, value)
+              int
+            else cast(t, value)
+            end
+        raise ActiveModel::RangeError, "#{v} is out of range for ActiveModel::Type::Integer with limit #{_limit(t)} bytes" if out_of_range?(t, v)
+        v
+      end
+
+      def serialize_cast_value(t, value)
+        raise ActiveModel::RangeError, "#{value} is out of range for ActiveModel::Type::Integer with limit #{_limit(t)} bytes" if out_of_range?(t, value)
+        value
+      end
+
+      # Ruby yields the cast value when it is out of range; here the caller asks unboundable? instead
+      def serializable?(t, value) = !out_of_range?(t, cast(t, value))
+
+      def out_of_range?(t, value)
+        return false unless value in ::Integer
+        @max <= value || @min > value
+      end
+
+      def cast_value(t, value)
+        case value
+        in ::Integer then value
+        in ::Float then ::Float.finite?(value) ? ::Float.to_i(value) : nil
+        in ::String then ::String.to_i(value)
+        in ::Rational then Rational.to_i(value)
+        in BigDecimal then BigDecimal.to_i(value)
+        else nil
+        end
+      end
+
+      def max_value(t) = 1 << (_limit(t) * 8 - 1)
+      def min_value(t) = -max_value(t)
+      def _limit(t) = @limit || default_limit
+    end
+
+    class BigInteger < Integer
+      def serialize(t, value)
+        case value
+        in ::Integer then value
+        in ::String
+          int = ::String.to_i(value)
+          return nil if int == 0 && value != "0" && non_numeric_string?(t, value)
+          int
+        else cast(t, value)
+        end
+      end
+      def serialize_cast_value(t, value) = value
+      def serializable?(t, value) = true
+      def out_of_range?(t, value) = false
+      def max_value(t) = 0
+      def min_value(t) = 0
+    end
+  end
+
+  class RangeError < ::RangeError
+  end
+end

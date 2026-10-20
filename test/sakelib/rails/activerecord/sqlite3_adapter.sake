@@ -1,0 +1,131 @@
+require "rails/activerecord/active_record"
+
+# The SQLite3 adapter on a :memory: database: schema statements, queries through Arel, transactions, errors
+Adapter = ActiveRecord::ConnectionAdapters::SQLite3Adapter
+Column = ActiveRecord::ConnectionAdapters::Column
+IndexDefinition = ActiveRecord::ConnectionAdapters::IndexDefinition
+TableDefinition = ActiveRecord::ConnectionAdapters::SQLite3::TableDefinition
+conn = Adapter.new(Hash.of(adapter: "sqlite3", database: ":memory:", log: true))
+# Ruby subscribes to "sql.active_record"; here the adapter keeps [name, sql] when the config says log: true
+def show_log(conn)
+  log = Adapter.query_log(conn)
+  return nil unless log
+  Array.each(log) { |name, sql| puts("  sql: #{sql}") unless name == "SCHEMA" }
+  Array.clear(log)
+end
+
+puts("-- schema")
+Adapter.create_table(conn, :posts) do |t|
+  TableDefinition.string(t, :title, Hash.of(null: false))
+  TableDefinition.text(t, :body)
+  TableDefinition.integer(t, :views, Hash.of(default: 0))
+  TableDefinition.boolean(t, :published, Hash.of(default: false))
+  TableDefinition.decimal(t, :score, Hash.of(precision: 5, scale: 2))
+  TableDefinition.references(t, :author)
+  TableDefinition.timestamps(t)
+end
+Adapter.add_index(conn, :posts, :title, Hash.of(unique: true))
+Adapter.create_table(conn, :tags, Hash.of(id: false)) { |t| TableDefinition.string(t, :name); TableDefinition.integer(t, :post_id) }
+Adapter.add_column(conn, :tags, :color, :string, Hash.of(default: "red"))
+show_log(conn)
+p(Adapter.tables(conn))
+p([Adapter.table_exists?(conn, :posts), Adapter.table_exists?(conn, :nope), Adapter.data_source_exists?(conn, "tags")])
+p(Adapter.primary_key(conn, "posts"))
+p(Adapter.primary_key(conn, "tags"))
+# One call per column: a block over the Columns is rejected at --strict (experiments/2026-10-20-rails-scale/bugs/arel_block_over_columns.sake)
+def show_column(c) = p([Column.name(c), Column.sql_type(c), Column.type(c), Column.null(c), Column.has_default?(c), Column.limit(c), Column.precision(c), Column.scale(c)])
+cols = Adapter.columns(conn, "posts")
+show_column(cols[0])
+show_column(cols[1])
+show_column(cols[2])
+show_column(cols[3])
+show_column(cols[4])
+show_column(cols[5])
+show_column(cols[6])
+show_column(cols[7])
+show_column(cols[8])
+Array.each(Adapter.indexes(conn, "posts")) { |i| p([i.IndexDefinition.name, i.IndexDefinition.columns, i.IndexDefinition.unique]) }
+p(Adapter.index_exists?(conn, :posts, :title))
+
+puts("-- insert and select")
+posts = Arel::Table.new(:posts)
+now = Time.utc(2026, 10, 20, 12, 0, 0)
+Array.each_with_index(Any["first", "second", "third"]) do |title, i|
+  im = Arel::InsertManager.new
+  Arel::InsertManager.insert(im, Any[[posts[:title], title], [posts[:views], i * 10], [posts[:published], Integer.odd?(i)], [posts[:created_at], now], [posts[:updated_at], now]])
+  p(Adapter.insert(conn, im))
+end
+show_log(conn)
+r = Adapter.select_all(conn, Arel::Table.project(posts, posts[:id], posts[:title], posts[:views], posts[:published]).Arel::SelectManager.order(posts[:id]))
+p(ActiveRecord::Result.columns(r))
+p(ActiveRecord::Result.rows(r))
+p(ActiveRecord::Result.to_a(r).Array.first)
+p(Adapter.select_value(conn, Arel::Table.project(posts, Arel::Attribute.count(posts[:id]))))
+p(Adapter.select_values(conn, Arel::Table.project(posts, posts[:title]).Arel::SelectManager.where(Arel::Attribute.gt(posts[:views], 5))))
+p(Adapter.select_rows(conn, "SELECT title, created_at FROM posts WHERE id = 1"))
+bind = Arel::Nodes::BindParam.new(ActiveRecord::Relation::QueryAttribute.new("views", "10", ActiveModel::Type::Integer.new))
+p(Adapter.select_all(conn, Arel::Table.project(posts, posts[:title]).Arel::SelectManager.where(Arel::Attribute.eq(posts[:views], bind))).ActiveRecord::Result.rows)
+p(Adapter.exec_query(conn, "SELECT id FROM posts WHERE title = ?", "SQL", Any["third"]).ActiveRecord::Result.rows)
+show_log(conn)
+
+puts("-- update and delete")
+um = Arel::UpdateManager.new(posts)
+Arel::UpdateManager.set(um, Any[[posts[:views], posts[:views] + 1]]).Arel::UpdateManager.where(Arel::Attribute.eq(posts[:published], true))
+p(Adapter.update(conn, um))
+dm = Arel::DeleteManager.new(posts)
+Arel::DeleteManager.where(dm, Arel::Attribute.eq(posts[:title], "first"))
+p(Adapter.delete(conn, dm))
+p(Adapter.select_rows(conn, "SELECT id, title, views FROM posts ORDER BY id"))
+show_log(conn)
+
+puts("-- transactions")
+Adapter.transaction(conn) do
+  Adapter.execute(conn, "UPDATE posts SET views = 100 WHERE id = 2")
+end
+Adapter.transaction(conn) do
+  Adapter.execute(conn, "UPDATE posts SET views = 200 WHERE id = 2")
+  raise ActiveRecord::Rollback
+end
+Adapter.transaction(conn) do
+  Adapter.execute(conn, "UPDATE posts SET views = 300 WHERE id = 3")
+  Adapter.transaction(conn, {requires_new: true, isolation: nil, joinable: true}) do
+    Adapter.execute(conn, "UPDATE posts SET views = 400 WHERE id = 3")
+    raise ActiveRecord::Rollback
+  end
+end
+Adapter.transaction(conn) { p(Adapter.open_transactions(conn)) }
+p(Adapter.select_rows(conn, "SELECT id, views FROM posts ORDER BY id"))
+show_log(conn)
+
+puts("-- errors")
+begin
+  Adapter.execute(conn, "INSERT INTO posts (title, created_at, updated_at) VALUES ('second', '2026-01-01', '2026-01-01')")
+rescue ActiveRecord::RecordNotUnique => e
+  puts("RecordNotUnique: #{Exception.message(e)}")
+end
+begin
+  Adapter.execute(conn, "INSERT INTO posts (body, created_at, updated_at) VALUES ('x', '2026-01-01', '2026-01-01')")
+rescue ActiveRecord::NotNullViolation => e
+  puts("NotNullViolation: #{Exception.message(e)}")
+end
+begin
+  Adapter.execute(conn, "SELECT nope FROM posts")
+rescue ActiveRecord::StatementInvalid => e
+  puts("StatementInvalid: #{Exception.message(e)}")
+end
+Array.clear(Adapter.query_log(conn) || Any[])
+
+puts("-- types")
+Array.each(Any["varchar(255)", "integer", "INTEGER", "bigint", "boolean", "decimal(5,2)", "decimal(10)", "datetime(6)", "date", "text", "blob", "float", "json", "whatever"]) do |sql_type|
+  t = Adapter.lookup_cast_type(conn, sql_type)
+  p([sql_type, ActiveModel::Type::Value.type(t), ActiveModel::Type::Value.limit(t), ActiveModel::Type::Value.precision(t), ActiveModel::Type::Value.scale(t)])
+end
+col = cols[7]
+v = ActiveModel::Type::Value.deserialize(Column.fetch_cast_type(col, conn), "2026-10-20 12:00:00")
+v => Time
+puts(Kernel.inspect(v))
+col = cols[4]
+p(ActiveModel::Type::Value.type(Column.fetch_cast_type(col, conn)))
+Adapter.drop_table(conn, :tags)
+p(Adapter.tables(conn))
+show_log(conn)

@@ -1,0 +1,32 @@
+# Port of activerecord-8.1.3/lib/active_record/type_caster/connection.rb (partial: no TypeCaster::Map, which
+# needs the model layer)
+#
+# Ruby's type casters answer type_cast_for_database and type_for_attribute; TypeCaster (Sake only) is the
+# module they include so that Arel::Table can call them. Ruby: TypeCaster::Connection.new(klass, table_name)
+# asks klass.with_connection for the schema cache; here it holds the connection itself.
+
+module ActiveRecord
+  module TypeCaster
+    def type_cast_for_database(tc, attr_name, value) = raise(NotImplementedError)
+    def type_for_attribute(tc, name) = raise(NotImplementedError)
+
+    class Connection
+      private attr_reader connection, table_name
+      include TypeCaster
+
+      def type_cast_for_database(tc, attr_name, value)
+        type = type_for_attribute(tc, attr_name)
+        ActiveModel::Type::Value.serialize(type, value)
+      end
+
+      def type_for_attribute(tc, attr_name)
+        conn = @connection
+        if ActiveRecord::ConnectionAdapters::SchemaStatements.data_source_exists?(conn, @table_name)
+          column = ActiveRecord::ConnectionAdapters::SchemaStatements.columns_hash(conn, @table_name)[Kernel.to_s(attr_name)]
+          return ActiveRecord::ConnectionAdapters::AbstractAdapter.lookup_cast_type_from_column(conn, column) if column
+        end
+        ActiveRecord::Type.default_value
+      end
+    end
+  end
+end

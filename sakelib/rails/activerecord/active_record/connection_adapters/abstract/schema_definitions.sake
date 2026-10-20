@@ -1,0 +1,266 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/abstract/schema_definitions.rb and
+# sqlite3/schema_definitions.rb (one file: SQLite3::TableDefinition < TableDefinition) (partial: no foreign keys,
+# check/exclusion/unique constraints, polymorphic references, Table (change_table), AlterTable beyond add_column)
+#
+# Ruby's keyword options (`t.string :title, null: false, default: ""`) are a Hash of Symbol => value here:
+# `TableDefinition.string(t, :title, Hash.of(null: false, default: ""))`. Ruby's ColumnMethods defines string,
+# text, integer, ... with module_eval in a loop (define_column_methods); here each is written out.
+# Ruby's ColumnDefinition (a Struct with an options Hash and option readers made by module_eval) is a class with
+# the same fields.
+
+module ActiveRecord
+  module ConnectionAdapters
+    # Ruby: IndexDefinition.new(table, name, unique = false, columns = [], lengths: {}, orders: {}, where: nil, ...)
+    class IndexDefinition
+      attr_reader table, name, unique, columns, lengths, orders, opclasses, where, type, using, include, nulls_not_distinct, comment, valid
+      def initialize(i)
+        @unique ||= false
+        @columns ||= String[]
+        @lengths ||= Hash.new
+        @orders ||= Hash.new
+        @opclasses ||= Hash.new
+        @valid = true if @valid == nil
+      end
+      def column_options(i) = {length: @lengths, order: @orders, opclass: @opclasses}
+    end
+
+    class ColumnDefinition
+      attr_accessor name, type, options, sql_type, cast_type
+      def initialize(c) = nil
+
+      def primary_key?(c) = @options[:primary_key] == true
+      def limit(c) = @options[:limit]
+      def precision(c) = @options[:precision]
+      def scale(c) = @options[:scale]
+      def default(c) = @options[:default]
+      def null(c) = @options[:null]
+      def collation(c) = @options[:collation]
+      def comment(c) = @options[:comment]
+      def if_exists(c) = @options[:if_exists]
+      def if_not_exists(c) = @options[:if_not_exists]
+      def aliased_types(c, name, fallback) = name == "timestamp" ? :datetime : fallback
+      def fetch_cast_type(c, connection)
+        @cast_type || Quoting.lookup_cast_type(connection, @sql_type || "")
+      end
+    end
+
+    class AddColumnDefinition
+      attr_reader column
+    end
+
+    class PrimaryKeyDefinition
+      attr_reader name
+    end
+
+    class CreateIndexDefinition
+      attr_reader index, algorithm, if_not_exists
+    end
+
+    # Ruby: ReferenceDefinition.new(name, polymorphic: false, index: true, foreign_key: false, type: :bigint, **options)
+    class ReferenceDefinition
+      private attr_reader name, index, type, options
+
+      def add_to(r, table)
+        Array.each(columns(r)) do |column_name, type, options|
+          TableDefinitionMethods.column(table, column_name, type, options)
+        end
+        if @index
+          TableDefinitionMethods.index(table, column_names(r), index_options(r, TableDefinitionMethods.name(table)))
+        end
+      end
+
+      def index_options(r, table_name)
+        i = @index
+        (i in Hash) ? i : Hash.new
+      end
+
+      def columns(r) = Any[[column_name(r), @type, @options]]
+      def column_name(r) = "#{@name}_id"
+      def column_names(r) = Array.map(columns(r)) { |c| c[0] }
+    end
+
+    # Ruby's TableDefinition (with ColumnMethods); SQLite3::TableDefinition < TableDefinition below. The module
+    # (Sake only) holds the functions both have.
+    module TableDefinitionMethods
+      def name(t) = raise(NotImplementedError)
+      def temporary(t) = raise(NotImplementedError)
+      def if_not_exists(t) = raise(NotImplementedError)
+      def options(t) = raise(NotImplementedError)
+      def indexes(t) = raise(NotImplementedError)
+
+      def set_primary_key(t, table_name, id, primary_key, options)
+        if id && !@as
+          pk = primary_key || "id"
+          if id in Hash
+            Hash.merge!(options, Hash.except(id, :type))
+            id = Hash.fetch(id, :type, :primary_key)
+          end
+          if pk in Array
+            primary_keys(t, pk)
+          else
+            primary_key(t, pk, id, options)
+          end
+        end
+      end
+
+      def primary_keys(t, name = nil)
+        @primary_keys = PrimaryKeyDefinition.new(name) if name
+        @primary_keys
+      end
+
+      def columns(t) = Hash.values(@columns_hash)
+      def [](t, name) = @columns_hash[Kernel.to_s(name)]
+
+      def primary_key(t, name, type = :primary_key, options = Hash.new)
+        column(t, name, type, Hash.merge(options, Hash.of(primary_key: true)))
+      end
+
+      def column(t, name, type, options = Hash.new)
+        n = Kernel.to_s(name)
+        raise_on_duplicate_column(t, n)
+        opts = Hash.except(options, :index)
+        @columns_hash[n] = new_column_definition(t, n, type, opts)
+        index = options[:index]
+        if index
+          index(t, n, (index in Hash) ? index : Hash.new)
+        end
+        t
+      end
+
+      def remove_column(t, name) = Hash.delete(@columns_hash, Kernel.to_s(name))
+
+      def index(t, column_name, options = Hash.new) = Array.push(@indexes, [column_name, options])
+
+      def timestamps(t, options = Hash.new)
+        options[:null] = false if options[:null] == nil
+        options[:precision] = 6 if !Hash.key?(options, :precision) && AbstractAdapter.supports_datetime_with_precision?(@conn)
+        column(t, :created_at, :datetime, options)
+        column(t, :updated_at, :datetime, options)
+      end
+
+      def string(t, *names) = column_methods(t, :string, names)
+      def text(t, *names) = column_methods(t, :text, names)
+      def integer(t, *names) = column_methods(t, :integer, names)
+      def bigint(t, *names) = column_methods(t, :bigint, names)
+      def float(t, *names) = column_methods(t, :float, names)
+      def decimal(t, *names) = column_methods(t, :decimal, names)
+      def numeric(t, *names) = column_methods(t, :numeric, names)
+      def datetime(t, *names) = column_methods(t, :datetime, names)
+      def timestamp(t, *names) = column_methods(t, :timestamp, names)
+      def time(t, *names) = column_methods(t, :time, names)
+      def date(t, *names) = column_methods(t, :date, names)
+      def binary(t, *names) = column_methods(t, :binary, names)
+      def blob(t, *names) = column_methods(t, :blob, names)
+      def boolean(t, *names) = column_methods(t, :boolean, names)
+      def json(t, *names) = column_methods(t, :json, names)
+
+      # Ruby's define_column_methods body: `def string(*names, **options)`; a trailing Hash is the options.
+      def column_methods(t, column_type, names)
+        last = Array.last(names)
+        options = (last in Hash) ? last : Hash.new
+        ns = (last in Hash) ? Array.take(names, Array.size(names) - 1) : names
+        raise ArgumentError, "Missing column name(s) for #{column_type}" if Array.empty?(ns)
+        Array.each(ns) { |name| column(t, name, column_type, options) }
+      end
+
+      def references(t, *args)
+        last = Array.last(args)
+        options = (last in Hash) ? last : Hash.new
+        names = (last in Hash) ? Array.take(args, Array.size(args) - 1) : args
+        Array.each(names) do |ref_name|
+          ReferenceDefinition.add_to(ReferenceDefinition.new(ref_name, Hash.fetch(options, :index, true), Hash.fetch(options, :type, reference_type(t)), Hash.except(options, :index, :type, :polymorphic, :foreign_key)), t)
+        end
+      end
+      def belongs_to(t, *args) = references(t, *args)
+      def reference_type(t) = :bigint
+
+      def new_column_definition(t, name, type, options)
+        type = integer_like_primary_key_type(t, type, options) if integer_like_primary_key?(t, type, options)
+        type = aliased_types(t, Kernel.to_s(type), type)
+        if AbstractAdapter.supports_datetime_with_precision?(@conn) && type == :datetime && !Hash.key?(options, :precision)
+          options = Hash.merge(options, Hash.of(precision: 6))
+        end
+        options = Hash.merge(options, Hash.of(primary_key: options[:primary_key] || type == :primary_key))
+        options = Hash.merge(options, Hash.of(null: false)) if options[:primary_key]
+        ColumnDefinition.new(name, type, options)
+      end
+
+      def aliased_types(t, name, fallback) = name == "timestamp" ? :datetime : fallback
+
+      def integer_like_primary_key?(t, type, options)
+        options[:primary_key] && (type == :integer || type == :bigint) && !Hash.key?(options, :default)
+      end
+
+      def integer_like_primary_key_type(t, type, options) = type
+
+      def raise_on_duplicate_column(t, name)
+        existing = @columns_hash[name]
+        if existing
+          if ColumnDefinition.primary_key?(existing)
+            raise ArgumentError, "you can't redefine the primary key column '#{name}' on '#{@name}'. To define a custom primary key, pass { id: false } to create_table."
+          else
+            raise ArgumentError, "you can't define an already defined column '#{name}' on '#{@name}'."
+          end
+        end
+      end
+    end
+
+    # Ruby: TableDefinition.new(conn, name, temporary: false, if_not_exists: false, options: nil, as: nil, comment: nil)
+    class TableDefinition
+      attr_reader conn, name, temporary, if_not_exists, options, as, comment
+      attr_reader indexes, foreign_keys, check_constraints
+      private attr_accessor columns_hash
+      attr_writer primary_keys
+      include TableDefinitionMethods
+      def initialize(t)
+        @temporary ||= false
+        @if_not_exists ||= false
+        @columns_hash = Hash.new
+        @indexes = Any[]
+        @foreign_keys = Any[]
+        @check_constraints = Any[]
+      end
+    end
+
+    module SQLite3
+      class TableDefinition
+        attr_reader conn, name, temporary, if_not_exists, options, as, comment
+        attr_reader indexes, foreign_keys, check_constraints
+        private attr_accessor columns_hash
+        attr_writer primary_keys
+        include TableDefinitionMethods
+        def initialize(t)
+          @temporary ||= false
+          @if_not_exists ||= false
+          @columns_hash = Hash.new
+          @indexes = Any[]
+          @foreign_keys = Any[]
+          @check_constraints = Any[]
+        end
+
+        def change_column(t, column_name, type, options = Hash.new)
+          name = Kernel.to_s(column_name)
+          Hash.delete(@columns_hash, name)
+          column(t, name, type, options)
+        end
+
+        # Ruby: references(*args, type: :integer, **options)
+        def reference_type(t) = :integer
+
+        def integer_like_primary_key_type(t, type, options) = :primary_key
+      end
+    end
+
+    # Ruby: AlterTable.new(td); here only add_column
+    class AlterTable
+      private attr_reader td
+      attr_reader adds
+      def initialize(a) = @adds = AddColumnDefinition[]
+      def name(a) = TableDefinitionMethods.name(@td)
+      def add_column(a, name, type, options = Hash.new)
+        n = Kernel.to_s(name)
+        Array.push(@adds, AddColumnDefinition.new(TableDefinitionMethods.new_column_definition(@td, n, type, options)))
+      end
+    end
+  end
+end

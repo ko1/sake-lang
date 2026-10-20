@@ -1,0 +1,75 @@
+# Port of activerecord-8.1.3/lib/arel/table.rb (partial: no hash/eql?)
+#
+# Ruby's class-level `Arel::Table.engine` (attr_accessor on the singleton) is a holder made once
+# (Table.engine / Table.set_engine). Ruby: Table.new(name, as: nil, klass: nil, type_caster: klass&.type_caster);
+# here new takes name, table_alias, klass, type_caster as fields (`Arel::Table.new("users")`), and a Symbol
+# name becomes its String in initialize. `t[:name]` is Indexable's `[]`.
+
+module Arel
+  class Table
+    attr_accessor name
+    attr_reader table_alias
+    private attr_reader klass, type_caster
+    include Arel::FactoryMethods
+    include Arel::AliasPredication
+    include Indexable
+
+    EngineHolder = Struct.new(:engine)
+    def engine_holder = once { EngineHolder.new(nil) }
+    def engine = EngineHolder.engine(engine_holder)
+    def set_engine(e) = EngineHolder.set_engine(engine_holder, e)
+
+    def initialize(t)
+      n = @name
+      @name = Symbol.name(n) if n in Symbol
+      @table_alias = nil if Kernel.to_s(@table_alias) == @name
+    end
+
+    def alias(t, name = "#{@name}_2") = Nodes::TableAlias.new(t, name)
+
+    def from(t) = SelectManager.new(t)
+
+    def join(t, relation, klass = :inner)
+      return from(t) unless relation
+      case relation
+      in String
+        raise EmptyJoinError if String.empty?(relation)
+        klass = :string
+      in Nodes::SqlLiteral
+        raise EmptyJoinError if Nodes::SqlLiteral.empty?(relation)
+        klass = :string
+      else
+      end
+      SelectManager.join(from(t), relation, klass)
+    end
+
+    def outer_join(t, relation) = join(t, relation, :outer)
+    def group(t, *columns) = SelectManager.group(from(t), *columns)
+    def order(t, *expr) = SelectManager.order(from(t), *expr)
+    def where(t, condition) = SelectManager.where(from(t), condition)
+    def project(t, *things) = SelectManager.project(from(t), *things)
+    def take(t, amount) = SelectManager.take(from(t), amount)
+    def skip(t, amount) = SelectManager.skip(from(t), amount)
+    def having(t, expr) = SelectManager.having(from(t), expr)
+
+    # Ruby: [](name, table = self); `klass.attribute_aliases` waits for the model layer.
+    def [](t, name, table = t)
+      n = (name in Symbol) ? Symbol.name(name) : name
+      Attributes::Attribute.new(table, n)
+    end
+
+    def type_cast_for_database(t, attr_name, value)
+      tc = @type_caster
+      return value unless tc
+      ActiveRecord::TypeCaster.type_cast_for_database(tc, attr_name, value)
+    end
+
+    def type_for_attribute(t, name)
+      tc = @type_caster
+      return ActiveModel::Type.default_value unless tc
+      ActiveRecord::TypeCaster.type_for_attribute(tc, name)
+    end
+
+    def able_to_type_cast?(t) = @type_caster != nil
+  end
+end

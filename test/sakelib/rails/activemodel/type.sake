@@ -1,0 +1,49 @@
+require "rails/activemodel/active_model/type"
+
+# ActiveModel::Type: cast (user input), serialize (to the database), deserialize (from it)
+V = ActiveModel::Type::Value
+i = ActiveModel::Type::Integer.new
+p([V.type(i), V.cast(i, "42"), V.cast(i, "4x"), V.cast(i, 3.9), V.cast(i, true), V.cast(i, ""), V.cast(i, nil), V.serialize(i, "12"), V.serialize(i, "abc"), V.deserialize(i, "7")])
+begin
+  V.serialize(i, 2**40)
+rescue ActiveModel::RangeError => e
+  puts("RangeError: #{Exception.message(e)}")
+end
+p([V.serialize(ActiveModel::Type::Integer.new(limit: 8), 2**40), V.serialize(ActiveModel::Type::BigInteger.new, 2**70)])
+s = ActiveModel::Type::String.new
+p([V.type(s), V.cast(s, 12), V.cast(s, true), V.cast(s, false), V.cast(s, :sym), V.serialize(s, 1.5), V.serialize(s, false), V.changed_in_place?(s, "a", "b"), V.mutable?(s)])
+p(V.cast(ActiveModel::Type::ImmutableString.new(true_s: "1", false_s: "0"), true))
+b = ActiveModel::Type::Boolean.new
+p([V.type(b), V.cast(b, "1"), V.cast(b, "0"), V.cast(b, "f"), V.cast(b, "off"), V.cast(b, "yes"), V.cast(b, ""), V.cast(b, nil), V.cast(b, 0), V.serialize(b, "false")])
+f = ActiveModel::Type::Float.new
+p([V.type(f), V.cast(f, "1.5"), V.cast(f, 2), V.cast(f, "Infinity"), V.cast(f, ""), V.cast(f, true)])
+d = ActiveModel::Type::Decimal.new(precision: 5, scale: 2)
+p([V.type(d), Kernel.to_s(V.cast(d, "3.14159")), Kernel.to_s(V.cast(d, 2)), Kernel.to_s(V.cast(d, "junk"))])
+dt = ActiveModel::Type::DateTime.new
+p([V.type(dt), V.cast(dt, "2026-10-20 12:34:56"), V.cast(dt, "2026-10-20T12:34:56.123456Z"), V.cast(dt, "2026-10-20 12:34:56+09:00"), V.cast(dt, ""), V.cast(dt, "garbage")])
+p(V.cast(dt, Hash.of(1 => 2026, 2 => 10, 3 => 20)))
+p(V.cast(ActiveModel::Type::DateTime.new(precision: 0), Time.utc(2026, 1, 2, 3, 4, 5 + Rational(3, 4))))
+da = ActiveModel::Type::Date.new
+p([V.type(da), V.cast(da, "2026-10-20"), V.cast(da, "2026-02-30"), V.cast(da, Time.utc(2026, 1, 2, 3, 4, 5)), V.cast(da, Hash.of(1 => 2026, 2 => 3, 3 => 4))])
+t = ActiveModel::Type::Time.new
+p([V.type(t), V.cast(t, "12:34:56"), V.cast(t, "2026-10-20 01:02:03")])
+bin = ActiveModel::Type::Binary.new
+data = V.serialize(bin, "ab\x00")
+data => ActiveModel::Type::Binary::Data
+p([V.type(bin), V.binary?(bin), ActiveModel::Type::Binary::Data.to_s(data), ActiveModel::Type::Binary::Data.hex(data), V.cast(bin, data)])
+p([V.type(ActiveModel::Type.lookup(:integer)), V.limit(ActiveModel::Type.lookup(:string, {precision: nil, scale: nil, limit: 10})), V.cast(ActiveModel::Type.default_value, :x)])
+begin
+  ActiveModel::Type.lookup(:nope)
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+
+# ActiveModel::Attribute: a value before and after its cast
+A = ActiveModel::Attribute
+a = A.from_user("age", "42", ActiveModel::Type::Integer.new)
+p([A.name(a), A.value_before_type_cast(a), A.value(a), A.value_for_database(a), A.came_from_user?(a)])
+a2 = A.with_value_from_user(a, "43")
+p([A.value(a2), A.changed?(a2), A.original_value(a2)])
+db = A.from_database("on", 1, ActiveModel::Type::Boolean.new)
+p([A.value(db), A.value_for_database(db), A.changed?(db), A.came_from_user?(db)])
+p(A.value(A.with_cast_value("x", 5, ActiveModel::Type::String.new)))

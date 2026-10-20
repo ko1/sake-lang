@@ -1,0 +1,53 @@
+# Port of activerecord-8.1.3/lib/arel/nodes/bound_sql_literal.rb (partial: no hash/eql?)
+#
+# Ruby's initialize checks its arguments before setting the fields; here initialize runs after `new` stored them.
+
+module Arel
+  module Nodes
+    class BoundSqlLiteral
+      attr_reader sql_with_placeholders, positional_binds, named_binds
+      include NodeExpression
+      include Arithmetic
+
+      def initialize(o)
+        pos = @positional_binds
+        named = @named_binds
+        has_positional = !(pos == nil || Array.empty?(pos))
+        has_named = !(named == nil || Hash.empty?(named))
+        if pos && has_positional
+          if has_named
+            raise BindError.new("cannot mix positional and named binds", @sql_with_placeholders)
+          end
+          expected = String.count(@sql_with_placeholders, "?")
+          if Array.size(pos) != expected
+            raise BindError.new("wrong number of bind variables (#{Array.size(pos)} for #{expected})", @sql_with_placeholders)
+          end
+          @named_binds = nil
+        elsif named && has_named
+          tokens_in_string = String.scan(@sql_with_placeholders, /:(?<!::)([a-zA-Z]\w*)/).Array.flat_map { |t| Tuple.to_a(t) }.Array.map { |t| String.to_sym(Kernel.to_s(t)) }.uniq
+          tokens_in_hash = Hash.keys(named).Array.map { |k| String.to_sym(Kernel.to_s(k)) }.uniq
+          missing = tokens_in_string - tokens_in_hash
+          if !Array.empty?(missing)
+            if Array.size(missing) == 1
+              raise BindError.new("missing value for #{Kernel.inspect(Array.first(missing))}", @sql_with_placeholders)
+            else
+              raise BindError.new("missing values for #{Kernel.inspect(missing)}", @sql_with_placeholders)
+            end
+          end
+          @positional_binds = nil
+        else
+          @positional_binds = nil
+        end
+      end
+
+      def +(o, other)
+        raise ArgumentError, "Expected Arel node" unless Arel.arel_node?(other)
+        Fragments.new(Any[o, other])
+      end
+
+      def inspect(o)
+        "#<Arel::Nodes::BoundSqlLiteral #{Kernel.inspect(@sql_with_placeholders)} #{Kernel.inspect(@named_binds || @positional_binds)}>"
+      end
+    end
+  end
+end

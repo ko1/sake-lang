@@ -1,0 +1,166 @@
+# Port of activerecord-8.1.3/lib/arel/predications.rb
+#
+# Ruby's grouping_any/grouping_all call `send(method_id, expr, *extras)`; here a `case` over the Symbol
+# (Predications.predicate). Ruby asks values respond_to?(:infinite?) / respond_to?(:unboundable?); here
+# Arel.infinity? and Arel.unboundable? match the types that answer.
+
+module Arel
+  module Predications
+    def not_eq(a, other) = Nodes::NotEqual.new(a, quoted_node(a, other))
+    def not_eq_any(a, others) = grouping_any(a, :not_eq, others)
+    def not_eq_all(a, others) = grouping_all(a, :not_eq, others)
+
+    def eq(a, other) = Nodes::Equality.new(a, quoted_node(a, other))
+    def is_not_distinct_from(a, other) = Nodes::IsNotDistinctFrom.new(a, quoted_node(a, other))
+    def is_distinct_from(a, other) = Nodes::IsDistinctFrom.new(a, quoted_node(a, other))
+    def eq_any(a, others) = grouping_any(a, :eq, others)
+    def eq_all(a, others) = grouping_all(a, :eq, quoted_array(a, others))
+
+    def between(a, other)
+      b = Range.begin(other)
+      e = Range.end(other)
+      if Arel.unboundable?(b) == 1 || Arel.unboundable?(e) == -1
+        self_in(a, Any[])
+      elsif open_ended?(b)
+        if open_ended?(e)
+          if Arel.infinity?(b) == 1 || Arel.infinity?(e) == -1
+            self_in(a, Any[])
+          else
+            not_in(a, Any[])
+          end
+        elsif Range.exclude_end?(other)
+          lt(a, e)
+        else
+          lteq(a, e)
+        end
+      elsif open_ended?(e)
+        gteq(a, b)
+      elsif Range.exclude_end?(other)
+        Nodes::Node.and(gteq(a, b), lt(a, e))
+      elsif b == e
+        eq(a, b)
+      else
+        left = quoted_node(a, b)
+        right = quoted_node(a, e)
+        Nodes::Between.new(a, Nodes::And.new(Any[left, right]))
+      end
+    end
+
+    # Ruby's `in`: a SelectManager, an Enumerable (an Array or a Range here), or one value
+    def in(a, other)
+      case other
+      in Arel::SelectManager then Nodes::In.new(a, Arel::SelectManager.ast(other))
+      in Array then Nodes::In.new(a, quoted_array(a, other))
+      in Range then Nodes::In.new(a, quoted_array(a, Range.to_a(other)))
+      else Nodes::In.new(a, quoted_node(a, other))
+      end
+    end
+    def self_in(a, other)
+      Predications.in(a, other)   # Ruby: self.in(other); `in` is a keyword, so it is called qualified
+    end
+
+    def in_any(a, others) = grouping_any(a, :in, others)
+    def in_all(a, others) = grouping_all(a, :in, others)
+
+    def not_between(a, other)
+      b = Range.begin(other)
+      e = Range.end(other)
+      if Arel.unboundable?(b) == 1 || Arel.unboundable?(e) == -1
+        not_in(a, Any[])
+      elsif open_ended?(b)
+        if open_ended?(e)
+          if Arel.infinity?(b) == 1 || Arel.infinity?(e) == -1
+            not_in(a, Any[])
+          else
+            self_in(a, Any[])
+          end
+        elsif Range.exclude_end?(other)
+          gteq(a, e)
+        else
+          gt(a, e)
+        end
+      elsif open_ended?(e)
+        lt(a, b)
+      else
+        left = lt(a, b)
+        right = Range.exclude_end?(other) ? gteq(a, e) : gt(a, e)
+        Nodes::Node.or(left, right)
+      end
+    end
+
+    def not_in(a, other)
+      case other
+      in Arel::SelectManager then Nodes::NotIn.new(a, Arel::SelectManager.ast(other))
+      in Array then Nodes::NotIn.new(a, quoted_array(a, other))
+      in Range then Nodes::NotIn.new(a, quoted_array(a, Range.to_a(other)))
+      else Nodes::NotIn.new(a, quoted_node(a, other))
+      end
+    end
+    def not_in_any(a, others) = grouping_any(a, :not_in, others)
+    def not_in_all(a, others) = grouping_all(a, :not_in, others)
+
+    def matches(a, other, escape = nil, case_sensitive = false)
+      Nodes::Matches.new(a, quoted_node(a, other), escape, case_sensitive)
+    end
+    def matches_any(a, others, escape = nil, case_sensitive = false) = grouping_any(a, :matches, others, escape, case_sensitive)
+    def matches_all(a, others, escape = nil, case_sensitive = false) = grouping_all(a, :matches, others, escape, case_sensitive)
+
+    def does_not_match(a, other, escape = nil, case_sensitive = false)
+      Nodes::DoesNotMatch.new(a, quoted_node(a, other), escape, case_sensitive)
+    end
+    def does_not_match_any(a, others, escape = nil) = grouping_any(a, :does_not_match, others, escape)
+    def does_not_match_all(a, others, escape = nil) = grouping_all(a, :does_not_match, others, escape)
+
+    def gteq(a, right) = Nodes::GreaterThanOrEqual.new(a, quoted_node(a, right))
+    def gteq_any(a, others) = grouping_any(a, :gteq, others)
+    def gteq_all(a, others) = grouping_all(a, :gteq, others)
+    def gt(a, right) = Nodes::GreaterThan.new(a, quoted_node(a, right))
+    def gt_any(a, others) = grouping_any(a, :gt, others)
+    def gt_all(a, others) = grouping_all(a, :gt, others)
+    def lt(a, right) = Nodes::LessThan.new(a, quoted_node(a, right))
+    def lt_any(a, others) = grouping_any(a, :lt, others)
+    def lt_all(a, others) = grouping_all(a, :lt, others)
+    def lteq(a, right) = Nodes::LessThanOrEqual.new(a, quoted_node(a, right))
+    def lteq_any(a, others) = grouping_any(a, :lteq, others)
+    def lteq_all(a, others) = grouping_all(a, :lteq, others)
+
+    def when(a, right) = Nodes::Case.when(Nodes::Case.new(a), quoted_node(a, right))
+    def concat(a, other) = Nodes::Concat.new(a, other)
+    def contains(a, other) = Nodes::Contains.new(a, quoted_node(a, other))
+    def overlaps(a, other) = Nodes::Overlaps.new(a, quoted_node(a, other))
+
+    def quoted_array(a, others) = Array.map(others) { |v| quoted_node(a, v) }
+
+    # Ruby: send(method_id, expr, *extras)
+    def predicate(a, method_id, expr, escape, case_sensitive)
+      case method_id
+      in :eq then eq(a, expr)
+      in :not_eq then not_eq(a, expr)
+      in :in then self_in(a, expr)
+      in :not_in then not_in(a, expr)
+      in :gt then gt(a, expr)
+      in :gteq then gteq(a, expr)
+      in :lt then lt(a, expr)
+      in :lteq then lteq(a, expr)
+      in :matches then matches(a, expr, escape, case_sensitive)
+      in :does_not_match then does_not_match(a, expr, escape, case_sensitive)
+      end
+    end
+
+    def grouping_any(a, method_id, others, escape = nil, case_sensitive = false)
+      nodes = Array.map(others) { |expr| predicate(a, method_id, expr, escape, case_sensitive) }
+      Nodes::Grouping.new(Nodes::Or.new(nodes))
+    end
+
+    def grouping_all(a, method_id, others, escape = nil, case_sensitive = false)
+      nodes = Array.map(others) { |expr| predicate(a, method_id, expr, escape, case_sensitive) }
+      Nodes::Grouping.new(Nodes::And.new(nodes))
+    end
+
+    def quoted_node(a, other) = Nodes.build_quoted(other, a)
+
+    def open_ended?(value)
+      value == nil || Arel.infinity?(value) != nil || Arel.unboundable?(value) != nil
+    end
+  end
+end

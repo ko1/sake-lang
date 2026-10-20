@@ -1,0 +1,240 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/abstract/database_statements.rb (partial: no
+# async (FutureResult), no fixtures, no cacheable_query (StatementCache), no unprepared_statement fallback)
+#
+# Ruby's keyword options (prepare:, allow_retry:, materialize_transactions:) are positional here, in Ruby's
+# order. `transaction(requires_new: nil, isolation: nil, joinable: true) { }` takes a Record of the options.
+# Ruby's `delegate :within_new_transaction, ... to: :transaction_manager` are written out.
+
+module ActiveRecord
+  module ConnectionAdapters
+    module DatabaseStatements
+      def transaction_manager(c) = raise(NotImplementedError)
+
+      # Converts an arel AST to SQL
+      def to_sql(c, arel_or_sql_string, binds = Any[])
+        sql, _ = to_sql_and_binds(c, arel_or_sql_string, binds)
+        sql
+      end
+
+      def to_sql_and_binds(c, arel_or_sql_string, binds = Any[], preparable = nil, allow_retry = false)
+        node = (arel_or_sql_string in Arel::TreeManager) ? Arel::TreeManager.ast(arel_or_sql_string) : arel_or_sql_string
+        if Arel.arel_node?(node)
+          raise "Passing bind parameters with an arel AST is forbidden. The values must be stored on the AST directly" unless Array.empty?(binds)
+          if prepared_statements(c)
+            collector = Arel::Collectors::Composite.new(Arel::Collectors::SQLString.new, Arel::Collectors::Bind.new)
+            Arel::Collectors::Composite.set_retryable(collector, true)
+            Arel::Collectors::Composite.set_preparable(collector, true)
+            sql, bs = Arel::Visitors::Visitor.compile(visitor(c), node, collector)
+            [sql, bs, Arel::Collectors::Composite.preparable(collector), Arel::Collectors::Composite.retryable(collector)]
+          else
+            collector = Arel::Collectors::SubstituteBinds.new(c, Arel::Collectors::SQLString.new)
+            Arel::Collectors::SubstituteBinds.set_retryable(collector, true)
+            sql = Arel::Visitors::Visitor.compile(visitor(c), node, collector)
+            [sql, Any[], preparable, Arel::Collectors::SubstituteBinds.retryable(collector)]
+          end
+        else
+          node => String
+          [node, binds, preparable, allow_retry]
+        end
+      end
+
+      # Returns an ActiveRecord::Result instance.
+      def select_all(c, arel, name = nil, binds = Any[], preparable = nil, allow_retry = false)
+        sql, bs, prep, retry_ok = to_sql_and_binds(c, arel, binds, preparable, allow_retry)
+        select(c, sql, name, bs, prepared_statements(c) && prep, retry_ok)
+      rescue ::RangeError
+        ActiveRecord::Result.empty_result
+      end
+
+      def select_one(c, arel, name = nil, binds = Any[]) = ActiveRecord::Result.to_a(select_all(c, arel, name, binds)).Array.first
+
+      def select_value(c, arel, name = nil, binds = Any[]) = single_value_from_rows(c, select_rows(c, arel, name, binds))
+
+      def select_values(c, arel, name = nil, binds = Any[])
+        Array.map(select_rows(c, arel, name, binds)) { |row| row[0] }
+      end
+
+      def select_rows(c, arel, name = nil, binds = Any[]) = ActiveRecord::Result.rows(select_all(c, arel, name, binds))
+
+      def query_value(c, sql, name = nil) = single_value_from_rows(c, query(c, sql, name))
+
+      def query_values(c, sql, name = nil) = Array.map(query(c, sql, name)) { |row| row[0] }
+
+      def query(c, sql, name = nil, allow_retry = true, materialize_transactions = true)
+        ActiveRecord::Result.rows(internal_exec_query(c, sql, name, Any[], false, allow_retry, materialize_transactions))
+      end
+
+      def write_query?(c, sql) = raise(NotImplementedError)
+
+      # Executes the SQL statement in the context of this connection and returns the raw result.
+      def execute(c, sql, name = nil, allow_retry = false) = internal_execute(c, sql, name, Any[], false, allow_retry)
+
+      def exec_query(c, sql, name = "SQL", binds = Any[], prepare = false) = internal_exec_query(c, sql, name, binds, prepare)
+
+      def exec_insert(c, sql, name = nil, binds = Any[], pk = nil, sequence_name = nil, returning = nil)
+        s, bs = sql_for_insert(c, sql, pk, binds, returning)
+        internal_exec_query(c, s, name, bs)
+      end
+
+      def exec_delete(c, sql, name = nil, binds = Any[]) = affected_rows(c, internal_execute(c, sql, name, binds))
+      def exec_update(c, sql, name = nil, binds = Any[]) = affected_rows(c, internal_execute(c, sql, name, binds))
+
+      # Executes an INSERT query and returns the new record's ID
+      def insert(c, arel, name = nil, pk = nil, id_value = nil, sequence_name = nil, binds = Any[], returning = nil)
+        sql, bs = to_sql_and_binds(c, arel, binds)
+        value = exec_insert(c, sql, name, bs, pk, sequence_name, returning)
+        return returning_column_values(c, value) if returning != nil
+        id_value || last_inserted_id(c, value)
+      end
+      def create(c, arel, name = nil, pk = nil, id_value = nil) = insert(c, arel, name, pk, id_value)
+
+      # Executes the update statement and returns the number of rows affected.
+      def update(c, arel, name = nil, binds = Any[])
+        sql, bs = to_sql_and_binds(c, arel, binds)
+        exec_update(c, sql, name, bs)
+      end
+
+      # Executes the delete statement and returns the number of rows affected.
+      def delete(c, arel, name = nil, binds = Any[])
+        sql, bs = to_sql_and_binds(c, arel, binds)
+        exec_delete(c, sql, name, bs)
+      end
+
+      def truncate(c, table_name, name = nil) = execute(c, build_truncate_statement(c, table_name), name)
+
+      # Ruby: transaction(requires_new: nil, isolation: nil, joinable: true, &block)
+      def transaction(c, options = {requires_new: nil, isolation: nil, joinable: true})
+        options => {requires_new:, isolation:, joinable:}
+        current = current_transaction(c)
+        if !requires_new && (RealTransaction|SavepointTransaction|RestartParentTransaction|NullTransaction).joinable?(current)
+          if isolation && (RealTransaction|SavepointTransaction|RestartParentTransaction|NullTransaction).isolation(current) != isolation
+            raise ActiveRecord::TransactionIsolationError, "cannot set isolation when joining a transaction"
+          end
+          yield current
+        else
+          TransactionManager.within_new_transaction(transaction_manager(c), isolation, joinable) { |t| yield t }
+        end
+      rescue ActiveRecord::Rollback
+        nil
+      end
+
+      def open_transactions(c) = TransactionManager.open_transactions(transaction_manager(c))
+      def current_transaction(c) = TransactionManager.current_transaction(transaction_manager(c))
+      def begin_transaction(c, isolation = nil, joinable = true) = TransactionManager.begin_transaction(transaction_manager(c), isolation, joinable)
+      def commit_transaction(c) = TransactionManager.commit_transaction(transaction_manager(c))
+      def rollback_transaction(c) = TransactionManager.rollback_transaction(transaction_manager(c))
+      def materialize_transactions(c)
+        TransactionManager.materialize_transactions(transaction_manager(c))
+      end
+      def dirty_current_transaction(c)
+        TransactionManager.dirty_current_transaction(transaction_manager(c))
+      end
+
+      def mark_transaction_written(c) = nil
+
+      def transaction_open?(c)
+        (RealTransaction|SavepointTransaction|RestartParentTransaction|NullTransaction).open?(current_transaction(c))
+      end
+
+      def transaction_isolation_levels
+        Hash.of(read_uncommitted: "READ UNCOMMITTED", read_committed: "READ COMMITTED", repeatable_read: "REPEATABLE READ", serializable: "SERIALIZABLE")
+      end
+
+      def begin_db_transaction(c) = nil
+
+      def begin_deferred_transaction(c, isolation_level = nil)
+        isolation_level ? begin_isolated_db_transaction(c, isolation_level) : begin_db_transaction(c)
+      end
+
+      def begin_isolated_db_transaction(c, isolation)
+        raise ActiveRecord::TransactionIsolationError, "adapter does not support setting transaction isolation"
+      end
+
+      def reset_isolation_level(c) = nil
+      def commit_db_transaction(c) = nil
+
+      def rollback_db_transaction(c)
+        exec_rollback_db_transaction(c)
+      rescue ActiveRecord::ConnectionNotEstablished
+        nil
+      end
+
+      def exec_rollback_db_transaction(c) = nil
+
+      def rollback_to_savepoint(c, name = nil) = exec_rollback_to_savepoint(c, name)
+
+      def default_sequence_name(c, table, column) = nil
+
+      def empty_insert_statement_value(c, primary_key = nil) = "DEFAULT VALUES"
+
+      def high_precision_current_timestamp(c)
+        Arel::Nodes::SqlLiteral.new("CURRENT_TIMESTAMP", true)
+      end
+
+      def internal_exec_query(c, sql, name = "SQL", binds = Any[], prepare = false, allow_retry = false, materialize_transactions = true)
+        cast_result(c, internal_execute(c, sql, name, binds, prepare, allow_retry, materialize_transactions))
+      end
+
+      def raw_execute(c, sql, name = nil, binds = Any[], prepare = false, allow_retry = false, materialize_transactions = true, batch = false)
+        casted = type_casted_binds(c, binds)
+        log(c, sql, name, binds, casted) do
+          with_raw_connection(c, allow_retry, materialize_transactions) do |conn|
+            perform_query(c, conn, sql, binds, casted, prepare, batch)
+          end
+        end
+      end
+
+      def perform_query(c, raw_connection, sql, binds, type_casted_binds, prepare, batch) = raise(NotImplementedError)
+      def cast_result(c, raw_result) = raise(NotImplementedError)
+      def affected_rows(c, raw_result) = raise(NotImplementedError)
+
+      def preprocess_query(c, sql)
+        mark_transaction_written(c) if write_query?(c, sql)
+        sql
+      end
+
+      def internal_execute(c, sql, name = "SQL", binds = Any[], prepare = false, allow_retry = false, materialize_transactions = true)
+        s = preprocess_query(c, sql)
+        raw_execute(c, s, name, binds, prepare, allow_retry, materialize_transactions)
+      end
+
+      def build_truncate_statement(c, table_name)
+        "TRUNCATE TABLE #{quote_table_name(c, table_name)}"
+      end
+
+      def combine_multi_statements(c, total_sql) = Array.join(total_sql, ";\n")
+
+      def select(c, sql, name = nil, binds = Any[], prepare = false, allow_retry = false)
+        internal_exec_query(c, sql, name, binds, prepare, allow_retry)
+      end
+
+      def sql_for_insert(c, sql, pk, binds, returning)
+        if supports_insert_returning?(c)
+          if pk == nil
+            table_ref = extract_table_ref_from_insert_sql(c, sql)
+            pk = primary_key(c, table_ref) if table_ref
+          end
+          returning_columns = returning || (pk ? Any[pk] : Any[])
+          if !Array.empty?(returning_columns)
+            stmt = Array.map(returning_columns) { |col| quote_column_name(c, col) }.Array.join(", ")
+            return [sql + " RETURNING #{stmt}", binds]
+          end
+        end
+        [sql, binds]
+      end
+
+      def last_inserted_id(c, result) = single_value_from_rows(c, ActiveRecord::Result.rows(result))
+      def returning_column_values(c, result) = Any[last_inserted_id(c, result)]
+
+      def single_value_from_rows(c, rows)
+        row = Array.first(rows)
+        row ? row[0] : nil
+      end
+
+      def extract_table_ref_from_insert_sql(c, sql)
+        m = String.match(sql, /into\s("[-A-Za-z0-9_."\[\]\s]+"|[A-Za-z0-9_."\[\]]+)\s*/im)
+        m ? String.delete(m[1] || "", "\"").String.strip : nil
+      end
+    end
+  end
+end

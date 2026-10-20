@@ -1,0 +1,54 @@
+# Port of activerecord-8.1.3/lib/active_record/type/type_map.rb
+#
+# Ruby's TypeMap stores a block per key (`register_type(key) { |sql_type| ... }`) and calls the last one whose
+# key === the sql type. Sake has no stored blocks, so a registration is data: the key and what the block
+# would do, `kind` and `klass` Symbols (`register_class_with_limit m, /int/i, Type::Integer` is kind :limit,
+# klass :integer), and AbstractAdapter.build_registered_type (the blocks' bodies) makes the type.
+
+module ActiveRecord
+  module Type
+    class TypeMap
+      Registration = Struct.new(:key, :kind, :klass, :target)
+
+      attr_reader parent
+      private attr_reader mapping, cache
+      def initialize(m)
+        @mapping = Registration[]
+        @cache = Hash.new
+      end
+
+      def lookup(m, lookup_key) = fetch(m, lookup_key)
+
+      def fetch(m, lookup_key)
+        cached = @cache[lookup_key]
+        return cached if cached
+        type = perform_fetch(m, lookup_key)
+        @cache[lookup_key] = type
+        type
+      end
+
+      def register_type(m, key, kind, klass = nil, target = nil)
+        Array.push(@mapping, Registration.new(key, kind, klass, target))
+        Hash.clear(@cache)
+      end
+
+      # Ruby: register_type(key) { |sql_type| lookup("#{target_key}#{sql_type[/\(.*\)/, 0]}") }
+      def alias_type(m, key, target_key) = register_type(m, key, :alias, nil, target_key)
+
+      def perform_fetch(m, lookup_key)
+        matching = Array.reverse(@mapping).Array.find { |r| Regexp.match?(Registration.key(r), lookup_key) }
+        if matching
+          if Registration.kind(matching) == :alias
+            metadata = ::String.[](lookup_key, /\(.*\)/) || ""
+            lookup(m, "#{Registration.target(matching)}#{metadata}")
+          else
+            ActiveRecord::ConnectionAdapters::AbstractAdapter::ClassMethods.build_registered_type(Registration.kind(matching), Registration.klass(matching), lookup_key)
+          end
+        else
+          par = @parent
+          par ? perform_fetch(par, lookup_key) : Type.default_value
+        end
+      end
+    end
+  end
+end

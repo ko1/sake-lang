@@ -1,0 +1,13 @@
+# With --strict (level 2) only: a block over the Columns the SQLite3 adapter reads (each Column casts its default
+# with ActiveModel::Type::Value.deserialize over the union of the column types) is rejected inside date.sake:
+# "case/in: no `in` branch matches BigDecimal" at Date.jd, reached from Date#<=>. Level 1 runs it (and prints
+# nothing here: the table does not exist, so it raises StatementInvalid when run). `x = columns(...)` and
+# `c = cols[0]` at the top level pass; Array.each/map, Integer.times, while over the Array fail. Removing the
+# deserialize from SQLite3::Column#initialize (column.sake) makes it pass. Ruby: no error.
+# NOTE: column.sake now casts the default when it is read (Column.default), so this file passes today; to see the
+# error, put `@default = (d == nil || ActiveModel::Type::Value.mutable?(@cast_type)) ? d :
+# ActiveModel::Type::Value.deserialize(@cast_type, d)` back into SQLite3::Column#initialize with a `default` field.
+# A standalone repro was not found in the time; arel_p_of_date_or_bigdecimal.sake is the closest.
+require "rails/activerecord/active_record"
+conn = ActiveRecord::ConnectionAdapters::SQLite3Adapter.new(Hash.of(adapter: "sqlite3", database: ":memory:"))
+Array.each(ActiveRecord::ConnectionAdapters::SQLite3Adapter.columns(conn, "posts")) { |c| nil }

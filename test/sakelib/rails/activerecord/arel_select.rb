@@ -1,0 +1,120 @@
+gem "activerecord", "8.1.3"
+require "active_record"
+
+# Arel's SQL for SQLite: the adapter is the engine (as ActiveRecord::Base's connection is in Rails)
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+conn = ActiveRecord::Base.lease_connection
+users = Arel::Table.new(:users)
+posts = Arel::Table.new(:posts)
+
+# Ruby's bind.value_for_database (the binds are Attributes here)
+def value_for_database(x) = x.respond_to?(:value_for_database) ? x.value_for_database : x
+
+# Ruby's node.to_sql: a node or a manager
+def to_sql(n) = n.to_sql
+
+puts("-- select")
+puts(users.project(Arel.star).to_sql)
+puts(users.project(users[:id], users[:name]).where(users[:name].eq("o'x").and(users[:age].gt(3))).order(users[:id].desc).take(5).skip(2).to_sql)
+puts(users.project(users[:id]).skip(10).to_sql)
+puts(users.project("id", :name).order("name", users[:age].asc.nulls_first).to_sql)
+puts(users.project(users[:id]).distinct.where(users[:deleted_at].eq(nil)).where(users[:role].not_eq(nil)).to_sql)
+
+puts("-- predications")
+puts(users[:id].not_eq(1).to_sql)
+puts(users[:age].lt(10).or(users[:age].gteq(65)).to_sql)
+puts(users[:age].lteq(3.5).not.to_sql)
+puts(users[:id].in([1, 2, 3]).to_sql)
+puts(users[:id].in([]).to_sql)
+puts(users[:id].not_in([4, 5]).to_sql)
+puts(users[:id].not_in([]).to_sql)
+puts(users[:id].between(1..3).to_sql)
+puts(users[:id].between(1...3).to_sql)
+puts(users[:id].between(1..).to_sql)
+puts(users[:id].between(..9).to_sql)
+puts(users[:id].not_between(1..3).to_sql)
+puts(users[:id].in(4..6).to_sql)
+puts(users[:name].matches("%ko%").to_sql)
+puts(users[:name].does_not_match("a\\_%", "\\").to_sql)
+puts(users[:id].eq_any([1, 2]).to_sql)
+puts(users[:id].not_eq_all([1, 2]).to_sql)
+puts(users[:name].matches_any(["a%", "b%"]).to_sql)
+puts(users[:id].gt_all([1, 2]).to_sql)
+puts(users[:id].is_distinct_from(3).to_sql)
+puts(users[:id].is_not_distinct_from(nil).to_sql)
+puts(users[:id].eq(users[:parent_id]).to_sql)
+
+puts("-- values")
+puts(users[:name].eq(:sym).to_sql)
+puts(users[:ok].eq(true).to_sql)
+puts(users[:ok].eq(false).to_sql)
+puts(users[:score].eq(1.25).to_sql)
+puts(users[:score].eq(BigDecimal("12.50")).to_sql)
+puts(users[:score].eq(Float::INFINITY).to_sql)
+puts(users[:at].eq(Time.utc(2020, 1, 2, 3, 4, 5)).to_sql)
+puts(users[:at].eq(Time.utc(2020, 1, 2, 3, 4, 5, 120)).to_sql)
+puts(users[:on].eq(Date.new(2020, 1, 2)).to_sql)
+puts(users[:name].eq("back\\slash").to_sql)
+
+puts("-- joins")
+puts(users.join(posts).on(posts[:user_id].eq(users[:id])).project(users[:name], posts[:title]).to_sql)
+puts(users.outer_join(posts).on(posts[:user_id].eq(users[:id])).project(Arel.star).to_sql)
+puts(users.join(Arel.sql("INNER JOIN comments ON comments.user_id = users.id")).project(Arel.star).to_sql)
+authors = users.alias("authors")
+puts(posts.join(authors).on(authors[:id].eq(posts[:user_id])).project(authors[:name]).to_sql)
+puts(users.from.from(users.alias).project(Arel.star).to_sql)
+
+puts("-- aggregates")
+puts(posts.project(posts[:user_id], posts[:id].count.as("n")).group(posts[:user_id]).having(posts[:id].count.gt(1)).to_sql)
+puts(posts.project(posts[:score].sum, posts[:score].maximum, posts[:score].minimum, posts[:score].average).to_sql)
+puts(posts.project(posts[:user_id].count(true)).to_sql)
+puts(posts.project(Arel::Nodes::NamedFunction.new("COALESCE", [posts[:title], Arel::Nodes.build_quoted("")])).to_sql)
+puts(posts.project(posts[:score] + 1, posts[:score] * 2, posts[:score] - posts[:bonus], posts[:score] / 3).to_sql)
+puts(posts.project(posts.lower(posts[:title])).to_sql)
+puts(posts.project(posts[:id]).lock.to_sql)
+
+puts("-- set operations")
+a = users.project(users[:id]).where(users[:age].gt(18))
+b = users.project(users[:id]).where(users[:admin].eq(true))
+puts(a.union(b).to_sql)
+puts(a.union(:all, b).to_sql)
+puts(a.intersect(b).to_sql)
+puts(a.except(b).to_sql)
+puts(users.project(Arel.star).where(a.exists).to_sql)
+puts(users.project(Arel.star).where(users[:id].in(b)).to_sql)
+
+puts("-- case, window, with")
+c = Arel::Nodes::Case.new(users[:age]).when(1).then("one").when(2).then("two").else("many")
+puts(users.project(c.as("word")).to_sql)
+puts(users.project(users[:age].when(18).then("adult")).to_sql)
+w = Arel::Nodes::Window.new.partition(users[:team]).order(users[:age].desc)
+puts(users.project(users[:id].count.over(w)).to_sql)
+puts(users.project(users[:id].count.over).to_sql)
+sm = users.project(Arel.star)
+sm.window("w").order(users[:id])
+puts(sm.to_sql)
+recent = Arel::Table.new(:recent)
+cte = Arel::Nodes::As.new(recent, posts.project(posts[:id]).where(posts[:id].gt(10)))
+puts(recent.project(Arel.star).with(cte).to_sql)
+
+puts("-- literals and binds")
+puts(users.project(Arel.star).where(Arel.sql("age > ?", 21)).to_sql)
+puts(users.project(Arel.star).where(Arel.sql("name IN (?)", ["a", "b"])).to_sql)
+puts(users.project(Arel.star).where(Arel.sql("id = :id AND x = :x", id: 1, x: "y")).to_sql)
+begin
+  Arel.sql("a = ? AND b = ?", 1)
+rescue Arel::BindError => e
+  puts("BindError: #{e.message}")
+end
+bind = Arel::Nodes::BindParam.new(ActiveRecord::Relation::QueryAttribute.new("id", "7", ActiveModel::Type::Integer.new))
+stmt = users.project(Arel.star).where(users[:id].eq(bind)).where(users[:name].eq("x"))
+puts(stmt.to_sql)
+sql, binds, preparable = conn.send(:to_sql_and_binds, stmt.ast)
+p([sql, binds.map { |x| value_for_database(x) }, preparable])
+sql, binds, preparable = conn.send(:to_sql_and_binds, users.project(Arel.star).where(users[:id].eq(bind)))
+p([sql, binds.map { |x| value_for_database(x) }, preparable])
+begin
+  puts(users.project(Arel.star).where(Arel::Nodes::Equality.new(users[:id], "raw")).to_sql)
+rescue Arel::Visitors::UnsupportedVisitError => e
+  puts("UnsupportedVisitError: #{e.message}")
+end

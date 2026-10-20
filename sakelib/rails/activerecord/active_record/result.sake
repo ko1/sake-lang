@@ -1,0 +1,68 @@
+# Port of activerecord-8.1.3/lib/active_record/result.rb (partial: no IndexedRow, no FutureResult/async)
+#
+# Rows are Arrays of the values SQLite3 gives (Integer, Float, String, nil); hash_rows are Hashes column => value.
+# Ruby's Result includes Enumerable (each yields hash rows); here `include Enum` with `each`.
+
+module ActiveRecord
+  class Result
+    attr_reader columns, rows
+    private attr_reader column_types_list
+    attr_reader affected_rows
+    private attr_accessor hash_rows_cache
+    include Enum
+    def initialize(r) = nil
+
+    def empty_result(affected_rows = nil) = Result.new(String[], Any[], nil, affected_rows)
+
+    def includes_column?(r, name) = Array.include?(@columns, name)
+    def length(r) = Array.length(@rows)
+
+    def each(r)
+      Array.each(hash_rows(r)) { |row| yield row }
+    end
+
+    def empty?(r) = Array.empty?(@rows)
+    def to_ary(r) = hash_rows(r)
+    def to_a(r) = hash_rows(r)
+    def [](r, idx) = hash_rows(r)[idx]
+    def last(r) = Array.last(hash_rows(r))
+
+    # Ruby's column_types is a Hash name => type (and index => type); here the list given to new, by index.
+    def column_type(r, name, index)
+      types = @column_types_list
+      (types && types[index]) || ActiveRecord::Type.default_value
+    end
+
+    def cast_values(r)
+      if Array.size(@columns) == 1
+        type = column_type(r, @columns[0], 0)
+        Array.map(@rows) { |row| ActiveModel::Type::Value.deserialize(type, row[0]) }
+      else
+        types = Array.each_with_index(@columns).Array.map { |name, i| column_type(r, name, i) }
+        Array.map(@rows) { |values| Array.each_with_index(values).Array.map { |v, i| ActiveModel::Type::Value.deserialize(types[i], v) } }
+      end
+    end
+
+    def column_indexes(r)
+      hash = Hash.new
+      Array.each_with_index(@columns) { |c, i| hash[c] = i }
+      hash
+    end
+
+    def hash_rows(r)
+      cached = @hash_rows_cache
+      return cached if cached
+      rows = Array.map(@rows) do |row|
+        h = Hash.new
+        Array.each_with_index(@columns) { |c, i| h[c] = row[i] }
+        h
+      end
+      @hash_rows_cache = rows
+      rows
+    end
+
+    def inspect(r)
+      "#<ActiveRecord::Result columns=#{Kernel.inspect(@columns)} rows=#{Kernel.inspect(@rows)}>"
+    end
+  end
+end

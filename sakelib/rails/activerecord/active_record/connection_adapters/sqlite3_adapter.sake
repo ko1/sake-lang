@@ -1,0 +1,248 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/sqlite3_adapter.rb (partial: no
+# alter_table-based schema changes (remove_column, change_column, rename_column, foreign keys, check
+# constraints), no virtual tables, no pragmas from the config, no statement pool, no dbconsole)
+#
+# Ruby: SQLite3Adapter.new(adapter: "sqlite3", database: ":memory:"); here `new` takes the config Hash
+# (`SQLite3Adapter.new(Hash.of(adapter: "sqlite3", database: ":memory:"))`), and initialize sets what Ruby's
+# AbstractAdapter#initialize and SQLite3Adapter#initialize set. As in Rails, the database is opened on the
+# first query (connect). Ruby's NATIVE_DATABASE_TYPES, TYPE_MAP and the type registration
+# `ActiveRecord::Type.register(:integer, SQLite3Integer, adapter: :sqlite3)` are functions.
+
+require "sqlite3/quoting"
+require "sqlite3/database_statements"
+require "sqlite3/schema_statements"
+
+module ActiveRecord
+  module ConnectionAdapters
+    class SQLite3Adapter
+      attr_reader config
+      attr_reader visitor, transaction_manager, query_log
+      private attr_accessor raw_connection_or_nil, memory_database, prepared_statements, previous_read_uncommitted
+      include AbstractAdapter
+      include SQLite3::Quoting
+      include SQLite3::SchemaStatements
+      include SQLite3::DatabaseStatements
+
+      def adapter_name(c) = "SQLite"
+
+      def native_database_types(c)
+        Hash.of(primary_key: "integer PRIMARY KEY AUTOINCREMENT NOT NULL", string: Hash.of(name: "varchar"),
+                text: Hash.of(name: "text"), integer: Hash.of(name: "integer"), float: Hash.of(name: "float"),
+                decimal: Hash.of(name: "decimal"), datetime: Hash.of(name: "datetime"), time: Hash.of(name: "time"),
+                date: Hash.of(name: "date"), binary: Hash.of(name: "blob"), boolean: Hash.of(name: "boolean"),
+                json: Hash.of(name: "json"))
+      end
+
+      class SQLite3Integer < ActiveModel::Type::Integer
+        def _limit(t) = @limit || 8
+      end
+
+      def initialize(c)
+        database = Kernel.to_s(@config[:database])
+        raise ArgumentError, "No database file specified. Missing argument: database" if database == ""
+        @memory_database = database == ":memory:"
+        ps = @config[:prepared_statements]
+        @prepared_statements = ps == nil ? true : ps == true
+        @visitor = Arel::Visitors::SQLite.new(c)
+        @transaction_manager = TransactionManager.new(c)
+        @query_log = @config[:log] == true ? Any[] : nil
+        @previous_read_uncommitted = nil
+      end
+
+      def type_map(c) = once { initialize_type_map(ActiveRecord::Type::TypeMap.new) }
+
+      # Ruby: super, then register_class_with_limit m, %r(int)i, SQLite3Integer
+      def initialize_type_map(m)
+        AbstractAdapter::ClassMethods.initialize_type_map(m)
+        AbstractAdapter::ClassMethods.register_class_with_limit(m, /int/i, :sqlite3_integer)
+        m
+      end
+
+      def database_exists?(c)
+        @config[:database] == ":memory:" || File.exist?(Kernel.to_s(@config[:database]))
+      end
+
+      def supports_ddl_transactions?(c) = true
+      def supports_savepoints?(c) = true
+      def supports_transaction_isolation?(c) = true
+      def supports_partial_index?(c) = true
+      def supports_expression_index?(c) = true
+      def requires_reloading?(c) = true
+      def supports_foreign_keys?(c) = true
+      def supports_check_constraints?(c) = true
+      def supports_views?(c) = true
+      def supports_datetime_with_precision?(c) = true
+      def supports_json?(c) = true
+      def supports_common_table_expressions?(c) = true
+      def supports_insert_returning?(c) = database_version(c) >= "3.35.0"
+      def supports_insert_on_conflict?(c) = database_version(c) >= "3.24.0"
+      def supports_concurrent_connections?(c) = !@memory_database
+      def supports_virtual_columns?(c) = database_version(c) >= "3.31.0"
+      def supports_index_sort_order?(c) = true
+      def supports_explain?(c) = true
+      def supports_lazy_transactions?(c) = true
+      def supports_deferrable_constraints?(c) = true
+
+      def connected?(c)
+        conn = @raw_connection_or_nil
+        conn != nil && !SQLite3::Database.closed?(conn)
+      end
+
+      def active?(c) = connected?(c)
+
+      def disconnect!(c)
+        conn = @raw_connection_or_nil
+        SQLite3::Database.close(conn) if conn
+        @raw_connection_or_nil = nil
+      end
+
+      def reconnect!(c)
+        disconnect!(c)
+        connect(c)
+      end
+
+      def connect(c)
+        @raw_connection_or_nil = SQLite3::Database.new(Kernel.to_s(@config[:database]))
+        configure_connection(c)
+      end
+
+      # Ruby sets DEFAULT_PRAGMAS (foreign_keys, journal_mode=wal, synchronous=normal, mmap_size, ...) through
+      # the gem's pragma setters; foreign_keys is the one that changes what statements do.
+      def configure_connection(c)
+        conn = @raw_connection_or_nil
+        SQLite3::Database.execute(conn, "PRAGMA foreign_keys = ON") if conn
+        nil
+      end
+
+      def encoding(c) = "UTF-8"
+
+      def primary_keys(c, table_name)
+        pks = Array.select(table_structure(c, table_name)) { |f| pk = f["pk"]; (pk in Integer) && pk > 0 }
+        Array.sort_by(pks) { |f| pk = f["pk"]; (pk in Integer) ? pk : 0 }.Array.map { |f| Kernel.to_s(f["name"]) }
+      end
+
+      def remove_index(c, table_name, options = Hash.new)
+        return nil if options[:if_exists] && !index_exists?(c, table_name, nil, options)
+        name = options[:name] || index_name(c, table_name, options[:column])
+        exec_query(c, "DROP INDEX #{quote_column_name(c, Kernel.to_s(name))}")
+      end
+
+      def rename_table(c, table_name, new_name)
+        exec_query(c, "ALTER TABLE #{quote_table_name(c, table_name)} RENAME TO #{quote_table_name(c, new_name)}")
+      end
+
+      # Ruby rebuilds the table (alter_table) when the column cannot be added with ALTER TABLE
+      def add_column(c, table_name, column_name, type, options = Hash.new)
+        if invalid_alter_table_type?(c, type, options)
+          raise NotImplementedError, "add_column through alter_table (a copy of the table) is not ported"
+        end
+        opts = (type == :datetime && !Hash.key?(options, :precision)) ? Hash.merge(options, Hash.of(precision: 6)) : options
+        at = AlterTable.new(create_table_definition(c, Kernel.to_s(table_name), Hash.new))
+        AlterTable.add_column(at, column_name, type, opts)
+        execute(c, accept_schema(c, at))
+      end
+
+      def add_reference(c, table_name, ref_name, options = Hash.new)
+        add_column(c, table_name, "#{ref_name}_id", :integer, Hash.except(options, :index))
+        add_index(c, table_name, "#{ref_name}_id") if Hash.fetch(options, :index, true)
+      end
+
+      def get_database_version(c)
+        Kernel.to_s(query_value(c, "SELECT sqlite_version(*)", "SCHEMA"))
+      end
+
+      def check_version(c)
+        raise "Your version of SQLite (#{database_version(c)}) is too old. Active Record supports SQLite >= 3.23.0." if database_version(c) < "3.23.0"
+      end
+
+      def bind_params_length(c) = 999
+
+      def table_structure(c, table_name)
+        structure = table_info(c, table_name)
+        raise ActiveRecord::StatementInvalid.new("Could not find table '#{table_name}'", nil, nil) if Array.empty?(structure)
+        table_structure_with_collation(c, table_name, structure)
+      end
+
+      def column_definitions(c, table_name) = table_structure(c, table_name)
+
+      def extract_value_from_default(c, default)
+        return nil unless default in String
+        if String.match?(default, /^null$/i) then nil
+        elsif (m = String.match(default, /^'([^|]*)'$/m)) then String.gsub(m[1] || "", "''", "'")
+        elsif (m = String.match(default, /^"([^|]*)"$/m)) then String.gsub(m[1] || "", "\"\"", "\"")
+        elsif String.match?(default, /\A-?\d+(\.\d*)?\z/) then default
+        elsif default == "TRUE" || default == "FALSE" then default
+        end
+      end
+
+      def extract_default_function(c, default_value, default)
+        has_default_function?(c, default_value, default) ? default : nil
+      end
+
+      def has_default_function?(c, default_value, default)
+        default_value == nil && (default in String) && String.match?(default, /\w+\(.*\)|CURRENT_TIME|CURRENT_DATE|CURRENT_TIMESTAMP|\|\|/)
+      end
+
+      def invalid_alter_table_type?(c, type, options)
+        type == :primary_key || options[:primary_key] == true || (options[:null] == false && options[:default] == nil) || (type == :virtual && options[:stored])
+      end
+
+      # Ruby: translate_exception(exception, message:, sql:, binds:)
+      def translate_exception(c, exception_message, message, sql, binds)
+        if String.match?(exception_message, /(column(s)? .* (is|are) not unique|UNIQUE constraint failed: .*)/i)
+          RecordNotUnique.new(message, sql, binds)
+        elsif String.match?(exception_message, /(.* may not be NULL|NOT NULL constraint failed: .*)/i)
+          NotNullViolation.new(message, sql, binds)
+        elsif String.match?(exception_message, /FOREIGN KEY constraint failed/i)
+          InvalidForeignKey.new(message, sql, binds)
+        elsif String.match?(exception_message, /CHECK constraint failed: .*/i)
+          CheckViolation.new(message, sql, binds)
+        else
+          StatementInvalid.new(message, sql, binds)
+        end
+      end
+
+      def table_structure_with_collation(c, table_name, basic_structure)
+        collation_hash = Hash.new
+        auto_increments = Hash.new
+        generated_columns = Hash.new
+        column_strings = table_structure_sql(c, table_name, Array.map(basic_structure) { |column| Kernel.to_s(column["name"]) })
+        if !Array.empty?(column_strings)
+          Array.each(column_strings) do |column_string|
+            m = String.match(column_string, /.*"(\w+)".*collate\s+"(\w+)".*/i)
+            collation_hash[m[1]] = m[2] if m
+            m = String.match(column_string, /.*"(\w+)".+PRIMARY KEY AUTOINCREMENT/i)
+            auto_increments[m[1]] = true if m
+            m = String.match(column_string, /.*"(\w+)".+GENERATED ALWAYS AS \((.+)\) (?:STORED|VIRTUAL)/i)
+            generated_columns[m[1]] = m[2] if m
+          end
+          Array.map(basic_structure) do |column|
+            column_name = Kernel.to_s(column["name"])
+            column["collation"] = collation_hash[column_name] if Hash.key?(collation_hash, column_name)
+            column["auto_increment"] = 1 if Hash.key?(auto_increments, column_name)
+            column["dflt_value"] = generated_columns[column_name] if Hash.key?(generated_columns, column_name)
+            column
+          end
+        else
+          basic_structure
+        end
+      end
+
+      def table_structure_sql(c, table_name, column_names)
+        sql = "SELECT sql FROM\n  (SELECT * FROM sqlite_master UNION ALL\n   SELECT * FROM sqlite_temp_master)\nWHERE type = 'table' AND name = #{quote(c, Kernel.to_s(table_name))}\n"
+        result = query_value(c, sql, "SCHEMA")
+        return String[] unless result in String
+        names = Regexp.union(*column_names).Regexp.source
+        String.partition(result, /\((?![^'"]*['"][^'"]*$)/).Tuple.[](2)
+          .String.sub(/\);*\z/, "")
+          .split(Regexp.new(",(?=\\s(?:CONSTRAINT|\"(?:#{names})\"))", "i"))
+          .Array.map { |s| String.strip(s) }
+      end
+
+      def table_info(c, table_name)
+        sql = supports_virtual_columns?(c) ? "PRAGMA table_xinfo(#{quote_table_name(c, table_name)})" : "PRAGMA table_info(#{quote_table_name(c, table_name)})"
+        ActiveRecord::Result.to_a(internal_exec_query(c, sql, "SCHEMA", Any[], false, true))
+      end
+    end
+  end
+end

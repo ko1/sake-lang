@@ -1,0 +1,1081 @@
+# Port of activerecord-8.1.3/lib/arel/visitors/to_sql.rb and visitor.rb (one file: Visitor's dispatch is the
+# `case` in ToSql.visit) (partial: no DistinctOn, Regexp/NotRegexp (both raise NotImplementedError in Ruby too),
+# Cube/RollUp/GroupingSet/Lateral (PostgreSQL's visitor writes them))
+#
+# Ruby's Visitor#visit sends "visit_#{object.class.name.gsub('::', '_')}" (falling back to the ancestors'
+# names); here ToSql.visit is a `case` over the node classes calling the same visit_Arel_Nodes_X functions,
+# so a visitor that pastes ToSql (`class SQLite < ToSql`) and redefines visit_Arel_Nodes_X gets its own
+# dispatched, as Ruby's subclass does. The visitor is the first argument; `@connection` is its field.
+# Ruby's `super` from SQLite's overrides calls the ToSql body; Sake has no super, so those bodies are also
+# kept under super_<name> (super_visit_Arel_Nodes_SelectStatement, super_prepare_update_statement).
+# Ruby's BIND_BLOCK (proc { "?" }) is the function bind_block(v, i); each add_bind gets `{ |i| bind_block(v, i) }`.
+
+module Arel
+  module Visitors
+    Collector = Arel::Collectors::Collector
+
+    class UnsupportedVisitError < StandardError
+    end
+
+    # Ruby's class Visitor: accept(object, collector) is visit; the visitors include it.
+    module Visitor
+      def accept(v, object, collector) = visit(v, object, collector)
+      def compile(v, node, collector = Arel::Collectors::SQLString.new) = Collector.value(accept(v, node, collector))
+      def visit(v, object, collector) = raise(NotImplementedError)
+    end
+
+    class ToSql
+      attr_reader connection
+      include Visitor
+
+      def visit(v, o, collector)
+        case o
+        in Nodes::DeleteStatement then visit_Arel_Nodes_DeleteStatement(v, o, collector)
+        in Nodes::UpdateStatement then visit_Arel_Nodes_UpdateStatement(v, o, collector)
+        in Nodes::InsertStatement then visit_Arel_Nodes_InsertStatement(v, o, collector)
+        in Nodes::Exists then visit_Arel_Nodes_Exists(v, o, collector)
+        in Nodes::Casted then visit_Arel_Nodes_Casted(v, o, collector)
+        in Nodes::Quoted then visit_Arel_Nodes_Quoted(v, o, collector)
+        in Nodes::True then visit_Arel_Nodes_True(v, o, collector)
+        in Nodes::False then visit_Arel_Nodes_False(v, o, collector)
+        in Nodes::ValuesList then visit_Arel_Nodes_ValuesList(v, o, collector)
+        in Nodes::SelectStatement then visit_Arel_Nodes_SelectStatement(v, o, collector)
+        in Nodes::SelectCore then visit_Arel_Nodes_SelectCore(v, o, collector)
+        in Nodes::OptimizerHints then visit_Arel_Nodes_OptimizerHints(v, o, collector)
+        in Nodes::Comment then visit_Arel_Nodes_Comment(v, o, collector)
+        in Nodes::Bin then visit_Arel_Nodes_Bin(v, o, collector)
+        in Nodes::Distinct then visit_Arel_Nodes_Distinct(v, o, collector)
+        in Nodes::With then visit_Arel_Nodes_With(v, o, collector)
+        in Nodes::WithRecursive then visit_Arel_Nodes_WithRecursive(v, o, collector)
+        in Nodes::Union then visit_Arel_Nodes_Union(v, o, collector)
+        in Nodes::UnionAll then visit_Arel_Nodes_UnionAll(v, o, collector)
+        in Nodes::Intersect then visit_Arel_Nodes_Intersect(v, o, collector)
+        in Nodes::Except then visit_Arel_Nodes_Except(v, o, collector)
+        in Nodes::NamedWindow then visit_Arel_Nodes_NamedWindow(v, o, collector)
+        in Nodes::Window then visit_Arel_Nodes_Window(v, o, collector)
+        in Nodes::Filter then visit_Arel_Nodes_Filter(v, o, collector)
+        in Nodes::Rows then visit_Arel_Nodes_Rows(v, o, collector)
+        in Nodes::Range then visit_Arel_Nodes_Range(v, o, collector)
+        in Nodes::Preceding then visit_Arel_Nodes_Preceding(v, o, collector)
+        in Nodes::Following then visit_Arel_Nodes_Following(v, o, collector)
+        in Nodes::CurrentRow then visit_Arel_Nodes_CurrentRow(v, o, collector)
+        in Nodes::Over then visit_Arel_Nodes_Over(v, o, collector)
+        in Nodes::Offset then visit_Arel_Nodes_Offset(v, o, collector)
+        in Nodes::Limit then visit_Arel_Nodes_Limit(v, o, collector)
+        in Nodes::Lock then visit_Arel_Nodes_Lock(v, o, collector)
+        in Nodes::Grouping then visit_Arel_Nodes_Grouping(v, o, collector)
+        in Nodes::HomogeneousIn then visit_Arel_Nodes_HomogeneousIn(v, o, collector)
+        in Arel::SelectManager then visit_Arel_SelectManager(v, o, collector)
+        in Nodes::Ascending then visit_Arel_Nodes_Ascending(v, o, collector)
+        in Nodes::Descending then visit_Arel_Nodes_Descending(v, o, collector)
+        in Nodes::NullsFirst then visit_Arel_Nodes_NullsFirst(v, o, collector)
+        in Nodes::NullsLast then visit_Arel_Nodes_NullsLast(v, o, collector)
+        in Nodes::Group then visit_Arel_Nodes_Group(v, o, collector)
+        in Nodes::NamedFunction then visit_Arel_Nodes_NamedFunction(v, o, collector)
+        in Nodes::Extract then visit_Arel_Nodes_Extract(v, o, collector)
+        in Nodes::Count then visit_Arel_Nodes_Count(v, o, collector)
+        in Nodes::Sum then visit_Arel_Nodes_Sum(v, o, collector)
+        in Nodes::Max then visit_Arel_Nodes_Max(v, o, collector)
+        in Nodes::Min then visit_Arel_Nodes_Min(v, o, collector)
+        in Nodes::Avg then visit_Arel_Nodes_Avg(v, o, collector)
+        in Nodes::TableAlias then visit_Arel_Nodes_TableAlias(v, o, collector)
+        in Nodes::Between then visit_Arel_Nodes_Between(v, o, collector)
+        in Nodes::GreaterThanOrEqual then visit_Arel_Nodes_GreaterThanOrEqual(v, o, collector)
+        in Nodes::GreaterThan then visit_Arel_Nodes_GreaterThan(v, o, collector)
+        in Nodes::LessThanOrEqual then visit_Arel_Nodes_LessThanOrEqual(v, o, collector)
+        in Nodes::LessThan then visit_Arel_Nodes_LessThan(v, o, collector)
+        in Nodes::Matches then visit_Arel_Nodes_Matches(v, o, collector)
+        in Nodes::DoesNotMatch then visit_Arel_Nodes_DoesNotMatch(v, o, collector)
+        in Nodes::JoinSource then visit_Arel_Nodes_JoinSource(v, o, collector)
+        in Nodes::StringJoin then visit_Arel_Nodes_StringJoin(v, o, collector)
+        in Nodes::FullOuterJoin then visit_Arel_Nodes_FullOuterJoin(v, o, collector)
+        in Nodes::OuterJoin then visit_Arel_Nodes_OuterJoin(v, o, collector)
+        in Nodes::RightOuterJoin then visit_Arel_Nodes_RightOuterJoin(v, o, collector)
+        in Nodes::InnerJoin then visit_Arel_Nodes_InnerJoin(v, o, collector)
+        in Nodes::LeadingJoin then visit_Arel_Nodes_InnerJoin(v, o, collector)
+        in Nodes::On then visit_Arel_Nodes_On(v, o, collector)
+        in Nodes::Not then visit_Arel_Nodes_Not(v, o, collector)
+        in Arel::Table then visit_Arel_Table(v, o, collector)
+        in Nodes::In then visit_Arel_Nodes_In(v, o, collector)
+        in Nodes::NotIn then visit_Arel_Nodes_NotIn(v, o, collector)
+        in Nodes::And then visit_Arel_Nodes_And(v, o, collector)
+        in Nodes::Or then visit_Arel_Nodes_Or(v, o, collector)
+        in Nodes::Assignment then visit_Arel_Nodes_Assignment(v, o, collector)
+        in Nodes::Equality then visit_Arel_Nodes_Equality(v, o, collector)
+        in Nodes::IsNotDistinctFrom then visit_Arel_Nodes_IsNotDistinctFrom(v, o, collector)
+        in Nodes::IsDistinctFrom then visit_Arel_Nodes_IsDistinctFrom(v, o, collector)
+        in Nodes::NotEqual then visit_Arel_Nodes_NotEqual(v, o, collector)
+        in Nodes::As then visit_Arel_Nodes_As(v, o, collector)
+        in Nodes::Case then visit_Arel_Nodes_Case(v, o, collector)
+        in Nodes::When then visit_Arel_Nodes_When(v, o, collector)
+        in Nodes::Else then visit_Arel_Nodes_Else(v, o, collector)
+        in Nodes::UnqualifiedColumn then visit_Arel_Nodes_UnqualifiedColumn(v, o, collector)
+        in Nodes::Cte then visit_Arel_Nodes_Cte(v, o, collector)
+        in Arel::Attributes::Attribute then visit_Arel_Attributes_Attribute(v, o, collector)
+        in ActiveModel::Attribute then visit_ActiveModel_Attribute(v, o, collector)
+        in Nodes::BindParam then visit_Arel_Nodes_BindParam(v, o, collector)
+        in Nodes::SqlLiteral then visit_Arel_Nodes_SqlLiteral(v, o, collector)
+        in Nodes::BoundSqlLiteral then visit_Arel_Nodes_BoundSqlLiteral(v, o, collector)
+        in Integer then visit_Integer(v, o, collector)
+        in Nodes::InfixOperationMethods then visit_Arel_Nodes_InfixOperation(v, o, collector)
+        in Nodes::UnaryOperation | Nodes::BitwiseNot then visit_Arel_Nodes_UnaryOperation(v, o, collector)
+        in Array then visit_Array(v, o, collector)
+        in Set then visit_Array(v, Set.to_a(o), collector)
+        in Nodes::Fragments then visit_Arel_Nodes_Fragments(v, o, collector)
+        else unsupported(v, o, collector)
+        end
+      end
+
+      def visit_Arel_Nodes_DeleteStatement(v, o, collector)
+        Collector.set_retryable(collector, false)
+        o = prepare_delete_statement(v, o)
+        if has_join_sources?(v, o)
+          collector << "DELETE "
+          rel = join_source(v, o)
+          rel => Nodes::JoinSource
+          visit(v, Nodes::JoinSource.left(rel), collector)
+          collector << " FROM "
+        else
+          collector << "DELETE FROM "
+        end
+        visit(v, Nodes::DeleteStatement.relation(o), collector)
+        collect_nodes_for(v, Nodes::DeleteStatement.wheres(o), collector, " WHERE ", " AND ")
+        collect_nodes_for(v, Nodes::DeleteStatement.orders(o), collector, " ORDER BY ")
+        maybe_visit(v, Nodes::DeleteStatement.limit(o), collector)
+        maybe_visit(v, Nodes::DeleteStatement.comment(o), collector)
+      end
+
+      def visit_Arel_Nodes_UpdateStatement(v, o, collector)
+        Collector.set_retryable(collector, false)
+        o = prepare_update_statement(v, o)
+        collector << "UPDATE "
+        visit(v, Nodes::UpdateStatement.relation(o), collector)
+        collect_nodes_for(v, Nodes::UpdateStatement.values(o), collector, " SET ")
+        collect_nodes_for(v, Nodes::UpdateStatement.wheres(o), collector, " WHERE ", " AND ")
+        collect_nodes_for(v, Nodes::UpdateStatement.orders(o), collector, " ORDER BY ")
+        maybe_visit(v, Nodes::UpdateStatement.limit(o), collector)
+        maybe_visit(v, Nodes::UpdateStatement.comment(o), collector)
+      end
+
+      def visit_Arel_Nodes_InsertStatement(v, o, collector)
+        Collector.set_retryable(collector, false)
+        collector << "INSERT INTO "
+        visit(v, Nodes::InsertStatement.relation(o), collector)
+        columns = Nodes::InsertStatement.columns(o)
+        unless Array.empty?(columns)
+          collector << " ("
+          Array.each_with_index(columns) do |x, i|
+            collector << ", " unless i == 0
+            collector << quote_column_name(v, Arel::Attributes::Attribute.name(x))
+          end
+          collector << ")"
+        end
+        values = Nodes::InsertStatement.values(o)
+        select = Nodes::InsertStatement.select(o)
+        if values
+          maybe_visit(v, values, collector)
+        elsif select
+          maybe_visit(v, select, collector)
+        else
+          collector
+        end
+      end
+
+      def visit_Arel_Nodes_Exists(v, o, collector)
+        collector << "EXISTS ("
+        visit(v, Nodes::Exists.expressions(o), collector) << ")"
+      end
+
+      def visit_Arel_Nodes_Casted(v, o, collector)
+        collector << Kernel.to_s(quote(v, Nodes::Casted.value_for_database(o)))
+      end
+
+      def visit_Arel_Nodes_Quoted(v, o, collector)
+        collector << Kernel.to_s(quote(v, Nodes::Quoted.value_for_database(o)))
+      end
+
+      def visit_Arel_Nodes_True(v, o, collector) = collector << "TRUE"
+      def visit_Arel_Nodes_False(v, o, collector) = collector << "FALSE"
+
+      def visit_Arel_Nodes_ValuesList(v, o, collector)
+        collector << "VALUES "
+        Array.each_with_index(Nodes::ValuesList.rows(o)) do |row, i|
+          collector << ", " unless i == 0
+          collector << "("
+          Array.each_with_index(row) do |value, k|
+            collector << ", " unless k == 0
+            case value
+            in Nodes::SqlLiteral | Nodes::BindParam | ActiveModel::Attribute
+              visit(v, value, collector)
+            else
+              collector << Kernel.to_s(quote(v, value))
+            end
+          end
+          collector << ")"
+        end
+        collector
+      end
+
+      def visit_Arel_Nodes_SelectStatement(v, o, collector)
+        super_visit_Arel_Nodes_SelectStatement(v, o, collector)
+      end
+
+      def super_visit_Arel_Nodes_SelectStatement(v, o, collector)
+        with = Nodes::SelectStatement.with(o)
+        if with
+          visit(v, with, collector)
+          collector << " "
+        end
+        Array.each(Nodes::SelectStatement.cores(o)) { |x| visit_Arel_Nodes_SelectCore(v, x, collector) }
+        orders = Nodes::SelectStatement.orders(o)
+        unless Array.empty?(orders)
+          collector << " ORDER BY "
+          Array.each_with_index(orders) do |x, i|
+            collector << ", " unless i == 0
+            visit(v, x, collector)
+          end
+        end
+        visit_Arel_Nodes_SelectOptions(v, o, collector)
+      end
+
+      def visit_Arel_Nodes_SelectOptions(v, o, collector)
+        maybe_visit(v, Nodes::SelectStatement.limit(o), collector)
+        maybe_visit(v, Nodes::SelectStatement.offset(o), collector)
+        maybe_visit(v, Nodes::SelectStatement.lock(o), collector)
+      end
+
+      def visit_Arel_Nodes_SelectCore(v, o, collector)
+        collector << "SELECT"
+        collect_optimizer_hints(v, o, collector)
+        maybe_visit(v, Nodes::SelectCore.set_quantifier(o), collector)
+        collect_nodes_for(v, Nodes::SelectCore.projections(o), collector, " ")
+        source = Nodes::SelectCore.source(o)
+        if source && !Nodes::JoinSource.empty?(source)
+          collector << " FROM "
+          visit(v, source, collector)
+        end
+        collect_nodes_for(v, Nodes::SelectCore.wheres(o), collector, " WHERE ", " AND ")
+        collect_nodes_for(v, Nodes::SelectCore.groups(o), collector, " GROUP BY ")
+        collect_nodes_for(v, Nodes::SelectCore.havings(o), collector, " HAVING ", " AND ")
+        collect_nodes_for(v, Nodes::SelectCore.windows(o), collector, " WINDOW ")
+        maybe_visit(v, Nodes::SelectCore.comment(o), collector)
+      end
+
+      def visit_Arel_Nodes_OptimizerHints(v, o, collector)
+        hints = Array.map(Nodes::OptimizerHints.expr(o)) { |h| sanitize_as_sql_comment(v, h) }.Array.join(" ")
+        collector << "/*+ #{hints} */"
+      end
+
+      def visit_Arel_Nodes_Comment(v, o, collector)
+        collector << Array.map(Nodes::Comment.values(o)) { |c| "/* #{sanitize_as_sql_comment(v, c)} */" }.Array.join(" ")
+      end
+
+      def collect_nodes_for(v, nodes, collector, spacer, connector = ", ")
+        unless Array.empty?(nodes)
+          collector << spacer
+          inject_join(v, nodes, collector, connector)
+        end
+        collector
+      end
+
+      def visit_Arel_Nodes_Bin(v, o, collector) = visit(v, Nodes::Bin.expr(o), collector)
+      def visit_Arel_Nodes_Distinct(v, o, collector) = collector << "DISTINCT"
+
+      def visit_Arel_Nodes_With(v, o, collector)
+        collector << "WITH "
+        collect_ctes(v, Nodes::With.children(o), collector)
+      end
+
+      def visit_Arel_Nodes_WithRecursive(v, o, collector)
+        collector << "WITH RECURSIVE "
+        collect_ctes(v, Nodes::WithRecursive.children(o), collector)
+      end
+
+      def visit_Arel_Nodes_Union(v, o, collector)
+        infix_value_with_paren(v, o, collector, " UNION ")
+      end
+      def visit_Arel_Nodes_UnionAll(v, o, collector)
+        infix_value_with_paren(v, o, collector, " UNION ALL ")
+      end
+
+      def visit_Arel_Nodes_Intersect(v, o, collector)
+        collector << "( "
+        infix_value(v, o, collector, " INTERSECT ") << " )"
+      end
+
+      def visit_Arel_Nodes_Except(v, o, collector)
+        collector << "( "
+        infix_value(v, o, collector, " EXCEPT ") << " )"
+      end
+
+      def visit_Arel_Nodes_NamedWindow(v, o, collector)
+        collector << quote_column_name(v, Nodes::NamedWindow.name(o))
+        collector << " AS "
+        visit_Arel_Nodes_Window(v, o, collector)
+      end
+
+      # Ruby passes a NamedWindow here too (its superclass's method); here the window is either.
+      def visit_Arel_Nodes_Window(v, o, collector)
+        collector << "("
+        partitions = Nodes::WindowMethods.partitions(o)
+        orders = Nodes::WindowMethods.orders(o)
+        framing = Nodes::WindowMethods.framing(o)
+        collect_nodes_for(v, partitions, collector, "PARTITION BY ")
+        if !Array.empty?(orders)
+          collector << " " if !Array.empty?(partitions)
+          collector << "ORDER BY "
+          inject_join(v, orders, collector, ", ")
+        end
+        if framing
+          collector << " " if !Array.empty?(partitions) || !Array.empty?(orders)
+          visit(v, framing, collector)
+        end
+        collector << ")"
+      end
+
+      def visit_Arel_Nodes_Filter(v, o, collector)
+        visit(v, Nodes::Filter.left(o), collector)
+        collector << " FILTER (WHERE "
+        visit(v, Nodes::Filter.right(o), collector)
+        collector << ")"
+      end
+
+      def visit_Arel_Nodes_Rows(v, o, collector)
+        e = Nodes::Rows.expr(o)
+        if e
+          collector << "ROWS "
+          visit(v, e, collector)
+        else
+          collector << "ROWS"
+        end
+      end
+
+      def visit_Arel_Nodes_Range(v, o, collector)
+        e = Nodes::Range.expr(o)
+        if e
+          collector << "RANGE "
+          visit(v, e, collector)
+        else
+          collector << "RANGE"
+        end
+      end
+
+      def visit_Arel_Nodes_Preceding(v, o, collector)
+        e = Nodes::Preceding.expr(o)
+        e ? visit(v, e, collector) : collector << "UNBOUNDED"
+        collector << " PRECEDING"
+      end
+
+      def visit_Arel_Nodes_Following(v, o, collector)
+        e = Nodes::Following.expr(o)
+        e ? visit(v, e, collector) : collector << "UNBOUNDED"
+        collector << " FOLLOWING"
+      end
+
+      def visit_Arel_Nodes_CurrentRow(v, o, collector) = collector << "CURRENT ROW"
+
+      def visit_Arel_Nodes_Over(v, o, collector)
+        right = Nodes::Over.right(o)
+        case right
+        in nil then visit(v, Nodes::Over.left(o), collector) << " OVER ()"
+        in Nodes::SqlLiteral then infix_value(v, o, collector, " OVER ")
+        in String | Symbol then visit(v, Nodes::Over.left(o), collector) << " OVER #{quote_column_name(v, Kernel.to_s(right))}"
+        else infix_value(v, o, collector, " OVER ")
+        end
+      end
+
+      def visit_Arel_Nodes_Offset(v, o, collector)
+        collector << "OFFSET "
+        visit(v, Nodes::Offset.expr(o), collector)
+      end
+
+      def visit_Arel_Nodes_Limit(v, o, collector)
+        collector << "LIMIT "
+        visit(v, Nodes::Limit.expr(o), collector)
+      end
+
+      def visit_Arel_Nodes_Lock(v, o, collector) = visit(v, Nodes::Lock.expr(o), collector)
+
+      def visit_Arel_Nodes_Grouping(v, o, collector)
+        e = Nodes::Grouping.expr(o)
+        if e in Nodes::Grouping
+          visit(v, e, collector)
+        else
+          collector << "("
+          visit(v, e, collector) << ")"
+        end
+      end
+
+      def visit_Arel_Nodes_HomogeneousIn(v, o, collector)
+        set_preparable(v, collector, false)
+        visit(v, Nodes::HomogeneousIn.left(o), collector)
+        if Nodes::HomogeneousIn.type(o) == :in
+          collector << " IN ("
+        else
+          collector << " NOT IN ("
+        end
+        values = Nodes::HomogeneousIn.casted_values(o)
+        if Array.empty?(values)
+          collector << ActiveRecord::ConnectionAdapters::Quoting.quote(@connection, nil)
+        else
+          Collector.add_binds(collector, values, Nodes::HomogeneousIn.proc_for_binds(o)) { |i| bind_block(v, i) }
+        end
+        collector << ")"
+      end
+
+      def visit_Arel_SelectManager(v, o, collector)
+        collector << "("
+        visit(v, Arel::SelectManager.ast(o), collector) << ")"
+      end
+
+      def visit_Arel_Nodes_Ascending(v, o, collector)
+        visit(v, Nodes::Ascending.expr(o), collector) << " ASC"
+      end
+      def visit_Arel_Nodes_Descending(v, o, collector)
+        visit(v, Nodes::Descending.expr(o), collector) << " DESC"
+      end
+
+      def visit_Arel_Nodes_NullsFirst(v, o, collector)
+        visit(v, Nodes::NullsFirst.expr(o), collector)
+        collector << " NULLS FIRST"
+      end
+
+      def visit_Arel_Nodes_NullsLast(v, o, collector)
+        visit(v, Nodes::NullsLast.expr(o), collector)
+        collector << " NULLS LAST"
+      end
+
+      def visit_Arel_Nodes_Group(v, o, collector) = visit(v, Nodes::Group.expr(o), collector)
+
+      def visit_Arel_Nodes_NamedFunction(v, o, collector)
+        Collector.set_retryable(collector, false)
+        collector << Kernel.to_s(Nodes::NamedFunction.name(o))
+        collector << "("
+        collector << "DISTINCT " if Nodes::NamedFunction.distinct(o)
+        inject_join(v, Nodes::NamedFunction.expressions(o), collector, ", ") << ")"
+      end
+
+      def visit_Arel_Nodes_Extract(v, o, collector)
+        collector << "EXTRACT(#{String.upcase(Kernel.to_s(Nodes::Extract.field(o)))} FROM "
+        visit(v, Nodes::Extract.expr(o), collector) << ")"
+      end
+
+      def visit_Arel_Nodes_Count(v, o, collector) = aggregate(v, "COUNT", o, collector)
+      def visit_Arel_Nodes_Sum(v, o, collector) = aggregate(v, "SUM", o, collector)
+      def visit_Arel_Nodes_Max(v, o, collector) = aggregate(v, "MAX", o, collector)
+      def visit_Arel_Nodes_Min(v, o, collector) = aggregate(v, "MIN", o, collector)
+      def visit_Arel_Nodes_Avg(v, o, collector) = aggregate(v, "AVG", o, collector)
+
+      def visit_Arel_Nodes_TableAlias(v, o, collector)
+        visit(v, Nodes::TableAlias.relation(o), collector)
+        collector << " "
+        collector << quote_table_name(v, Nodes::TableAlias.name(o))
+      end
+
+      def visit_Arel_Nodes_Between(v, o, collector)
+        visit(v, Nodes::Between.left(o), collector)
+        collector << " BETWEEN "
+        visit(v, Nodes::Between.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_GreaterThanOrEqual(v, o, collector)
+        case unboundable?(v, Nodes::GreaterThanOrEqual.right(o))
+        in 1 then return collector << "1=0"
+        in -1 then return collector << "1=1"
+        else
+        end
+        visit(v, Nodes::GreaterThanOrEqual.left(o), collector)
+        collector << " >= "
+        visit(v, Nodes::GreaterThanOrEqual.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_GreaterThan(v, o, collector)
+        case unboundable?(v, Nodes::GreaterThan.right(o))
+        in 1 then return collector << "1=0"
+        in -1 then return collector << "1=1"
+        else
+        end
+        visit(v, Nodes::GreaterThan.left(o), collector)
+        collector << " > "
+        visit(v, Nodes::GreaterThan.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_LessThanOrEqual(v, o, collector)
+        case unboundable?(v, Nodes::LessThanOrEqual.right(o))
+        in 1 then return collector << "1=1"
+        in -1 then return collector << "1=0"
+        else
+        end
+        visit(v, Nodes::LessThanOrEqual.left(o), collector)
+        collector << " <= "
+        visit(v, Nodes::LessThanOrEqual.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_LessThan(v, o, collector)
+        case unboundable?(v, Nodes::LessThan.right(o))
+        in 1 then return collector << "1=1"
+        in -1 then return collector << "1=0"
+        else
+        end
+        visit(v, Nodes::LessThan.left(o), collector)
+        collector << " < "
+        visit(v, Nodes::LessThan.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_Matches(v, o, collector)
+        visit(v, Nodes::Matches.left(o), collector)
+        collector << " LIKE "
+        visit(v, Nodes::Matches.right(o), collector)
+        escape = Nodes::Matches.escape(o)
+        if escape
+          collector << " ESCAPE "
+          visit(v, escape, collector)
+        else
+          collector
+        end
+      end
+
+      def visit_Arel_Nodes_DoesNotMatch(v, o, collector)
+        visit(v, Nodes::DoesNotMatch.left(o), collector)
+        collector << " NOT LIKE "
+        visit(v, Nodes::DoesNotMatch.right(o), collector)
+        escape = Nodes::DoesNotMatch.escape(o)
+        if escape
+          collector << " ESCAPE "
+          visit(v, escape, collector)
+        else
+          collector
+        end
+      end
+
+      def visit_Arel_Nodes_JoinSource(v, o, collector)
+        left = Nodes::JoinSource.left(o)
+        right = Nodes::JoinSource.right(o)
+        visit(v, left, collector) if left
+        if !Array.empty?(right)
+          collector << " " if left
+          inject_join(v, right, collector, " ")
+        end
+        collector
+      end
+
+      def visit_Arel_Nodes_StringJoin(v, o, collector)
+        visit(v, Nodes::StringJoin.left(o), collector)
+      end
+
+      def visit_Arel_Nodes_FullOuterJoin(v, o, collector)
+        collector << "FULL OUTER JOIN "
+        visit(v, Nodes::FullOuterJoin.left(o), collector)
+        collector << " "
+        visit(v, Nodes::FullOuterJoin.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_OuterJoin(v, o, collector)
+        collector << "LEFT OUTER JOIN "
+        visit(v, Nodes::OuterJoin.left(o), collector)
+        collector << " "
+        visit(v, Nodes::OuterJoin.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_RightOuterJoin(v, o, collector)
+        collector << "RIGHT OUTER JOIN "
+        visit(v, Nodes::RightOuterJoin.left(o), collector)
+        collector << " "
+        visit(v, Nodes::RightOuterJoin.right(o), collector)
+      end
+
+      # Ruby passes a LeadingJoin here too (its superclass's method).
+      def visit_Arel_Nodes_InnerJoin(v, o, collector)
+        collector << "INNER JOIN "
+        visit(v, Nodes::Join.left(o), collector)
+        right = Nodes::Join.right(o)
+        if right
+          collector << " "
+          visit(v, right, collector)
+        else
+          collector
+        end
+      end
+
+      def visit_Arel_Nodes_On(v, o, collector)
+        collector << "ON "
+        visit(v, Nodes::On.expr(o), collector)
+      end
+
+      def visit_Arel_Nodes_Not(v, o, collector)
+        collector << "NOT ("
+        visit(v, Nodes::Not.expr(o), collector) << ")"
+      end
+
+      def visit_Arel_Table(v, o, collector)
+        name = Arel::Table.name(o)
+        if name in Nodes::Node
+          visit(v, name, collector)
+        else
+          collector << quote_table_name(v, name)
+        end
+        table_alias = Arel::Table.table_alias(o)
+        if table_alias
+          collector << " " << quote_table_name(v, table_alias)
+        end
+        collector
+      end
+
+      def visit_Arel_Nodes_In(v, o, collector)
+        attr = Nodes::In.left(o)
+        values = Nodes::In.right(o)
+        if values in Array
+          set_preparable(v, collector, false)
+          Array.delete_if(values) { |value| unboundable?(v, value) } unless Array.empty?(values)
+          return collector << "1=0" if Array.empty?(values)
+        end
+        visit(v, attr, collector) << " IN ("
+        visit(v, values, collector) << ")"
+      end
+
+      def visit_Arel_Nodes_NotIn(v, o, collector)
+        attr = Nodes::NotIn.left(o)
+        values = Nodes::NotIn.right(o)
+        if values in Array
+          set_preparable(v, collector, false)
+          Array.delete_if(values) { |value| unboundable?(v, value) } unless Array.empty?(values)
+          return collector << "1=1" if Array.empty?(values)
+        end
+        visit(v, attr, collector) << " NOT IN ("
+        visit(v, values, collector) << ")"
+      end
+
+      def visit_Arel_Nodes_And(v, o, collector)
+        inject_join(v, Nodes::And.children(o), collector, " AND ")
+      end
+      def visit_Arel_Nodes_Or(v, o, collector)
+        inject_join(v, Nodes::Or.children(o), collector, " OR ")
+      end
+
+      def visit_Arel_Nodes_Assignment(v, o, collector)
+        right = Nodes::Assignment.right(o)
+        case right
+        in Nodes::Node | Arel::Attributes::Attribute | ActiveModel::Attribute
+          visit(v, Nodes::Assignment.left(o), collector)
+          collector << " = "
+          visit(v, right, collector)
+        else
+          visit(v, Nodes::Assignment.left(o), collector)
+          collector << " = "
+          collector << Kernel.to_s(quote(v, right))
+        end
+      end
+
+      def visit_Arel_Nodes_Equality(v, o, collector)
+        right = Nodes::Equality.right(o)
+        return collector << "1=0" if unboundable?(v, right)
+        visit(v, Nodes::Equality.left(o), collector)
+        if nil_node?(v, right)
+          collector << " IS NULL"
+        else
+          collector << " = "
+          visit(v, right, collector)
+        end
+      end
+
+      def visit_Arel_Nodes_IsNotDistinctFrom(v, o, collector)
+        super_visit_Arel_Nodes_IsNotDistinctFrom(v, o, collector)
+      end
+      def super_visit_Arel_Nodes_IsNotDistinctFrom(v, o, collector)
+        if nil_node?(v, Nodes::IsNotDistinctFrom.right(o))
+          visit(v, Nodes::IsNotDistinctFrom.left(o), collector)
+          collector << " IS NULL"
+        else
+          is_distinct_from(v, o, collector)
+          collector << " = 0"
+        end
+      end
+
+      def visit_Arel_Nodes_IsDistinctFrom(v, o, collector)
+        super_visit_Arel_Nodes_IsDistinctFrom(v, o, collector)
+      end
+      def super_visit_Arel_Nodes_IsDistinctFrom(v, o, collector)
+        if nil_node?(v, Nodes::IsDistinctFrom.right(o))
+          visit(v, Nodes::IsDistinctFrom.left(o), collector)
+          collector << " IS NOT NULL"
+        else
+          is_distinct_from(v, o, collector)
+          collector << " = 1"
+        end
+      end
+
+      def visit_Arel_Nodes_NotEqual(v, o, collector)
+        right = Nodes::NotEqual.right(o)
+        return collector << "1=1" if unboundable?(v, right)
+        visit(v, Nodes::NotEqual.left(o), collector)
+        if nil_node?(v, right)
+          collector << " IS NOT NULL"
+        else
+          collector << " != "
+          visit(v, right, collector)
+        end
+      end
+
+      def visit_Arel_Nodes_As(v, o, collector)
+        visit(v, Nodes::As.left(o), collector)
+        collector << " AS "
+        visit(v, Nodes::As.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_Case(v, o, collector)
+        collector << "CASE "
+        c = Nodes::Case.case(o)
+        if c
+          visit(v, c, collector)
+          collector << " "
+        end
+        Array.each(Nodes::Case.conditions(o)) do |condition|
+          visit(v, condition, collector)
+          collector << " "
+        end
+        default = Nodes::Case.default(o)
+        if default
+          visit(v, default, collector)
+          collector << " "
+        end
+        collector << "END"
+      end
+
+      def visit_Arel_Nodes_When(v, o, collector)
+        collector << "WHEN "
+        visit(v, Nodes::When.left(o), collector)
+        collector << " THEN "
+        visit(v, Nodes::When.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_Else(v, o, collector)
+        collector << "ELSE "
+        visit(v, Nodes::Else.expr(o), collector)
+      end
+
+      def visit_Arel_Nodes_UnqualifiedColumn(v, o, collector)
+        collector << quote_column_name(v, Nodes::UnqualifiedColumn.name(o))
+      end
+
+      def visit_Arel_Nodes_Cte(v, o, collector)
+        collector << quote_table_name(v, Nodes::Cte.name(o))
+        collector << " AS "
+        case Nodes::Cte.materialized(o)
+        in true then collector << "MATERIALIZED "
+        in false then collector << "NOT MATERIALIZED "
+        else
+        end
+        visit(v, Nodes::Cte.relation(o), collector)
+      end
+
+      def visit_Arel_Attributes_Attribute(v, o, collector)
+        rel = Arel::Attributes::Attribute.relation(o)
+        join_name = case rel
+                    in Arel::Table then Arel::Table.table_alias(rel) || Arel::Table.name(rel)
+                    in Nodes::TableAlias then Nodes::TableAlias.table_alias(rel)
+                    end
+        collector << quote_table_name(v, join_name) << "." << quote_column_name(v, Arel::Attributes::Attribute.name(o))
+      end
+
+      def bind_block(v, i) = "?"
+
+      def visit_ActiveModel_Attribute(v, o, collector)
+        Collector.add_bind(collector, o) { |i| bind_block(v, i) }
+      end
+
+      def visit_Arel_Nodes_BindParam(v, o, collector)
+        Collector.add_bind(collector, Nodes::BindParam.value(o)) { |i| bind_block(v, i) }
+      end
+
+      def visit_Arel_Nodes_SqlLiteral(v, o, collector)
+        set_preparable(v, collector, false)
+        Collector.set_retryable(collector, Collector.retryable(collector) && Nodes::SqlLiteral.retryable(o))
+        collector << Nodes::SqlLiteral.to_s(o)
+      end
+
+      # Ruby's new_bind lambda is the function bound_value(v, value, collector).
+      def visit_Arel_Nodes_BoundSqlLiteral(v, o, collector)
+        Collector.set_retryable(collector, false)
+        bind_index = 0
+        sql = Nodes::BoundSqlLiteral.sql_with_placeholders(o)
+        positional = Nodes::BoundSqlLiteral.positional_binds(o)
+        named = Nodes::BoundSqlLiteral.named_binds(o)
+        if positional
+          String.scan(sql, /\?|[^?]+/).Array.each do |part|
+            part => String
+            if part != "?"
+              collector << part
+            else
+              value = positional[bind_index]
+              bind_index += 1
+              bound_value(v, value, collector)
+            end
+          end
+        elsif named
+          String.scan(sql, /:(?<!::)([a-zA-Z]\w*)|([^:]+|.)/).Array.each do |m|
+            text = m[1]
+            if text
+              collector << Kernel.to_s(text)
+            else
+              key = Kernel.to_s(m[0])
+              value = Hash.key?(named, String.to_sym(key)) ? named[String.to_sym(key)] : named[key]
+              bound_value(v, value, collector)
+            end
+          end
+        end
+        collector
+      end
+
+      def bound_value(v, value, collector)
+        if Arel.arel_node?(value)
+          visit(v, value, collector)
+        elsif value in Array
+          if Array.empty?(value)
+            collector << ActiveRecord::ConnectionAdapters::Quoting.quote(@connection, nil)
+          elsif Array.none?(value) { |x| Arel.arel_node?(x) }
+            Collector.add_binds(collector, Array.map(value) { |x| ActiveRecord::ConnectionAdapters::Quoting.cast_bound_value(@connection, x) }) { |i| bind_block(v, i) }
+          else
+            Array.each_with_index(value) do |x, i|
+              collector << ", " unless i == 0
+              if Arel.arel_node?(x)
+                visit(v, x, collector)
+              else
+                Collector.add_bind(collector, ActiveRecord::ConnectionAdapters::Quoting.cast_bound_value(@connection, x)) { |k| bind_block(v, k) }
+              end
+            end
+          end
+        else
+          Collector.add_bind(collector, ActiveRecord::ConnectionAdapters::Quoting.cast_bound_value(@connection, value)) { |i| bind_block(v, i) }
+        end
+        collector
+      end
+
+      def visit_Integer(v, o, collector) = collector << Integer.to_s(o)
+
+      # Ruby aliases visit_String, visit_Symbol, visit_NilClass, ... to this.
+      def unsupported(v, o, collector)
+        raise UnsupportedVisitError, "Unsupported argument type: #{Arel.class_name(o)}. Construct an Arel node instead."
+      end
+
+      def visit_Arel_Nodes_InfixOperation(v, o, collector)
+        visit(v, Nodes::InfixOperationMethods.left(o), collector)
+        collector << " #{Nodes::InfixOperationMethods.operator(o)} "
+        visit(v, Nodes::InfixOperationMethods.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_UnaryOperation(v, o, collector)
+        collector << " #{(Nodes::UnaryOperation|Nodes::BitwiseNot).operator(o)} "
+        visit(v, Nodes::Unary.expr(o), collector)
+      end
+
+      def visit_Array(v, o, collector) = inject_join(v, o, collector, ", ")
+
+      def visit_Arel_Nodes_Fragments(v, o, collector)
+        inject_join(v, Nodes::Fragments.values(o), collector, " ")
+      end
+
+      def quote(v, value)
+        return value if value in Nodes::SqlLiteral
+        ActiveRecord::ConnectionAdapters::Quoting.quote(@connection, value)
+      end
+
+      def quote_table_name(v, name)
+        return Nodes::SqlLiteral.to_s(name) if name in Nodes::SqlLiteral
+        ActiveRecord::ConnectionAdapters::Quoting.quote_table_name(@connection, name)
+      end
+
+      def quote_column_name(v, name)
+        return Nodes::SqlLiteral.to_s(name) if name in Nodes::SqlLiteral
+        ActiveRecord::ConnectionAdapters::Quoting.quote_column_name(@connection, name)
+      end
+
+      def sanitize_as_sql_comment(v, value)
+        return Nodes::SqlLiteral.to_s(value) if value in Nodes::SqlLiteral
+        ActiveRecord::ConnectionAdapters::Quoting.sanitize_as_sql_comment(@connection, value)
+      end
+
+      def collect_optimizer_hints(v, o, collector)
+        maybe_visit(v, Nodes::SelectCore.optimizer_hints(o), collector)
+      end
+
+      def maybe_visit(v, thing, collector)
+        return collector unless thing
+        collector << " "
+        visit(v, thing, collector)
+      end
+
+      def inject_join(v, list, collector, join_str)
+        Array.each_with_index(list) do |x, i|
+          collector << join_str unless i == 0
+          visit(v, x, collector)
+        end
+        collector
+      end
+
+      # Ruby: value.respond_to?(:unboundable?) && value.unboundable?
+      def unboundable?(v, value) = Arel.unboundable?(value)
+
+      # Ruby: right.nil?, which Casted, Quoted and BindParam answer for their value
+      def nil_node?(v, value)
+        case value
+        in nil then true
+        in Nodes::Casted then Nodes::Casted.nil_value?(value)
+        in Nodes::Quoted then Nodes::Quoted.nil_value?(value)
+        in Nodes::BindParam then Nodes::BindParam.nil_value?(value)
+        else false
+        end
+      end
+
+      # Ruby sets `collector.preparable = false` on whichever collector it has.
+      def set_preparable(v, collector, value)
+        (Arel::Collectors::SQLString|Arel::Collectors::Composite|Arel::Collectors::SubstituteBinds).set_preparable(collector, value)
+      end
+
+      def has_join_sources?(v, o) = join_source(v, o) != nil
+
+      # Sake only: the statement's JoinSource when it has joins (has_join_sources?), so that the caller has its type
+      def join_source(v, o)
+        rel = (Nodes::UpdateStatement|Nodes::DeleteStatement).relation(o)
+        (rel in Nodes::JoinSource) && !Array.empty?(Nodes::JoinSource.right(rel)) ? rel : nil
+      end
+
+      def has_limit_or_offset_or_orders?(v, o)
+        (Nodes::UpdateStatement|Nodes::DeleteStatement).limit(o) || (Nodes::UpdateStatement|Nodes::DeleteStatement).offset(o) || !Array.empty?((Nodes::UpdateStatement|Nodes::DeleteStatement).orders(o))
+      end
+
+      def has_group_by_and_having?(v, o)
+        !Array.empty?((Nodes::UpdateStatement|Nodes::DeleteStatement).groups(o)) && !Array.empty?((Nodes::UpdateStatement|Nodes::DeleteStatement).havings(o))
+      end
+
+      def prepare_update_statement(v, o) = super_prepare_update_statement(v, o)
+
+      # Ruby: `alias :prepare_delete_statement :prepare_update_statement`; o.clone is dup(o).
+      def super_prepare_update_statement(v, o)
+        key = (Nodes::UpdateStatement|Nodes::DeleteStatement).key(o)
+        if key && (has_limit_or_offset_or_orders?(v, o) || has_join_sources?(v, o))
+          stmt = dup(o)
+          (Nodes::UpdateStatement|Nodes::DeleteStatement).set_limit(stmt, nil)
+          (Nodes::UpdateStatement|Nodes::DeleteStatement).set_offset(stmt, nil)
+          (Nodes::UpdateStatement|Nodes::DeleteStatement).set_orders(stmt, Any[])
+          columns = Nodes::Grouping.new(key)
+          (Nodes::UpdateStatement|Nodes::DeleteStatement).set_wheres(stmt, Any[Nodes::In.new(columns, Any[build_subselect(v, key, o)])])
+          if has_join_sources?(v, o)
+            rel = (Nodes::UpdateStatement|Nodes::DeleteStatement).relation(o)
+            rel = join_source(v, o)
+            rel => Nodes::JoinSource
+            (Nodes::UpdateStatement|Nodes::DeleteStatement).set_relation(stmt, Nodes::JoinSource.left(rel))
+          end
+          stmt
+        else
+          o
+        end
+      end
+
+      # Ruby's alias binds ToSql's method, so SQLite's prepare_update_statement does not change deletes
+      def prepare_delete_statement(v, o) = super_prepare_update_statement(v, o)
+
+      def build_subselect(v, key, o)
+        stmt = Nodes::SelectStatement.build
+        core = Array.first(Nodes::SelectStatement.cores(stmt))
+        core => Nodes::SelectCore
+        Nodes::SelectCore.set_froms(core, (Nodes::UpdateStatement|Nodes::DeleteStatement).relation(o))
+        Nodes::SelectCore.set_wheres(core, (Nodes::UpdateStatement|Nodes::DeleteStatement).wheres(o))
+        Nodes::SelectCore.set_projections(core, Any[key])
+        groups = (Nodes::UpdateStatement|Nodes::DeleteStatement).groups(o)
+        havings = (Nodes::UpdateStatement|Nodes::DeleteStatement).havings(o)
+        Nodes::SelectCore.set_groups(core, groups) unless Array.empty?(groups)
+        Nodes::SelectCore.set_havings(core, havings) unless Array.empty?(havings)
+        Nodes::SelectStatement.set_limit(stmt, (Nodes::UpdateStatement|Nodes::DeleteStatement).limit(o))
+        Nodes::SelectStatement.set_offset(stmt, (Nodes::UpdateStatement|Nodes::DeleteStatement).offset(o))
+        Nodes::SelectStatement.set_orders(stmt, (Nodes::UpdateStatement|Nodes::DeleteStatement).orders(o))
+        stmt
+      end
+
+      def infix_value(v, o, collector, value)
+        visit(v, Nodes::Binary.left(o), collector)
+        collector << value
+        visit(v, Nodes::Binary.right(o), collector)
+      end
+
+      def infix_value_with_paren(v, o, collector, value, suppress_parens = false)
+        collector << "( " unless suppress_parens
+        left = Nodes::Binary.left(o)
+        infix_side(v, left, o, collector, value)
+        collector << value
+        right = Nodes::Binary.right(o)
+        infix_side(v, right, o, collector, value)
+        collector << " )" unless suppress_parens
+        collector
+      end
+
+      # Ruby's `if o.left.class == o.class then infix_value_with_paren(o.left, ...) else grouping_parentheses ...`
+      def infix_side(v, side, o, collector, value)
+        case side
+        in Nodes::Union | Nodes::UnionAll
+          if same_class?(v, side, o)
+            infix_value_with_paren(v, side, collector, value, true)
+          else
+            grouping_parentheses(v, side, collector, false)
+          end
+        else grouping_parentheses(v, side, collector, false)
+        end
+      end
+
+      # Ruby: o.left.class == o.class, for the set operations infix_value_with_paren is given
+      def same_class?(v, a, b)
+        case [a, b]
+        in [Nodes::Union, Nodes::Union] then true
+        in [Nodes::UnionAll, Nodes::UnionAll] then true
+        else false
+        end
+      end
+
+      def grouping_parentheses(v, o, collector, always_wrap_selects = true)
+        if (o in Nodes::SelectStatement) && (always_wrap_selects || require_parentheses?(v, o))
+          collector << "("
+          visit(v, o, collector)
+          collector << ")"
+          collector
+        else
+          visit(v, o, collector)
+        end
+      end
+
+      def require_parentheses?(v, o)
+        !Array.empty?(Nodes::SelectStatement.orders(o)) || Nodes::SelectStatement.limit(o) || Nodes::SelectStatement.offset(o)
+      end
+
+      def aggregate(v, name, o, collector)
+        collector << "#{name}("
+        collector << "DISTINCT " if Nodes::Function.distinct(o)
+        inject_join(v, Nodes::Function.expressions(o), collector, ", ") << ")"
+      end
+
+      def is_distinct_from(v, o, collector)
+        collector << "CASE WHEN "
+        visit(v, Nodes::Binary.left(o), collector)
+        collector << " = "
+        visit(v, Nodes::Binary.right(o), collector)
+        collector << " OR ("
+        visit(v, Nodes::Binary.left(o), collector)
+        collector << " IS NULL AND "
+        visit(v, Nodes::Binary.right(o), collector)
+        collector << " IS NULL)"
+        collector << " THEN 0 ELSE 1 END"
+      end
+
+      def collect_ctes(v, children, collector)
+        Array.each_with_index(children) do |child, i|
+          collector << ", " unless i == 0
+          cte = case child
+                in Nodes::As then Nodes::As.to_cte(child)
+                in Nodes::TableAlias then Nodes::TableAlias.to_cte(child)
+                in Nodes::Cte then child
+                end
+          visit(v, cte, collector)
+        end
+        collector
+      end
+    end
+  end
+end

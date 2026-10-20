@@ -1,0 +1,144 @@
+# Port of activemodel-8.1.3/lib/active_model/type/helpers/immutable.rb, mutable.rb, numeric.rb, timezone.rb,
+# time_value.rb and accepts_multiparameter_time.rb (one file: the six helper mixins of the types)
+# (partial: TimeValue has no local time zone (ActiveSupport's ::Time.zone): times are UTC, Rails' default)
+#
+# Ruby's AcceptsMultiparameterTime is a Module subclass whose initialize(defaults:) define_methods
+# value_from_multiparameter_assignment with the defaults closed over; here it is a mixin whose includer
+# defines `multiparameter_defaults(t)` (the Hash Ruby passes to new).
+
+module ActiveModel
+  module Type
+    module Helpers
+      module Immutable
+        def mutable?(t) = false
+      end
+
+      module Mutable
+        def cast(t, value) = deserialize(t, serialize(t, value))
+        def changed_in_place?(t, raw_old_value, new_value)
+          raw_old_value != serialize(t, new_value)
+        end
+        def mutable?(t) = true
+      end
+
+      module Numeric
+        def serialize(t, value) = cast(t, value)
+        def serialize_cast_value(t, value) = value
+
+        # Ruby: `value <=> 0` is truthy for numbers; true/false become 1/0, other values their presence
+        def cast(t, value)
+          v = case value
+              in ::Integer | ::Float | ::Rational | BigDecimal then value
+              in true then 1
+              in false then 0
+              in ::String then ::String.strip(value) == "" ? nil : value
+              else value
+              end
+          (v in nil) ? nil : cast_value(t, v)
+        end
+
+        def changed?(t, old_value, new_value, new_value_before_type_cast)
+          (old_value != new_value || number_to_non_number?(t, old_value, new_value_before_type_cast)) &&
+            !equal_nan?(t, old_value, new_value_before_type_cast)
+        end
+
+        def equal_nan?(t, old_value, new_value)
+          (old_value in ::Float) && ::Float.nan?(old_value) && (new_value in ::Float) && ::Float.nan?(new_value)
+        end
+
+        def number_to_non_number?(t, old_value, new_value_before_type_cast)
+          old_value != nil && !(new_value_before_type_cast in ::Integer | ::Float | ::Rational | BigDecimal) &&
+            non_numeric_string?(t, Kernel.to_s(new_value_before_type_cast))
+        end
+
+        def non_numeric_string?(t, value) = !::String.match?(value, /\A\s*[+-]?\d/)
+      end
+
+      module Timezone
+        # Ruby: ::Time.zone_default's name is "UTC", or there is none; ActiveSupport's zones are not ported
+        def is_utc?(t) = true
+        def default_timezone(t) = is_utc?(t) ? :utc : :local
+      end
+
+      module TimeValue
+        def serialize_cast_value(t, value)
+          v = apply_seconds_precision(t, value)
+          (v in ::Time) ? ::Time.getutc(v) : v
+        end
+
+        def apply_seconds_precision(t, value)
+          prec = precision(t)
+          return value unless prec && (value in ::Time)
+          round_power = 10 ** (9 - prec)
+          rounded_off_nsec = ::Time.nsec(value) % round_power
+          if rounded_off_nsec > 0
+            ::Time.at(::Time.to_r(value) - Rational(rounded_off_nsec, 1_000_000_000), in: "UTC")
+          else
+            value
+          end
+        end
+
+        def type_cast_for_schema(t, value)
+          value => ::Time
+          Kernel.inspect(::Time.strftime(value, "%Y-%m-%d %H:%M:%S"))
+        end
+
+        def new_time(t, year, mon, mday, hour, min, sec, microsec, offset = nil)
+          return nil if year == nil || (year == 0 && mon == 0 && mday == 0)
+          time = ::Time.utc(year, mon || 1, mday || 1, hour || 0, min || 0, Rational(sec || 0) + Rational(microsec || 0, 1_000_000)) rescue nil
+          return nil unless time
+          offset && offset != 0 ? time - offset : time
+        end
+
+        def iso_datetime
+          /\A(\d{4})-(\d\d)-(\d\d)(?:T|\s)(\d\d):(\d\d):(\d\d)(?:\.(\d{1,6})\d*)?(?:(Z(?=\z)|[+-]\d\d)(?::?(\d\d))?)?\z/
+        end
+
+        # Ruby: ::Time.new(string, in: "UTC"), which reads ISO_DATETIME's format
+        def fast_string_to_time(t, string)
+          return nil unless ::String.include?(string, "-")
+          m = ::String.match(string, iso_datetime)
+          return nil unless m
+          usec = m[7] ? ::String.to_i(::String.ljust(m[7] || "", 6, "0")) : 0
+          zone = m[8]
+          year = ::String.to_i(m[1] || "")
+          mon = ::String.to_i(m[2] || "")
+          mday = ::String.to_i(m[3] || "")
+          hour = ::String.to_i(m[4] || "")
+          min = ::String.to_i(m[5] || "")
+          sec = ::String.to_i(m[6] || "")
+          # Ruby's Time.new(string, in: "UTC") keeps an offset written in the string
+          if zone && zone != "Z"
+            offset = "#{zone}:#{m[9] || "00"}"
+            return (::Time.new(year, mon, mday, hour, min, Rational(sec) + Rational(usec, 1_000_000), offset) rescue nil)
+          end
+          new_time(t, year, mon, mday, hour, min, sec, usec)
+        end
+      end
+
+      module AcceptsMultiparameterTime
+        def multiparameter_defaults(t) = raise(NotImplementedError)
+
+        def serialize(t, value) = serialize_cast_value(t, cast(t, value))
+        def serialize_cast_value(t, value) = value
+
+        def cast(t, value)
+          (value in Hash) ? value_from_multiparameter_assignment(t, value) : super_cast(t, value)
+        end
+
+        def assert_valid_value(t, value)
+          (value in Hash) ? value_from_multiparameter_assignment(t, value) : nil
+        end
+
+        def value_constructed_by_mass_assignment?(t, value) = (value in Hash)
+
+        def value_from_multiparameter_assignment(t, values_hash)
+          Hash.each(multiparameter_defaults(t)) { |k, v| values_hash[k] ||= v }
+          return nil unless values_hash[1] && values_hash[2] && values_hash[3]
+          values = Hash.sort_by(values_hash) { |k, v| k }.Array.map { |k, v| v }
+          ::Time.utc(values[0], values[1], values[2], values[3] || 0, values[4] || 0, values[5] || 0)
+        end
+      end
+    end
+  end
+end

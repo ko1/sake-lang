@@ -1,0 +1,117 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/abstract/schema_creation.rb and
+# sqlite3/schema_creation.rb (one file: SQLite3::SchemaCreation < SchemaCreation) (partial: no foreign keys,
+# check constraints)
+#
+# Ruby's accept(o) sends "visit_#{o.class.name.split('::').last}"; here a `case` over the definition classes.
+# Ruby delegates quote_column_name, type_to_sql, ... to the connection: `AbstractAdapter.f(@conn, ...)` here.
+
+module ActiveRecord
+  module ConnectionAdapters
+    class SchemaCreation
+      attr_reader conn
+
+      def accept(s, o)
+        case o
+        in AlterTable then visit_AlterTable(s, o)
+        in ColumnDefinition then visit_ColumnDefinition(s, o)
+        in AddColumnDefinition then visit_AddColumnDefinition(s, o)
+        in TableDefinition | SQLite3::TableDefinition then visit_TableDefinition(s, o)
+        in PrimaryKeyDefinition then visit_PrimaryKeyDefinition(s, o)
+        in CreateIndexDefinition then visit_CreateIndexDefinition(s, o)
+        end
+      end
+
+      def visit_AlterTable(s, o)
+        sql = "ALTER TABLE #{AbstractAdapter.quote_table_name(@conn, AlterTable.name(o))} "
+        sql + Array.map(AlterTable.adds(o)) { |col| accept(s, col) }.Array.join(" ")
+      end
+
+      def visit_ColumnDefinition(s, o)
+        opts = ColumnDefinition.options(o)
+        ColumnDefinition.set_sql_type(o, AbstractAdapter.type_to_sql(@conn, ColumnDefinition.type(o), opts[:limit], opts[:precision], opts[:scale]))
+        column_sql = "#{AbstractAdapter.quote_column_name(@conn, ColumnDefinition.name(o))} #{ColumnDefinition.sql_type(o)}"
+        column_sql = add_column_options!(s, column_sql, opts, o) unless ColumnDefinition.type(o) == :primary_key
+        column_sql
+      end
+
+      def visit_AddColumnDefinition(s, o) = "ADD #{accept(s, AddColumnDefinition.column(o))}"
+
+      def visit_TableDefinition(s, o)
+        create_sql = "CREATE#{table_modifier_in_create(s, o)} TABLE "
+        create_sql += "IF NOT EXISTS " if TableDefinitionMethods.if_not_exists(o)
+        create_sql += "#{AbstractAdapter.quote_table_name(@conn, TableDefinitionMethods.name(o))} "
+        statements = Array.map(TableDefinitionMethods.columns(o)) { |c| accept(s, c) }
+        pks = TableDefinitionMethods.primary_keys(o)
+        Array.push(statements, accept(s, pks)) if pks
+        create_sql += "(#{Array.join(statements, ", ")})" unless Array.empty?(statements)
+        opts = TableDefinitionMethods.options(o)
+        create_sql += " #{opts}" if opts
+        create_sql
+      end
+
+      def visit_PrimaryKeyDefinition(s, o)
+        names = PrimaryKeyDefinition.name(o)
+        names => Array
+        "PRIMARY KEY (#{Array.map(names) { |name| AbstractAdapter.quote_column_name(@conn, name) }.Array.join(", ")})"
+      end
+
+      def visit_CreateIndexDefinition(s, o)
+        index = CreateIndexDefinition.index(o)
+        sql = String["CREATE"]
+        Array.push(sql, "UNIQUE") if IndexDefinition.unique(index)
+        Array.push(sql, "INDEX")
+        algorithm = CreateIndexDefinition.algorithm(o)
+        Array.push(sql, algorithm) if algorithm
+        Array.push(sql, "IF NOT EXISTS") if CreateIndexDefinition.if_not_exists(o)
+        Array.push(sql, "#{AbstractAdapter.quote_column_name(@conn, IndexDefinition.name(index))} ON #{AbstractAdapter.quote_table_name(@conn, IndexDefinition.table(index))}")
+        Array.push(sql, "(#{quoted_columns(s, index)})")
+        where = IndexDefinition.where(index)
+        Array.push(sql, "WHERE #{where}") if AbstractAdapter.supports_partial_index?(@conn) && where
+        Array.join(sql, " ")
+      end
+
+      def quoted_columns(s, o)
+        AbstractAdapter.quoted_columns_for_index(@conn, IndexDefinition.columns(o), IndexDefinition.orders(o))
+      end
+
+      def add_column_options!(s, sql, options, column)
+        super_add_column_options!(s, sql, options, column)
+      end
+
+      def super_add_column_options!(s, sql, options, column)
+        if AbstractAdapter.options_include_default?(@conn, options)
+          sql += " DEFAULT #{quote_default_expression_for_column_definition(s, options[:default], column)}"
+        end
+        sql += " NOT NULL" if options[:null] == false
+        sql += " AUTO_INCREMENT" if options[:auto_increment] == true
+        sql += " PRIMARY KEY" if options[:primary_key] == true
+        sql
+      end
+
+      def quote_default_expression_for_column_definition(s, default, column_definition)
+        ColumnDefinition.set_cast_type(column_definition, Quoting.lookup_cast_type(@conn, ColumnDefinition.sql_type(column_definition) || ""))
+        cast_type = ColumnDefinition.fetch_cast_type(column_definition, @conn)
+        Quoting.quote(@conn, ActiveModel::Type::Value.serialize(cast_type, default))
+      end
+
+      def table_modifier_in_create(s, o) = TableDefinitionMethods.temporary(o) ? " TEMPORARY" : ""
+    end
+
+    module SQLite3
+      class SchemaCreation < ConnectionAdapters::SchemaCreation
+        def supports_index_using?(s) = false
+
+        def add_column_options!(s, sql, options, column)
+          collation = options[:collation]
+          sql += " COLLATE \"#{collation}\"" if collation
+          as = options[:as]
+          if as
+            sql += " GENERATED ALWAYS AS (#{as})"
+            sql += options[:stored] ? " STORED" : " VIRTUAL"
+          end
+          super_add_column_options!(s, sql, options, column)
+        end
+      end
+    end
+  end
+end

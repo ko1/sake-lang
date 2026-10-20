@@ -1,0 +1,197 @@
+# Port of activerecord-8.1.3/lib/arel/select_manager.rb (partial: no lateral, no optimizer-hint sanitizing beyond Ruby's)
+#
+# Ruby: SelectManager.new(table = nil) builds the statement; here `table` is the first field (private), and
+# initialize builds `ast` and `ctx` from it, so the call is Ruby's. Ruby's `limit=`/`offset=` are `set_limit`
+# /`set_offset`; `comment(*values)` without values (the reader) is `comment_node`.
+
+module Arel
+  class SelectManager
+    private attr_reader table
+    attr_reader ast, ctx
+    include Arel::TreeManager
+    include Arel::Crud
+
+    def initialize(m)
+      @ast = Nodes::SelectStatement.build(@table)
+      @ctx = Array.last(Nodes::SelectStatement.cores(@ast)) || Nodes::SelectCore.build
+    end
+
+    def limit(m)
+      l = Nodes::SelectStatement.limit(@ast)
+      l ? Nodes::Limit.expr(l) : nil
+    end
+    def taken(m) = limit(m)
+
+    def constraints(m) = Nodes::SelectCore.wheres(@ctx)
+
+    def offset(m)
+      o = Nodes::SelectStatement.offset(@ast)
+      o ? Nodes::Offset.expr(o) : nil
+    end
+
+    def skip(m, amount)
+      Nodes::SelectStatement.set_offset(@ast, amount ? Nodes::Offset.new(amount) : nil)
+      m
+    end
+    def set_offset(m, amount) = skip(m, amount)
+
+    def exists(m) = Nodes::Exists.new(@ast)
+
+    def as(m, other) = create_table_alias(m, grouping(m, @ast), Nodes::SqlLiteral.new(other, true))
+
+    def lock(m, locking = Arel.sql("FOR UPDATE"))
+      l = case locking
+          in true then Arel.sql("FOR UPDATE")
+          in Nodes::SqlLiteral then locking
+          in String then Arel.sql(locking)
+          else locking
+          end
+      Nodes::SelectStatement.set_lock(@ast, Nodes::Lock.new(l))
+      m
+    end
+
+    def locked(m) = Nodes::SelectStatement.lock(@ast)
+
+    def on(m, *exprs)
+      last = Array.last(Nodes::JoinSource.right(Nodes::SelectCore.source(@ctx)))
+      Nodes::Join.set_right(last, Nodes::On.new(collapse(m, exprs))) if last in Nodes::Join
+      m
+    end
+
+    def group(m, *columns)
+      Array.each(columns) do |column|
+        c = case column
+            in Nodes::SqlLiteral then column
+            in String then Nodes::SqlLiteral.new(column)
+            in Symbol then Nodes::SqlLiteral.new(Symbol.name(column))
+            else column
+            end
+        Array.push(Nodes::SelectCore.groups(@ctx), Nodes::Group.new(c))
+      end
+      m
+    end
+
+    def from(m, table)
+      t = (table in String) ? Nodes::SqlLiteral.new(table) : table
+      case t
+      in Nodes::Join then Array.push(Nodes::JoinSource.right(Nodes::SelectCore.source(@ctx)), t)
+      else Nodes::JoinSource.set_left(Nodes::SelectCore.source(@ctx), t)
+      end
+      m
+    end
+
+    def froms(m)
+      Array.filter_map(Nodes::SelectStatement.cores(@ast)) { |x| Nodes::SelectCore.from(x) }
+    end
+
+    # Ruby: join(relation, klass = Nodes::InnerJoin); klass is a Symbol here (FactoryMethods.create_join).
+    def join(m, relation, klass = :inner)
+      return m unless relation
+      case relation
+      in String
+        raise EmptyJoinError if String.empty?(relation)
+        klass = :string
+      in Nodes::SqlLiteral
+        raise EmptyJoinError if Nodes::SqlLiteral.empty?(relation)
+        klass = :string
+      else
+      end
+      Array.push(Nodes::JoinSource.right(Nodes::SelectCore.source(@ctx)), create_join(m, relation, nil, klass))
+      m
+    end
+
+    def outer_join(m, relation) = join(m, relation, :outer)
+
+    def having(m, expr)
+      Array.push(Nodes::SelectCore.havings(@ctx), expr)
+      m
+    end
+
+    def window(m, name)
+      w = Nodes::NamedWindow.new(name)
+      Array.push(Nodes::SelectCore.windows(@ctx), w)
+      w
+    end
+
+    def project(m, *projections)
+      Array.concat(Nodes::SelectCore.projections(@ctx), Array.map(projections) { |x| (x in String | Symbol) ? Nodes::SqlLiteral.new(Kernel.to_s(x)) : x })
+      m
+    end
+
+    def projections(m) = Nodes::SelectCore.projections(@ctx)
+    def set_projections(m, projections) = Nodes::SelectCore.set_projections(@ctx, projections)
+
+    def optimizer_hints(m, *hints)
+      Nodes::SelectCore.set_optimizer_hints(@ctx, Nodes::OptimizerHints.new(hints)) unless Array.empty?(hints)
+      m
+    end
+
+    def distinct(m, value = true)
+      Nodes::SelectCore.set_set_quantifier(@ctx, value ? Nodes::Distinct.new : nil)
+      m
+    end
+
+    def order(m, *expr)
+      Array.concat(Nodes::SelectStatement.orders(@ast), Array.map(expr) { |x| (x in String | Symbol) ? Nodes::SqlLiteral.new(Kernel.to_s(x)) : x })
+      m
+    end
+
+    def orders(m) = Nodes::SelectStatement.orders(@ast)
+
+    def where(m, expr)
+      e = (expr in Arel::SelectManager) ? Arel::SelectManager.ast(expr) : expr
+      Array.push(Nodes::SelectCore.wheres(@ctx), e)
+      m
+    end
+
+    def where_sql(m, engine = Arel::Table.engine)
+      wheres = Nodes::SelectCore.wheres(@ctx)
+      return nil if Array.empty?(wheres)
+      Nodes::SqlLiteral.new("WHERE #{Nodes::Node.to_sql(Nodes::And.new(wheres), engine)}")
+    end
+
+    # Ruby: union(operation, other = nil), with const_get("Union#{operation.capitalize}") for :all
+    def union(m, operation, other = nil)
+      case operation
+      in Arel::SelectManager then Nodes::Union.new(@ast, Arel::SelectManager.ast(operation))
+      in :all
+        other => Arel::SelectManager
+        Nodes::UnionAll.new(@ast, Arel::SelectManager.ast(other))
+      end
+    end
+
+    def intersect(m, other) = Nodes::Intersect.new(@ast, Arel::SelectManager.ast(other))
+    def except(m, other) = Nodes::Except.new(@ast, Arel::SelectManager.ast(other))
+    def minus(m, other) = except(m, other)
+
+    # Ruby: with(*subqueries), with(:recursive, *subqueries)
+    def with(m, *subqueries)
+      if Array.first(subqueries) == :recursive
+        Nodes::SelectStatement.set_with(@ast, Nodes::WithRecursive.new(Array.drop(subqueries, 1).Array.flatten))
+      else
+        Nodes::SelectStatement.set_with(@ast, Nodes::With.new(Array.flatten(subqueries)))
+      end
+      m
+    end
+
+    def take(m, limit)
+      Nodes::SelectStatement.set_limit(@ast, limit ? Nodes::Limit.new(limit) : nil)
+      m
+    end
+    def set_limit(m, limit) = take(m, limit)
+
+    def join_sources(m) = Nodes::JoinSource.right(Nodes::SelectCore.source(@ctx))
+    def source(m) = Nodes::SelectCore.source(@ctx)
+
+    def comment(m, *values)
+      Nodes::SelectCore.set_comment(@ctx, Nodes::Comment.new(values)) if !Array.empty?(values)
+      m
+    end
+    def comment_node(m) = Nodes::SelectCore.comment(@ctx)
+
+    def collapse(m, exprs)
+      es = Array.compact(exprs).Array.map { |expr| (expr in String) ? Arel.sql(expr) : expr }
+      Array.length(es) == 1 ? Array.first(es) : create_and(m, es)
+    end
+  end
+end

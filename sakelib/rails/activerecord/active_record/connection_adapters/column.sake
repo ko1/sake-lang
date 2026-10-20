@@ -1,0 +1,77 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/column.rb and sqlite3/column.rb (one file:
+# SQLite3::Column < Column) (partial: no init_with/encode_with, no human_name)
+#
+# Ruby's class Column is a module here (`Column.name(c)` dispatches); SQLite3::Column and NullColumn include it.
+# Ruby delegates precision/scale/limit/type/sql_type to sql_type_metadata (allow_nil): functions here.
+# Ruby: Column.new(name, cast_type, default, sql_type_metadata = nil, null = true, default_function = nil,
+# collation: nil, comment: nil, auto_increment: nil, rowid: false, generated_type: nil); here the same fields.
+
+module ActiveRecord
+  module ConnectionAdapters
+    module Column
+      def name(c) = raise(NotImplementedError)
+      def sql_type_metadata(c) = raise(NotImplementedError)
+      def default(c) = raise(NotImplementedError)
+      def cast_type(c) = raise(NotImplementedError)
+      def null(c) = raise(NotImplementedError)
+      def default_function(c) = raise(NotImplementedError)
+      def collation(c) = raise(NotImplementedError)
+      def comment(c) = raise(NotImplementedError)
+
+      def precision(c) = (m = @sql_type_metadata) ? SqlTypeMetadata.precision(m) : nil
+      def scale(c) = (m = @sql_type_metadata) ? SqlTypeMetadata.scale(m) : nil
+      def limit(c) = (m = @sql_type_metadata) ? SqlTypeMetadata.limit(m) : nil
+      def type(c) = (m = @sql_type_metadata) ? SqlTypeMetadata.type(m) : nil
+      def sql_type(c) = (m = @sql_type_metadata) ? SqlTypeMetadata.sql_type(m) : nil
+
+      def fetch_cast_type(c, connection)
+        cast_type(c) || Quoting.lookup_cast_type(connection, sql_type(c) || "")
+      end
+
+      def has_default?(c) = raise(NotImplementedError)
+      def bigint?(c) = String.match?(sql_type(c) || "", /\Abigint\b/)
+      def auto_incremented_by_db?(c) = false
+      def auto_populated?(c) = auto_incremented_by_db?(c) || default_function(c) != nil
+      def virtual?(c) = false
+
+      def inspect(c)
+        "#<#{column_class_name(c)} name: #{Kernel.inspect(@name)}, sql_type: #{Kernel.inspect(sql_type(c))}, null: #{@null}, default: #{Kernel.inspect(default(c))}>"
+      end
+      def column_class_name(c) = "ActiveRecord::ConnectionAdapters::Column"
+    end
+
+    module SQLite3
+      class Column
+        attr_reader name, cast_type
+        private attr_reader raw_default
+        attr_reader sql_type_metadata, null, default_function, collation, comment
+        attr_reader auto_increment, rowid, generated_type
+        include ConnectionAdapters::Column
+
+        def initialize(c)
+          @null = true if @null == nil
+          @rowid ||= false
+        end
+
+        # Ruby casts the default once in initialize (@default = default.nil? || cast_type.mutable? ? default :
+        # cast_type.deserialize(default)); here it is cast when read. A field holding the cast default has the
+        # union of every column type's values, and a block over Columns is then rejected at --strict
+        # (experiments/2026-10-20-rails-scale/bugs/arel_block_over_columns.sake).
+        def default(c)
+          d = @raw_default
+          (d == nil || ActiveModel::Type::Value.mutable?(@cast_type)) ? d : ActiveModel::Type::Value.deserialize(@cast_type, d)
+        end
+
+        def auto_increment?(c) = @auto_increment == true
+        def auto_incremented_by_db?(c) = auto_increment?(c) || @rowid
+        def virtual?(c) = @generated_type != nil
+        def virtual_stored?(c) = virtual?(c) && @generated_type == :stored
+        def has_default?(c)
+          given = @raw_default != nil || @default_function
+          given && !virtual?(c)
+        end
+        def column_class_name(c) = "ActiveRecord::ConnectionAdapters::SQLite3::Column"
+      end
+    end
+  end
+end

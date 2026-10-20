@@ -1,0 +1,95 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/sqlite3/schema_statements.rb (partial: no
+# foreign keys, check constraints, virtual tables, schema dumper)
+#
+# Ruby's rows from internal_exec_query are hashes (`row["name"]`); here ActiveRecord::Result's hash rows,
+# whose values are Integer|Float|String|nil and are narrowed where a String or an Integer is needed.
+
+module ActiveRecord
+  module ConnectionAdapters
+    module SQLite3
+      module SchemaStatements
+        def indexes(c, table_name)
+          rows = ActiveRecord::Result.to_a(internal_exec_query(c, "PRAGMA index_list(#{quote_table_name(c, table_name)})", "SCHEMA"))
+          Array.filter_map(rows) do |row|
+            name = Kernel.to_s(row["name"])
+            next nil if String.start_with?(name, "sqlite_")
+            index_sql = query_value(c, "SELECT sql FROM sqlite_master WHERE name = #{quote(c, name)} AND type = 'index' UNION ALL SELECT sql FROM sqlite_temp_master WHERE name = #{quote(c, name)} AND type = 'index'", "SCHEMA")
+            m = (index_sql in String) ? String.match(index_sql, /\bON\b\s*"?(\w+?)"?\s*\((?<expressions>.+?)\)(?:\s*WHERE\b\s*(?<where>.+))?(?:\s*\/\*.*\*\/)?\z/i) : nil
+            columns = ActiveRecord::Result.to_a(internal_exec_query(c, "PRAGMA index_info(#{quote(c, name)})", "SCHEMA")).Array.map { |col| col["name"] }
+            where = m ? m["where"] : nil
+            where = String.sub(where, /\s*\/\*.*\*\/\z/, "") if where
+            orders = Hash.new
+            if Array.any?(columns) { |col| col == nil }
+              columns = Any[m ? m["expressions"] : nil]
+            elsif index_sql in String
+              Array.each(String.scan(index_sql, /"(\w+)" DESC/).Array.flat_map { |t| Tuple.to_a(t) }) { |order_column| orders[Kernel.to_s(order_column)] = :desc }
+            end
+            IndexDefinition.new(Kernel.to_s(table_name), name, row["unique"] != 0, Array.map(columns) { |x| Kernel.to_s(x) }, where: where, orders: orders)
+          end
+        end
+
+        def schema_creation(c) = SQLite3::SchemaCreation.new(c)
+
+        def create_table_definition(c, name, options)
+          SQLite3::TableDefinition.new(c, name, temporary: options[:temporary] == true, if_not_exists: options[:if_not_exists] == true, options: nil, as: nil, comment: nil)
+        end
+
+        def validate_index_length!(c, table_name, new_name, internal = false)
+          return nil if internal
+          if String.length(new_name) > index_name_length(c)
+            raise ArgumentError, "Index name '#{new_name}' on table '#{table_name}' is too long (#{String.length(new_name)} characters); the limit is #{index_name_length(c)} characters"
+          end
+        end
+
+        def new_column_from_field(c, table_name, field, definitions)
+          default = field["dflt_value"]
+          sql_type = Kernel.to_s(field["type"])
+          type_metadata = fetch_type_metadata(c, sql_type)
+          default_value = extract_value_from_default(c, default)
+          generated_type = extract_generated_type(c, field)
+          default_function = generated_type != nil ? default : extract_default_function(c, default_value, default)
+          rowid = is_column_the_rowid?(c, field, definitions)
+          notnull = field["notnull"]
+          SQLite3::Column.new(Kernel.to_s(field["name"]), lookup_cast_type(c, sql_type), default_value, type_metadata,
+                              notnull == 0 || notnull == nil, default_function, collation: field["collation"],
+                              auto_increment: field["auto_increment"] == 1, rowid: rowid, generated_type: generated_type)
+        end
+
+        def is_column_the_rowid?(c, field, column_definitions)
+          return false unless String.match?(Kernel.to_s(field["type"]), /integer/i) && field["pk"] == 1
+          Array.count(column_definitions) { |d| pk = d["pk"]; (pk in Integer) && pk > 0 } == 1
+        end
+
+        def data_source_sql(c, name = nil, type = nil)
+          scope = quoted_scope(c, name, type)
+          sql = "SELECT name FROM pragma_table_list WHERE schema <> 'temp'"
+          sql += " AND name NOT IN ('sqlite_sequence', 'sqlite_schema')"
+          sql += " AND name = #{scope[:name]}" if scope[:name]
+          sql += " AND type IN (#{scope[:type] || "'table','view'"})"
+          sql
+        end
+
+        def quoted_scope(c, name = nil, type = nil)
+          t = case type
+              in "BASE TABLE" then "'table'"
+              in "VIEW" then "'view'"
+              in "VIRTUAL TABLE" then "'virtual'"
+              else nil
+              end
+          scope = Hash.new
+          scope[:name] = quote(c, Kernel.to_s(name)) if name
+          scope[:type] = t if t
+          scope
+        end
+
+        def extract_generated_type(c, field)
+          case field["hidden"]
+          in 2 then :virtual
+          in 3 then :stored
+          else nil
+          end
+        end
+      end
+    end
+  end
+end

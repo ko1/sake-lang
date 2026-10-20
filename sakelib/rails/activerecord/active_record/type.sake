@@ -1,0 +1,93 @@
+# Port of activerecord-8.1.3/lib/active_record/type.rb, type/text.rb, type/decimal_without_scale.rb,
+# type/date.rb, type/date_time.rb, type/time.rb, type/internal/timezone.rb and type/adapter_specific_registry.rb
+# and type/json.rb (one file: the small ActiveRecord types and their registry) (partial: no Serialized,
+# UnsignedInteger; Json without ActiveSupport's JSON options)
+#
+# Ruby's registry holds `register(:integer, SQLite3Integer, adapter: :sqlite3)` entries; here
+# ActiveRecord::Type.lookup(symbol, adapter, options) is a `case`, with the SQLite3 adapter's override first.
+# Ruby's Internal::Timezone adds the `timezone:` option to the time types: a field here.
+
+require "json"
+require "type/type_map"
+
+module ActiveRecord
+  module Type
+    BigInteger = ActiveModel::Type::BigInteger
+    Binary = ActiveModel::Type::Binary
+    Boolean = ActiveModel::Type::Boolean
+    Decimal = ActiveModel::Type::Decimal
+    Float = ActiveModel::Type::Float
+    Integer = ActiveModel::Type::Integer
+    ImmutableString = ActiveModel::Type::ImmutableString
+    String = ActiveModel::Type::String
+    Value = ActiveModel::Type::Value
+
+    module Internal
+      module Timezone
+        def is_utc?(t) = default_timezone(t) == :utc
+        def default_timezone(t) = @timezone || ActiveRecord.default_timezone
+      end
+    end
+
+    class Text < ActiveModel::Type::String
+      def type(t) = :text
+    end
+
+    class DecimalWithoutScale < ActiveModel::Type::BigInteger
+      def type(t) = :decimal
+      def type_cast_for_schema(t, value) = Kernel.inspect(Kernel.to_s(value))
+    end
+
+    class Json
+      attr_reader precision, scale, limit
+      include ActiveModel::Type::Value
+      include ActiveModel::Type::Helpers::Mutable
+      def initialize(t) = nil
+      def type(t) = :json
+      def deserialize(t, value)
+        return nil unless value in ::String
+        JSON.parse(value) rescue nil
+      end
+      def serialize(t, value) = value == nil ? nil : JSON.generate(value)
+      def changed_in_place?(t, raw_old_value, new_value)
+        deserialize(t, raw_old_value) != new_value
+      end
+      def accessor(t) = nil
+    end
+
+    class Date < ActiveModel::Type::Date
+      attr_reader timezone
+      include Internal::Timezone
+    end
+
+    class DateTime < ActiveModel::Type::DateTime
+      attr_reader timezone
+      include Internal::Timezone
+    end
+
+    class Time < ActiveModel::Type::Time
+      attr_reader timezone
+      include Internal::Timezone
+    end
+
+    module_function
+
+    def default_value = ActiveModel::Type.default_value
+
+    # Ruby: lookup(*args, adapter: current_adapter_name, **kwargs)
+    def lookup(symbol, adapter = :sqlite3, options = {precision: nil, scale: nil, limit: nil})
+      options => {precision:, scale:, limit:}
+      if adapter == :sqlite3 && symbol == :integer
+        return ActiveRecord::ConnectionAdapters::SQLite3Adapter::SQLite3Integer.new(precision: precision, scale: scale, limit: limit)
+      end
+      case symbol
+      in :date then Date.new(precision: precision, scale: scale, limit: limit)
+      in :datetime then DateTime.new(precision: precision, scale: scale, limit: limit)
+      in :time then Time.new(precision: precision, scale: scale, limit: limit)
+      in :text then Text.new(precision: precision, scale: scale, limit: limit)
+      in :json then Json.new(precision: precision, scale: scale, limit: limit)
+      else ActiveModel::Type.lookup(symbol, options)
+      end
+    end
+  end
+end

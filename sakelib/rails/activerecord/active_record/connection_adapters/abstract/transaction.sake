@@ -1,0 +1,328 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/abstract/transaction.rb (partial: no record
+# callbacks (add_record, commit_records, rollback_records: the model layer), no instrumentation, no lock
+# (one thread), no ActiveRecord::Transaction user object: the block is given the transaction itself)
+#
+# Ruby's class Transaction (the superclass of RealTransaction, SavepointTransaction, RestartParentTransaction)
+# is a module here. Ruby: RealTransaction.new(connection, isolation:, joinable:, run_commit_callbacks:);
+# here the fields in that order.
+
+module ActiveRecord
+  module ConnectionAdapters
+    class TransactionState
+      attr_accessor state
+      private attr_accessor children
+      def initialize(s) = nil
+
+      def add_child(s, state)
+        cs = @children
+        if cs
+          Array.push(cs, state)
+        else
+          @children = TransactionState[state]
+        end
+      end
+
+      def finalized?(s) = @state != nil
+      def committed?(s) = @state == :committed || @state == :fully_committed
+      def fully_committed?(s) = @state == :fully_committed
+      def rolledback?(s) = @state == :rolledback || @state == :fully_rolledback
+      def fully_rolledback?(s) = @state == :fully_rolledback
+      def invalidated?(s) = @state == :invalidated
+      def fully_completed?(s) = completed?(s)
+      def completed?(s) = committed?(s) || rolledback?(s)
+
+      def rollback!(s)
+        Array.each(@children || TransactionState[]) { |c| TransactionState.rollback!(c) }
+        @state = :rolledback
+      end
+
+      def full_rollback!(s)
+        Array.each(@children || TransactionState[]) { |c| TransactionState.rollback!(c) }
+        @state = :fully_rolledback
+      end
+
+      def invalidate!(s)
+        Array.each(@children || TransactionState[]) { |c| TransactionState.invalidate!(c) }
+        @state = :invalidated
+      end
+
+      def commit!(s) = @state = :committed
+      def full_commit!(s) = @state = :fully_committed
+      def nullify!(s) = @state = nil
+    end
+
+    class NullTransaction
+      def state(t) = nil
+      def closed?(t) = true
+      def open?(t) = false
+      def joinable?(t) = false
+      def isolation(t) = nil
+      def restartable?(t) = false
+      def dirty?(t) = false
+      def dirty!(t) = nil
+      def invalidated?(t) = false
+      def invalidate!(t) = nil
+      def materialized?(t) = false
+      def set_isolation(t, v) = nil
+    end
+
+    module Transaction
+      def connection(t) = raise(NotImplementedError)
+      def state(t) = raise(NotImplementedError)
+      def materialize!(t) = raise(NotImplementedError)
+      def materialized?(t) = raise(NotImplementedError)
+      def rollback(t) = raise(NotImplementedError)
+      def commit(t) = raise(NotImplementedError)
+      def isolation(t) = raise(NotImplementedError)
+
+      def isolation_level(t) = @isolation_level
+      def dirty!(t) = @dirty = true
+      def dirty?(t) = @dirty == true
+      def open?(t) = !closed?(t)
+      def closed?(t) = TransactionState.finalized?(@state)
+      def restartable?(t) = joinable?(t) && !dirty?(t)
+      def joinable?(t) = @joinable
+      def full_rollback?(t) = true
+      def invalidate!(t) = TransactionState.invalidate!(@state)
+      def invalidated?(t) = TransactionState.invalidated?(@state)
+    end
+
+    class RealTransaction
+      attr_reader connection
+      attr_reader isolation_level, joinable, run_commit_callbacks
+      attr_reader state
+      private attr_accessor materialized, dirty
+      include Transaction
+
+      def initialize(t)
+        @state = TransactionState.new
+        @materialized = false
+        @dirty = false
+        @joinable = true if @joinable == nil
+      end
+
+      def isolation(t) = @isolation_level
+      def set_isolation(t, isolation) = @isolation_level = isolation
+      def materialized?(t) = @materialized
+
+      def materialize!(t)
+        if @joinable
+          iso = @isolation_level
+          if iso
+            AbstractAdapter.begin_isolated_db_transaction(@connection, iso)
+          else
+            AbstractAdapter.begin_db_transaction(@connection)
+          end
+        else
+          AbstractAdapter.begin_deferred_transaction(@connection, @isolation_level)
+        end
+        @materialized = true
+      end
+
+      def restart(t)
+        return nil unless @materialized
+        AbstractAdapter.rollback_db_transaction(@connection)
+        materialize!(t)
+      end
+
+      def rollback(t)
+        if @materialized
+          AbstractAdapter.rollback_db_transaction(@connection)
+          AbstractAdapter.reset_isolation_level(@connection) if @isolation_level
+        end
+        TransactionState.full_rollback!(@state)
+      end
+
+      def commit(t)
+        if @materialized
+          AbstractAdapter.commit_db_transaction(@connection)
+          AbstractAdapter.reset_isolation_level(@connection) if @isolation_level
+        end
+        TransactionState.full_commit!(@state)
+      end
+    end
+
+    # Ruby: SavepointTransaction.new(connection, savepoint_name, parent_transaction, **options)
+    class SavepointTransaction
+      attr_reader connection, savepoint_name, parent_transaction
+      attr_reader isolation_level, joinable, run_commit_callbacks
+      attr_reader state
+      private attr_accessor materialized, dirty
+      include Transaction
+
+      def initialize(t)
+        @state = TransactionState.new
+        @materialized = false
+        @dirty = false
+        @joinable = true if @joinable == nil
+        Transaction.state(@parent_transaction).TransactionState.add_child(@state)
+        raise ActiveRecord::TransactionIsolationError, "cannot set transaction isolation in a nested transaction" if @isolation_level
+      end
+
+      def isolation(t) = Transaction.isolation(@parent_transaction)
+      def set_isolation(t, isolation)
+        (RealTransaction|SavepointTransaction|RestartParentTransaction).set_isolation(@parent_transaction, isolation)
+      end
+      def materialized?(t) = @materialized
+
+      def materialize!(t)
+        AbstractAdapter.create_savepoint(@connection, @savepoint_name)
+        @materialized = true
+      end
+
+      def restart(t)
+        return nil unless @materialized
+        AbstractAdapter.rollback_to_savepoint(@connection, @savepoint_name)
+      end
+
+      def rollback(t)
+        unless TransactionState.invalidated?(@state)
+          AbstractAdapter.rollback_to_savepoint(@connection, @savepoint_name) if @materialized && AbstractAdapter.active?(@connection)
+        end
+        TransactionState.rollback!(@state)
+      end
+
+      def commit(t)
+        AbstractAdapter.release_savepoint(@connection, @savepoint_name) if @materialized
+        TransactionState.commit!(@state)
+      end
+
+      def full_rollback?(t) = false
+    end
+
+    # Ruby: RestartParentTransaction.new(connection, parent_transaction, **options): a nested transaction
+    # inside one that has run no query yet; rolling it back restarts the parent.
+    class RestartParentTransaction
+      attr_reader connection, parent
+      attr_reader isolation_level, joinable, run_commit_callbacks
+      attr_reader state
+      private attr_accessor dirty
+      include Transaction
+
+      def initialize(t)
+        @state = TransactionState.new
+        @dirty = false
+        @joinable = true if @joinable == nil
+        raise ActiveRecord::TransactionIsolationError, "cannot set transaction isolation in a nested transaction" if @isolation_level
+        Transaction.state(@parent).TransactionState.add_child(@state)
+      end
+
+      def isolation(t) = Transaction.isolation(@parent)
+      def set_isolation(t, isolation) = nil
+      def materialize!(t) = Transaction.materialize!(@parent)
+      def materialized?(t) = Transaction.materialized?(@parent)
+      def restart(t)
+        (RealTransaction|SavepointTransaction|RestartParentTransaction).restart(@parent)
+      end
+
+      def rollback(t)
+        TransactionState.rollback!(@state)
+        restart(t)
+      end
+
+      def commit(t) = TransactionState.commit!(@state)
+      def full_rollback?(t) = false
+    end
+
+    class TransactionManager
+      private attr_reader connection
+      private attr_accessor stack, has_unmaterialized_transactions, materializing_transactions, lazy_transactions_enabled
+
+      def initialize(m)
+        @stack = Any[]
+        @has_unmaterialized_transactions = false
+        @materializing_transactions = false
+        @lazy_transactions_enabled = true
+      end
+
+      def null_transaction = once { NullTransaction.new }
+
+      def begin_transaction(m, isolation = nil, joinable = true, lazy = true)
+        current = current_transaction(m)
+        run_commit_callbacks = !(RealTransaction|SavepointTransaction|RestartParentTransaction|NullTransaction).joinable?(current)
+        transaction =
+          if current in NullTransaction
+            RealTransaction.new(@connection, isolation, joinable, run_commit_callbacks)
+          elsif (RealTransaction|SavepointTransaction|RestartParentTransaction|NullTransaction).restartable?(current)
+            RestartParentTransaction.new(@connection, current, isolation, joinable, run_commit_callbacks)
+          else
+            SavepointTransaction.new(@connection, "active_record_#{Array.size(@stack)}", current, isolation, joinable, run_commit_callbacks)
+          end
+        unless Transaction.materialized?(transaction)
+          if AbstractAdapter.supports_lazy_transactions?(@connection) && @lazy_transactions_enabled && lazy
+            @has_unmaterialized_transactions = true
+          else
+            Transaction.materialize!(transaction)
+          end
+        end
+        Array.push(@stack, transaction)
+        transaction
+      end
+
+      def disable_lazy_transactions!(m)
+        materialize_transactions(m)
+        @lazy_transactions_enabled = false
+      end
+
+      def enable_lazy_transactions!(m) = @lazy_transactions_enabled = true
+      def lazy_transactions_enabled?(m) = @lazy_transactions_enabled
+
+      def dirty_current_transaction(m)
+        (RealTransaction|SavepointTransaction|RestartParentTransaction|NullTransaction).dirty!(current_transaction(m))
+      end
+
+      def restorable?(m) = Array.none?(@stack) { |t| Transaction.dirty?(t) }
+
+      def materialize_transactions(m)
+        return nil if @materializing_transactions
+        if @has_unmaterialized_transactions
+          begin
+            @materializing_transactions = true
+            Array.each(@stack) { |t| Transaction.materialize!(t) unless Transaction.materialized?(t) }
+          ensure
+            @materializing_transactions = false
+          end
+          @has_unmaterialized_transactions = false
+        end
+        nil
+      end
+
+      def commit_transaction(m)
+        transaction = Array.pop(@stack)
+        return nil unless transaction
+        dirty_current_transaction(m) if Transaction.dirty?(transaction)
+        Transaction.commit(transaction)
+      end
+
+      def rollback_transaction(m, transaction = nil)
+        t = transaction || Array.last(@stack)
+        return nil unless t
+        begin
+          Transaction.rollback(t)
+        ensure
+          Array.pop(@stack) if Array.last(@stack) == t
+        end
+      end
+
+      def within_new_transaction(m, isolation = nil, joinable = true)
+        transaction = begin_transaction(m, isolation, joinable)
+        result = begin
+          yield transaction
+        rescue => error
+          rollback_transaction(m)
+          raise error
+        end
+        begin
+          commit_transaction(m)
+        rescue => error
+          rollback_transaction(m, transaction) unless TransactionState.completed?(Transaction.state(transaction))
+          raise error
+        end
+        result
+      end
+
+      def open_transactions(m) = Array.size(@stack)
+      def current_transaction(m) = Array.last(@stack) || null_transaction
+    end
+  end
+end

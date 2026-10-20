@@ -1,0 +1,222 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/abstract_adapter.rb and
+# abstract/savepoints.rb, abstract/database_limits.rb (one file: the two small mixins AbstractAdapter includes)
+# (partial: no connection pool, lease/expire, retries and backoff, query cache, schema cache, advisory locks;
+# the log is a list of [name, sql] instead of ActiveSupport::Notifications)
+#
+# Ruby's class AbstractAdapter is a module here, which SQLite3Adapter includes: `AbstractAdapter.execute(conn,
+# sql)` dispatches to the adapter. Ruby's class-level type map (TYPE_MAP built by initialize_type_map(m) at
+# load time) is AbstractAdapter.initialize_type_map(m), and the blocks it registers are build_registered_type.
+# Ruby's `log(sql, name, binds, type_casted_binds) { }` instruments "sql.active_record"; here it appends
+# [name, sql] to the adapter's query_log when there is one (`Hash.of(log: true)` in the config), and
+# translates the driver's exception as Ruby's does.
+
+module ActiveRecord
+  module ConnectionAdapters
+    module Savepoints
+      def current_savepoint_name(c) = SavepointTransaction.savepoint_name(current_transaction(c))
+      def create_savepoint(c, name = nil) = internal_execute(c, "SAVEPOINT #{name}", "TRANSACTION")
+      def exec_rollback_to_savepoint(c, name = nil) = internal_execute(c, "ROLLBACK TO SAVEPOINT #{name}", "TRANSACTION")
+      def release_savepoint(c, name = nil) = internal_execute(c, "RELEASE SAVEPOINT #{name}", "TRANSACTION")
+    end
+
+    module DatabaseLimits
+      def table_alias_length(c) = max_identifier_length(c)
+      def max_identifier_length(c) = 64
+      def index_name_length(c) = max_identifier_length(c)
+      def bind_params_length(c) = 65535
+    end
+
+    module AbstractAdapter
+      include Quoting
+      include DatabaseStatements
+      include SchemaStatements
+      include DatabaseLimits
+      include Savepoints
+
+      def config(c) = raise(NotImplementedError)
+      def visitor(c) = raise(NotImplementedError)
+      def adapter_name(c) = raise(NotImplementedError)
+      def connect(c) = raise(NotImplementedError)
+      def raw_connection_or_nil(c) = raise(NotImplementedError)
+
+      def prepared_statements(c) = @prepared_statements
+      def prepared_statements?(c) = @prepared_statements
+
+      def valid_type?(c, type) = native_database_types(c)[type] != nil
+
+      def supports_migrations?(c) = true
+      def supports_primary_key?(c) = true
+      def supports_ddl_transactions?(c) = false
+      def supports_bulk_alter?(c) = false
+      def supports_savepoints?(c) = false
+      def supports_restart_db_transaction?(c) = false
+      def supports_partial_index?(c) = false
+      def supports_index_sort_order?(c) = false
+      def supports_expression_index?(c) = false
+      def supports_transaction_isolation?(c) = false
+      def supports_explain?(c) = false
+      def supports_indexes_in_create?(c) = false
+      def supports_foreign_keys?(c) = false
+      def supports_check_constraints?(c) = false
+      def supports_views?(c) = false
+      def supports_datetime_with_precision?(c) = false
+      def supports_json?(c) = false
+      def supports_comments?(c) = false
+      def supports_insert_returning?(c) = false
+      def supports_insert_on_conflict?(c) = false
+      def supports_common_table_expressions?(c) = false
+      def supports_lazy_transactions?(c) = false
+      def supports_concurrent_connections?(c) = true
+      def supports_virtual_columns?(c) = false
+
+      def connected?(c) = raise(NotImplementedError)
+      def active?(c) = connected?(c)
+
+      def connect!(c)
+        verify!(c)
+        c
+      end
+
+      def verify!(c)
+        connect(c) unless connected?(c)
+        nil
+      end
+
+      # Ruby: with_raw_connection(allow_retry: false, materialize_transactions: true) { |conn| }
+      def with_raw_connection(c, allow_retry = false, materialize_transactions = true)
+        verify!(c)
+        materialize_transactions(c) if materialize_transactions
+        conn = raw_connection_or_nil(c)
+        raise ActiveRecord::ConnectionNotEstablished, "No connection" unless conn
+        result = yield conn
+        dirty_current_transaction(c) if materialize_transactions
+        result
+      end
+
+      def raw_connection(c)
+        with_raw_connection(c) { |conn| conn }
+      end
+
+      def log(c, sql, name = "SQL", binds = Any[], type_casted_binds = Any[])
+        begin
+          yield
+        rescue SQLite3::ConstraintException => e
+          raise translate_exception_class(c, "SQLite3::ConstraintException: #{Exception.message(e)}", sql, binds)
+        rescue SQLite3::SQLException => e
+          raise translate_exception_class(c, "SQLite3::SQLException: #{Exception.message(e)}", sql, binds)
+        rescue SQLite3::BusyException => e
+          raise translate_exception_class(c, "SQLite3::BusyException: #{Exception.message(e)}", sql, binds)
+        rescue SQLite3::Exception => e
+          raise translate_exception_class(c, "SQLite3::Exception: #{Exception.message(e)}", sql, binds)
+        ensure
+          # Ruby's notification is published when the block ends, so a query's BEGIN comes before it
+          log = @query_log
+          Array.push(log, [name || "SQL", sql]) if log
+        end
+      end
+
+      def query_log(c) = @query_log
+
+      # Ruby: translate_exception_class(native_error, sql, binds) builds "#{error.class}: #{error.message}"; the
+      # exception's class is not a value in Sake, so log rescues the driver's classes one by one and passes both
+      def translate_exception_class(c, message, sql, binds)
+        translate_exception(c, message, message, sql, binds)
+      end
+
+      def translate_exception(c, exception_message, message, sql, binds)
+        StatementInvalid.new(message, sql, binds)
+      end
+
+      def column_for(c, table_name, column_name)
+        column_name = Kernel.to_s(column_name)
+        column = columns_hash(c, table_name)[column_name]
+        # Ruby raises ActiveRecordError itself; a module here, so the StatementInvalid that includes it
+        raise ActiveRecord::StatementInvalid.new("No such column: #{table_name}.#{column_name}", nil, nil) unless column
+        column
+      end
+
+      def database_version(c) = get_database_version(c)
+      def get_database_version(c) = raise(NotImplementedError)
+
+      def close(c) = disconnect!(c)
+      def disconnect!(c) = raise(NotImplementedError)
+
+      def lookup_cast_type_from_column(c, column)
+        lookup_cast_type(c, SQLite3::Column.sql_type(column) || "")
+      end
+
+      # Ruby's `class << self` functions of AbstractAdapter: the type map's registrations and their blocks.
+      module ClassMethods
+        module_function
+
+        def build_registered_type(kind, klass, sql_type)
+          case kind
+          in :limit then lookup_registered(klass, {precision: nil, scale: nil, limit: extract_limit(sql_type)})
+          in :precision then lookup_registered(klass, {precision: extract_precision(sql_type), scale: nil, limit: nil})
+          in :decimal
+            scale = extract_scale(sql_type)
+            precision = extract_precision(sql_type)
+            if scale == 0
+              ActiveRecord::Type::DecimalWithoutScale.new(precision: precision)
+            else
+              ActiveModel::Type::Decimal.new(precision: precision, scale: scale)
+            end
+          end
+        end
+
+        # The classes the type map's registrations name: Type::Boolean, Type::String, ... (Ruby passes the class)
+        def lookup_registered(klass, options)
+          options => {precision:, scale:, limit:}
+          case klass
+          in :sqlite3_integer then SQLite3Adapter::SQLite3Integer.new(precision: precision, scale: scale, limit: limit)
+          else ActiveRecord::Type.lookup(klass, :abstract, options)
+          end
+        end
+
+        def initialize_type_map(m)
+          register_class_with_limit(m, /boolean/i, :boolean)
+          register_class_with_limit(m, /char/i, :string)
+          register_class_with_limit(m, /binary/i, :binary)
+          register_class_with_limit(m, /text/i, :text)
+          register_class_with_precision(m, /date/i, :date)
+          register_class_with_precision(m, /time/i, :time)
+          register_class_with_precision(m, /datetime/i, :datetime)
+          register_class_with_limit(m, /float/i, :float)
+          register_class_with_limit(m, /int/i, :integer)
+          ActiveRecord::Type::TypeMap.alias_type(m, /blob/i, "binary")
+          ActiveRecord::Type::TypeMap.alias_type(m, /clob/i, "text")
+          ActiveRecord::Type::TypeMap.alias_type(m, /timestamp/i, "datetime")
+          ActiveRecord::Type::TypeMap.alias_type(m, /numeric/i, "decimal")
+          ActiveRecord::Type::TypeMap.alias_type(m, /number/i, "decimal")
+          ActiveRecord::Type::TypeMap.alias_type(m, /double/i, "float")
+          ActiveRecord::Type::TypeMap.register_type(m, /^json/i, :limit, :json)
+          ActiveRecord::Type::TypeMap.register_type(m, /decimal/i, :decimal)
+        end
+
+        def register_class_with_limit(mapping, key, klass)
+          ActiveRecord::Type::TypeMap.register_type(mapping, key, :limit, klass)
+        end
+        def register_class_with_precision(mapping, key, klass)
+          ActiveRecord::Type::TypeMap.register_type(mapping, key, :precision, klass)
+        end
+
+        def extract_scale(sql_type)
+          m1 = String.match(sql_type, /\((\d+)\)/)
+          return 0 if m1
+          m2 = String.match(sql_type, /\((\d+)(,(\d+))\)/)
+          m2 ? String.to_i(m2[3] || "") : nil
+        end
+
+        def extract_precision(sql_type)
+          m = String.match(sql_type, /\((\d+)(,\d+)?\)/)
+          m ? String.to_i(m[1] || "") : nil
+        end
+
+        def extract_limit(sql_type)
+          m = String.match(sql_type, /\((.*)\)/)
+          m ? String.to_i(m[1] || "") : nil
+        end
+      end
+    end
+  end
+end

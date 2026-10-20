@@ -1,0 +1,100 @@
+# Port of activerecord-8.1.3/lib/arel/visitors/sqlite.rb
+#
+# `class SQLite < ToSql` pastes ToSql's functions; the ones below replace ToSql's, and ToSql's `visit` (pasted
+# too) calls these. Where Ruby calls `super`, the ToSql body is called under its super_ name.
+
+module Arel
+  module Visitors
+    class SQLite < ToSql
+      def visit_Arel_Nodes_UpdateStatement(v, o, collector)
+        Collector.set_retryable(collector, false)
+        o = prepare_update_statement(v, o)
+        collector << "UPDATE "
+        rel = Nodes::UpdateStatement.relation(o)
+        if has_join_sources?(v, o)
+          rel = join_source(v, o)
+          rel => Nodes::JoinSource
+          visit(v, Nodes::JoinSource.left(rel), collector)
+          collect_nodes_for(v, Nodes::UpdateStatement.values(o), collector, " SET ")
+          collector << " FROM "
+          inject_join(v, Nodes::JoinSource.right(rel), collector, " ")
+        else
+          visit(v, rel, collector)
+          collect_nodes_for(v, Nodes::UpdateStatement.values(o), collector, " SET ")
+        end
+        collect_nodes_for(v, Nodes::UpdateStatement.wheres(o), collector, " WHERE ", " AND ")
+        collect_nodes_for(v, Nodes::UpdateStatement.orders(o), collector, " ORDER BY ")
+        maybe_visit(v, Nodes::UpdateStatement.limit(o), collector)
+        maybe_visit(v, Nodes::UpdateStatement.comment(o), collector)
+      end
+
+      # In the case of SQLite, it's more performant to join the tables via the update statement's FROM clause.
+      def prepare_update_statement(v, o)
+        key = (Nodes::UpdateStatement|Nodes::DeleteStatement).key(o)
+        if key && has_join_sources?(v, o) && !has_group_by_and_having?(v, o) && !has_limit_or_offset_or_orders?(v, o)
+          stmt = dup(o)
+          rel = (Nodes::UpdateStatement|Nodes::DeleteStatement).relation(o)
+          rel = join_source(v, o)
+          rel => Nodes::JoinSource
+          new_rel = dup(rel)
+          (Nodes::UpdateStatement|Nodes::DeleteStatement).set_relation(stmt, new_rel)
+          wheres = Array.dup((Nodes::UpdateStatement|Nodes::DeleteStatement).wheres(o))
+          (Nodes::UpdateStatement|Nodes::DeleteStatement).set_wheres(stmt, wheres)
+          table = Nodes::JoinSource.left(new_rel)
+          table => Arel::Table
+          Nodes::JoinSource.set_right(new_rel, Any[table, *Nodes::JoinSource.right(new_rel)])
+          aliased = Arel::Table.alias(table, "__active_record_update_alias")
+          Nodes::JoinSource.set_left(new_rel, aliased)
+          keys = (key in Array) ? key : Any[key]
+          Array.each(keys) do |k|
+            k => Arel::Attributes::Attribute
+            Array.push(wheres, Arel::Attributes::Attribute.eq(k, Nodes::TableAlias.[](aliased, Arel::Attributes::Attribute.name(k))))
+          end
+          stmt
+        else
+          super_prepare_update_statement(v, o)
+        end
+      end
+
+      def visit_Arel_Nodes_TableAlias(v, o, collector)
+        visit(v, Nodes::TableAlias.relation(o), collector)
+        collector << " AS "
+        collector << quote_table_name(v, Nodes::TableAlias.name(o))
+      end
+
+      # Locks are not supported in SQLite
+      def visit_Arel_Nodes_Lock(v, o, collector) = collector
+
+      def visit_Arel_Nodes_SelectStatement(v, o, collector)
+        Nodes::SelectStatement.set_limit(o, Nodes::Limit.new(-1)) if Nodes::SelectStatement.offset(o) && !Nodes::SelectStatement.limit(o)
+        super_visit_Arel_Nodes_SelectStatement(v, o, collector)
+      end
+
+      def visit_Arel_Nodes_IsNotDistinctFrom(v, o, collector)
+        visit(v, Nodes::IsNotDistinctFrom.left(o), collector)
+        collector << " IS "
+        visit(v, Nodes::IsNotDistinctFrom.right(o), collector)
+      end
+
+      def visit_Arel_Nodes_IsDistinctFrom(v, o, collector)
+        visit(v, Nodes::IsDistinctFrom.left(o), collector)
+        collector << " IS NOT "
+        visit(v, Nodes::IsDistinctFrom.right(o), collector)
+      end
+
+      # Queries used in UNION should not be wrapped by parentheses, because it is an invalid syntax in SQLite.
+      def infix_value_with_paren(v, o, collector, value, suppress_parens = false)
+        collector << "( " unless suppress_parens
+        l = Nodes::Binary.left(o)
+        left = (l in Nodes::Grouping) ? Nodes::Grouping.expr(l) : l
+        infix_side(v, left, o, collector, value)
+        collector << value
+        r = Nodes::Binary.right(o)
+        right = (r in Nodes::Grouping) ? Nodes::Grouping.expr(r) : r
+        infix_side(v, right, o, collector, value)
+        collector << " )" unless suppress_parens
+        collector
+      end
+    end
+  end
+end

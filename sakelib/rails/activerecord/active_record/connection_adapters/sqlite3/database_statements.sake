@@ -1,0 +1,90 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/sqlite3/database_statements.rb (partial: no
+# explain, no prepared statement pool: each query runs with SQLite3::Database.execute2)
+#
+# Ruby's perform_query prepares a statement, binds, steps and reads stmt.columns and stmt.types; Sake's built-in
+# has execute2 (the column names, then the rows) and changes, so the result's column types are not known here
+# (Ruby maps stmt.types through the type map; see the notes).
+
+module ActiveRecord
+  module ConnectionAdapters
+    module SQLite3
+      module DatabaseStatements
+        def write_query?(c, sql)
+          !String.match?(sql, /\A(?:[(\s]|\/\*.*?\*\/|--.*\n)*(?:pragma|begin|commit|explain|release|rollback|savepoint|select|with)\b/im)
+        end
+
+        def begin_deferred_transaction(c, isolation = nil) = internal_begin_transaction(c, :deferred, isolation)
+        def begin_isolated_db_transaction(c, isolation)
+          internal_begin_transaction(c, :deferred, isolation)
+        end
+        def begin_db_transaction(c) = internal_begin_transaction(c, :immediate, nil)
+
+        def commit_db_transaction(c)
+          internal_execute(c, "COMMIT TRANSACTION", "TRANSACTION", Any[], false, true, false)
+        end
+
+        def exec_rollback_db_transaction(c)
+          internal_execute(c, "ROLLBACK TRANSACTION", "TRANSACTION", Any[], false, true, false)
+        end
+
+        def high_precision_current_timestamp(c)
+          Arel::Nodes::SqlLiteral.new("STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')", true)
+        end
+
+        # Ruby: super&.to_a, the hash rows
+        def execute(c, sql, name = nil, allow_retry = false) = ActiveRecord::Result.to_a(internal_execute(c, sql, name, Any[], false, allow_retry))
+
+        def reset_isolation_level(c)
+          internal_execute(c, "PRAGMA read_uncommitted=#{@previous_read_uncommitted}", "TRANSACTION", Any[], false, true, false)
+          @previous_read_uncommitted = nil
+        end
+
+        def default_insert_value(c, column)
+          f = SQLite3::Column.default_function(column)
+          f ? Arel.sql(Kernel.to_s(f)) : SQLite3::Column.default(column)
+        end
+
+        def internal_begin_transaction(c, mode, isolation)
+          if isolation
+            raise ActiveRecord::TransactionIsolationError, "SQLite3 only supports the `read_uncommitted` transaction isolation level" if isolation != :read_uncommitted
+            raise RuntimeError, "You need to enable the shared-cache mode in SQLite mode before attempting to change the transaction isolation level"
+          end
+          internal_execute(c, "BEGIN #{mode} TRANSACTION", "TRANSACTION", Any[], false, true, false)
+        end
+
+        def perform_query(c, raw_connection, sql, binds, type_casted_binds, prepare, batch)
+          if batch
+            SQLite3::Database.execute_batch(raw_connection, sql)
+            return ActiveRecord::Result.empty_result(0)
+          end
+          before = total_changes(c, raw_connection)
+          rows = SQLite3::Database.execute2(raw_connection, sql, type_casted_binds)
+          columns = Array.first(rows) || Any[]
+          affected = total_changes(c, raw_connection) > before ? SQLite3::Database.changes(raw_connection) : 0
+          ActiveRecord::Result.new(Array.map(columns) { |col| Kernel.to_s(col) }, Array.drop(rows, 1), nil, affected)
+        end
+
+        # Ruby: raw_connection.total_changes; the built-in has no total_changes, so SQLite's function is asked
+        def total_changes(c, raw_connection)
+          row = Array.first(SQLite3::Database.execute(raw_connection, "SELECT total_changes()"))
+          v = row ? row[0] : nil
+          (v in Integer) ? v : 0
+        end
+
+        def cast_result(c, result) = result
+        def affected_rows(c, result) = ActiveRecord::Result.affected_rows(result)
+
+        def execute_batch(c, statements, name = nil)
+          sql = combine_multi_statements(c, statements)
+          raw_execute(c, sql, name, Any[], false, false, true, true)
+        end
+
+        def build_truncate_statement(c, table_name)
+          "DELETE FROM #{quote_table_name(c, table_name)}"
+        end
+
+        def returning_column_values(c, result) = Array.first(ActiveRecord::Result.rows(result))
+      end
+    end
+  end
+end

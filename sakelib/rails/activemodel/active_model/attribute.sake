@@ -1,0 +1,191 @@
+# Port of activemodel-8.1.3/lib/active_model/attribute.rb (partial: no init_with/encode_with (YAML))
+#
+# Ruby's class Attribute with subclasses FromDatabase, FromUser, WithCastValue, Null and Uninitialized: here
+# Attribute is a module (the shared functions; `ActiveModel::Attribute.value(a)` dispatches) and each subclass
+# a class including it, with the fields of Ruby's initialize. Ruby's @value is the field cast_value (a field
+# named value would have the reader `value`, which would win over Attribute.value in the class), and
+# @value_for_database is database_value; `defined?(@value)` is the field `has_value` (and has_value_for_database). The class methods (from_database, from_user, ...) are the
+# module functions at the end.
+
+module ActiveModel
+  module Attribute
+    def name(a) = raise(NotImplementedError)
+    def value_before_type_cast(a) = raise(NotImplementedError)
+    def type(a) = raise(NotImplementedError)
+    def type_cast(a, value) = raise(NotImplementedError)
+
+    def value(a)
+      unless @has_value
+        @cast_value = type_cast(a, @value_before_type_cast)
+        @has_value = true
+      end
+      @cast_value
+    end
+
+    def original_value(a)
+      oa = @original_attribute
+      oa ? Attribute.original_value(oa) : type_cast(a, @value_before_type_cast)
+    end
+
+    def value_for_database(a)
+      if !@has_value_for_database || ActiveModel::Type::Value.changed_in_place?(@type, @database_value, value(a))
+        @database_value = _value_for_database(a)
+        @has_value_for_database = true
+      end
+      @database_value
+    end
+
+    def serializable?(a) = ActiveModel::Type::Value.serializable?(@type, value(a))
+
+    def changed?(a) = changed_from_assignment?(a) || changed_in_place?(a)
+
+    def changed_in_place?(a)
+      has_been_read?(a) && ActiveModel::Type::Value.changed_in_place?(@type, original_value_for_database(a), value(a))
+    end
+
+    def forgetting_assignment(a) = with_value_from_database(a, value_for_database(a))
+
+    def with_value_from_user(a, value)
+      ActiveModel::Type::Value.assert_valid_value(@type, value)
+      Attribute.from_user(@name, value, @type, @original_attribute || a)
+    end
+
+    def with_value_from_database(a, value) = Attribute.from_database(@name, value, @type)
+    def with_cast_value_of(a, value) = Attribute.with_cast_value(@name, value, @type)
+
+    def initialized?(a) = true
+    def came_from_user?(a) = false
+    def has_been_read?(a) = @has_value == true
+
+    def original_value_for_database(a)
+      oa = @original_attribute
+      oa ? Attribute.original_value_for_database(oa) : _original_value_for_database(a)
+    end
+
+    def assigned?(a) = @original_attribute != nil
+
+    def changed_from_assignment?(a)
+      assigned?(a) && ActiveModel::Type::Value.changed?(@type, original_value(a), value(a), @value_before_type_cast)
+    end
+
+    def _value_for_database(a) = ActiveModel::Type::Value.serialize(@type, value(a))
+    def _original_value_for_database(a)
+      ActiveModel::Type::Value.serialize(@type, original_value(a))
+    end
+
+    def inspect(a) = "#<ActiveModel::Attribute #{@name}: #{Kernel.inspect(value(a))}>"
+
+    class FromDatabase
+      attr_reader name, value_before_type_cast, type
+      private attr_reader original_attribute
+      private attr_accessor cast_value, has_value, database_value, has_value_for_database
+      include Attribute
+      def initialize(a)
+        @has_value = @cast_value != nil
+        @has_value_for_database = false
+      end
+      def type_cast(a, value) = ActiveModel::Type::Value.deserialize(@type, value)
+      def forgetting_assignment(a)
+        if !@has_value_for_database && !changed_in_place?(a)
+          with_value_from_database(a, @value_before_type_cast)
+        else
+          with_value_from_database(a, value_for_database(a))
+        end
+      end
+      def _original_value_for_database(a) = @value_before_type_cast
+    end
+
+    class FromUser
+      attr_reader name, value_before_type_cast, type
+      private attr_reader original_attribute
+      private attr_accessor cast_value, has_value, database_value, has_value_for_database
+      include Attribute
+      def initialize(a)
+        @has_value = false
+        @has_value_for_database = false
+      end
+      def type_cast(a, value) = ActiveModel::Type::Value.cast(@type, value)
+      def came_from_user?(a)
+        !ActiveModel::Type::Value.value_constructed_by_mass_assignment?(@type, @value_before_type_cast)
+      end
+      def _value_for_database(a) = ActiveModel::Type::SerializeCastValue.serialize(@type, value(a))
+    end
+
+    class WithCastValue
+      attr_reader name, value_before_type_cast, type
+      private attr_reader original_attribute
+      private attr_accessor cast_value, has_value, database_value, has_value_for_database
+      include Attribute
+      def initialize(a)
+        @has_value = false
+        @has_value_for_database = false
+      end
+      def type_cast(a, value) = value
+      def changed_in_place?(a) = false
+    end
+
+    # Ruby: Null.new(name) is super(name, nil, Type.default_value)
+    class Null
+      attr_reader name, value_before_type_cast, type
+      private attr_reader original_attribute
+      private attr_accessor cast_value, has_value, database_value, has_value_for_database
+      include Attribute
+      def initialize(a)
+        @type = ActiveModel::Type.default_value
+        @has_value = false
+        @has_value_for_database = false
+      end
+      def type_cast(a, value) = nil
+      def with_type(a, type) = Attribute.with_cast_value(@name, nil, type)
+      def with_value_from_database(a, value)
+        raise(ActiveModel::MissingAttributeError, "can't write unknown attribute `#{@name}`")
+      end
+      def with_value_from_user(a, value)
+        raise(ActiveModel::MissingAttributeError, "can't write unknown attribute `#{@name}`")
+      end
+      def with_cast_value_of(a, value)
+        raise(ActiveModel::MissingAttributeError, "can't write unknown attribute `#{@name}`")
+      end
+    end
+
+    # Ruby: Uninitialized.new(name, type); its value is nil (Ruby yields the name to a block given to value: a
+    # dispatched function takes a block in every includer or in none) and its original_value is a
+    # unique Object (here the Symbol :uninitialized_original_value).
+    class Uninitialized
+      attr_reader name, type, value_before_type_cast
+      private attr_reader original_attribute
+      private attr_accessor cast_value, has_value, database_value, has_value_for_database
+      include Attribute
+      def initialize(a)
+        @has_value = false
+        @has_value_for_database = false
+      end
+      def type_cast(a, value) = nil
+      def value(a) = nil
+      def original_value(a) = :uninitialized_original_value
+      def value_for_database(a) = nil
+      def initialized?(a) = false
+      def forgetting_assignment(a) = dup(a)
+      def with_type(a, type) = Uninitialized.new(@name, type)
+    end
+
+    module_function
+
+    def from_database(name, value_before_type_cast, type, value = nil)
+      FromDatabase.new(name, value_before_type_cast, type, nil, value)
+    end
+
+    def from_user(name, value_before_type_cast, type, original_attribute = nil)
+      FromUser.new(name, value_before_type_cast, type, original_attribute)
+    end
+
+    def with_cast_value(name, value_before_type_cast, type)
+      WithCastValue.new(name, value_before_type_cast, type)
+    end
+    def null(name) = Null.new(name)
+    def uninitialized(name, type) = Uninitialized.new(name, type)
+  end
+
+  class MissingAttributeError < StandardError
+  end
+end
