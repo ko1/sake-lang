@@ -1,0 +1,71 @@
+# Port of the class-body side of activesupport-8.1.3/lib/active_support/core_ext/class/attribute.rb (Sake only): the generator
+#
+# `class_attribute :a, :b, default: v, instance_predicate: false` in a class body (class_body.sake) becomes, per
+# attribute and per class, a slot (core_ext/class/attribute.sake), a reader, a writer `set_a` and a predicate `a?`;
+# a subclass's reader falls back to its parent's until the subclass writes.
+# instance_reader:, instance_writer:, instance_accessor: are accepted and ignored (see attribute.sake).
+
+require "class_body"
+
+module ActiveSupport
+  module ClassAttribute
+    module Generate
+      module_function
+
+      def CALLS = String["class_attribute"]
+
+      # [name, default (Sake source), predicate?, line, the class that declared it] of every class_attribute of body
+      # and its ancestors.
+      def attributes(body, bodies, path)
+        list = Any[]
+        Array.each(ActiveSupport::Generate.lineage(body, bodies)) do |b|
+          Array.each(ActiveSupport::Generate.declarations(b, Generate.CALLS)) do |d|
+            n = ActiveSupport::Generate::Declaration.line(d)
+            default = "nil"
+            predicate = true
+            names = Symbol[]
+            Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+              o = ActiveSupport::Generate.option(a)
+              if o == nil
+                raise ArgumentError, "#{path}:#{n}: #{a} is not a symbol nor a string" if !ActiveSupport::Generate.symbol?(a)
+                Array.push(names, ActiveSupport::Generate.symbol(a))
+                next
+              end
+              key, v = o
+              case key
+              in "default" then default = ActiveSupport::Generate.value(v, n, path)
+              in "instance_predicate" then predicate = v != "false"
+              in "instance_reader" | "instance_writer" | "instance_accessor" then nil
+              else raise ArgumentError, "#{path}:#{n}: unknown keyword: :#{key}"
+              end
+            end
+            Array.each(names) { |a| Array.push(list, [a, default, predicate, n, ActiveSupport::Generate::ClassBody.name(b)]) }
+          end
+        end
+        list
+      end
+
+      def class_source(body, bodies, path)
+        k = ActiveSupport::Generate::ClassBody.name(body)
+        parent = ActiveSupport::Generate.parent_name(body, bodies)
+        s = ""
+        slot = "ActiveSupport::ClassAttribute::Slot"
+        Array.each(attributes(body, bodies, path)) do |attr|
+          a, default, predicate, n, owner = attr
+          s += "# sake-origin: #{path}:#{n}\n"
+          if owner == k
+            s += "def #{k}.__class_attr_#{a} = once { #{slot}.new(#{default}, true) }\n"
+            s += "def #{k}.#{a} = #{slot}.value(#{k}.__class_attr_#{a})\n"
+          else
+            s += "def #{k}.__class_attr_#{a} = once { #{slot}.new(#{parent}.#{a}, false) }\n"
+            s += "def #{k}.#{a} = #{slot}.read(#{k}.__class_attr_#{a}, #{parent}.#{a})\n"
+          end
+          s += "def #{k}.set_#{a}(v) = #{slot}.write(#{k}.__class_attr_#{a}, v)\n"
+          s += "def #{k}.#{a}? = !!#{k}.#{a}\n" if predicate
+        end
+        s += "# sake-origin: none\n" if s != ""
+        s
+      end
+    end
+  end
+end

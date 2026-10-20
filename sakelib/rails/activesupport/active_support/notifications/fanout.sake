@@ -1,0 +1,263 @@
+# Port of activesupport-8.1.3/lib/active_support/notifications/fanout.rb (partial: no silenceable-group cache; one handle stack, not per thread; Subscribers' three classes are one, with the kind)
+
+module ActiveSupport
+  module Notifications
+    class InstrumentationSubscriberError < StandardError   # Ruby: < RuntimeError
+      attr_reader exceptions
+    end
+
+    # Sake only: what Ruby finds with respond_to?(:start)/(:finish), the arity of call, and respond_to?(:publish)
+    # and (:silenced?). An includer says its kind and defines that kind's functions.
+    module Listener
+      # :event_object (call(event), the default), :timed (call_timed(name, started, finished, id, payload)) or
+      # :evented (start(name, id, payload) and finish(name, id, payload)).
+      def listener_kind(l) = :event_object
+      def call(l, event) = raise(ArgumentError, "an :event_object listener defines call(l, event)")
+      def call_timed(l, name, started, finished, id, payload) = raise(ArgumentError, "a :timed listener defines call_timed")
+      def start(l, name, id, payload) = raise(ArgumentError, "an :evented listener defines start")
+      def finish(l, name, id, payload) = raise(ArgumentError, "an :evented listener defines finish")
+      # Ruby's optional publish / publish_event / silenced? of an evented listener.
+      def publish(l, name, started, finished, id, payload) = nil
+      def publish_event(l, event) = publish(l, Event.name(event), Event.time(event), Event.end(event), Event.transaction_id(event), Event.payload(event))
+      def silenced?(l, name) = false
+    end
+
+    module FanoutIteration
+      module_function
+
+      # Ruby's iterate_guarding_exceptions: every listener runs; one error is raised as is, several together.
+      def iterate_guarding_exceptions(collection)
+        if Array.size(collection) < 2
+          Array.each(collection) { |s| yield(s) }
+          return collection
+        end
+        exceptions = Any[]
+        Array.each(collection) do |s|
+          begin
+            yield(s)
+          rescue => e
+            Array.push(exceptions, e)
+          end
+        end
+        if !Array.empty?(exceptions)
+          flat = Array.flat_map(exceptions) do |exception|
+            case exception
+            in InstrumentationSubscriberError then InstrumentationSubscriberError.exceptions(exception)
+            else Any[exception]
+            end
+          end
+          first = Array.first(flat)
+          raise first if Array.size(flat) == 1 && first != nil
+          names = Array.map(flat) { |e| Notifications.class_name(e) }.Array.join(", ")
+          raise InstrumentationSubscriberError.new("Exception(s) occurred within instrumentation subscribers: #{names}", flat)
+        end
+        collection
+      end
+    end
+
+    class Fanout
+      private attr_reader mutex, string_subscribers, other_subscribers, all_listeners_for_, handle_stack
+
+      def initialize(f)
+        @mutex = Mutex.new
+        @string_subscribers = Hash.new
+        @other_subscribers = Fanout::Subscribers::Subscriber[]
+        @all_listeners_for_ = Hash.new
+        @handle_stack = Fanout::Handle[]
+      end
+
+      def inspect(f) = "#<ActiveSupport::Notifications::Fanout (#{Hash.size(@string_subscribers) + Array.size(@other_subscribers)} patterns)>"
+
+      def subscribe(f, pattern, callable)
+        subscriber = Fanout::Subscribers::Subscriber.new(Fanout::Subscribers::Matcher.new(pattern, Set.new), callable, Listener.listener_kind(callable))
+        Mutex.synchronize(@mutex) do
+          case pattern
+          in String
+            list = @string_subscribers[pattern] || Fanout::Subscribers::Subscriber[]
+            Array.push(list, subscriber)
+            @string_subscribers[pattern] = list
+            clear_cache(f, pattern)
+          else
+            Array.push(@other_subscribers, subscriber)
+            clear_cache(f)
+          end
+        end
+        subscriber
+      end
+
+      def unsubscribe(f, subscriber_or_name)
+        Mutex.synchronize(@mutex) do
+          case subscriber_or_name
+          in String
+            Hash.delete(@string_subscribers, subscriber_or_name)
+            clear_cache(f, subscriber_or_name)
+            Array.each(@other_subscribers) { |sub| Fanout::Subscribers::Subscriber.unsubscribe!(sub, subscriber_or_name) }
+          else
+            pattern = Fanout::Subscribers::Matcher.pattern(Fanout::Subscribers::Subscriber.pattern(subscriber_or_name))
+            if pattern in String
+              list = @string_subscribers[pattern]
+              Array.delete_if(list) { |s| Kernel.equal?(s, subscriber_or_name) } if list != nil
+              clear_cache(f, pattern)
+            else
+              Array.delete_if(@other_subscribers) { |s| Kernel.equal?(s, subscriber_or_name) }
+              clear_cache(f)
+            end
+          end
+        end
+      end
+
+      def clear_cache(f, key = nil)
+        key == nil ? Hash.clear(@all_listeners_for_) : Hash.delete(@all_listeners_for_, key)
+      end
+
+      # One group per listener kind, in the order the kinds first appear (Ruby's group_by(&:group_class)).
+      def groups_for(f, name)
+        listeners = listeners_for(f, name)
+        groups = Fanout::Group[]
+        Array.group_by(listeners) { |s| Fanout::Subscribers::Subscriber.kind(s) }.Hash.each do |kind, subs|
+          delegates = Listener[]
+          Array.each(subs) { |s| Array.push(delegates, Fanout::Subscribers::Subscriber.delegate(s)) }
+          Array.push(groups, Fanout::Group.new(kind, delegates, nil, nil))
+        end
+        groups
+      end
+
+      def build_handle(f, name, id, payload) = Fanout::Handle.new(name, id, payload, groups_for(f, name), :initialized)
+
+      def start(f, name, id, payload)
+        handle = build_handle(f, name, id, payload)
+        Array.push(@handle_stack, handle)
+        Fanout::Handle.start(handle)
+      end
+
+      def finish(f, name, id, payload)
+        handle = Array.pop(@handle_stack)
+        raise ArgumentError, "finish without start" if handle == nil
+        Fanout::Handle.finish_with_values(handle, name, id, payload)
+      end
+
+      def publish(f, name, started, finished, id, payload)
+        FanoutIteration.iterate_guarding_exceptions(listeners_for(f, name)) { |s| Fanout::Subscribers::Subscriber.publish(s, name, started, finished, id, payload) }
+      end
+
+      def publish_event(f, event)
+        FanoutIteration.iterate_guarding_exceptions(listeners_for(f, Event.name(event))) { |s| Fanout::Subscribers::Subscriber.publish_event(s, event) }
+      end
+
+      def all_listeners_for(f, name)
+        cached = @all_listeners_for_[name]
+        return cached if cached != nil
+        Mutex.synchronize(@mutex) do
+          list = Array.dup(@string_subscribers[name] || Fanout::Subscribers::Subscriber[]) + Array.select(@other_subscribers) { |s| Fanout::Subscribers::Subscriber.subscribed_to?(s, name) }
+          @all_listeners_for_[name] = list
+        end
+      end
+
+      def listeners_for(f, name) = Array.reject(all_listeners_for(f, name)) { |s| Fanout::Subscribers::Subscriber.silenced?(s, name) }
+      def listening?(f, name) = Array.any?(all_listeners_for(f, name)) { |s| !Fanout::Subscribers::Subscriber.silenced?(s, name) }
+      def wait(f) = nil
+
+      # Ruby's TimedGroup, EventedGroup and EventObjectGroup, by kind.
+      class Group
+        attr_reader kind, listeners
+        private attr_accessor start_time, event
+
+        def start(g, name, id, payload)
+          case @kind
+          in :timed then @start_time = Time.now
+          in :evented then FanoutIteration.iterate_guarding_exceptions(@listeners) { |s| Listener.start(s, name, id, payload) }
+          else
+            e = Event.new_event(name, nil, nil, id, payload)
+            Event.start!(e)
+            @event = e
+          end
+        end
+
+        def finish(g, name, id, payload)
+          case @kind
+          in :timed
+            started = @start_time || Time.now
+            stop_time = Time.now
+            FanoutIteration.iterate_guarding_exceptions(@listeners) { |s| Listener.call_timed(s, name, started, stop_time, id, payload) }
+          in :evented then FanoutIteration.iterate_guarding_exceptions(@listeners) { |s| Listener.finish(s, name, id, payload) }
+          else
+            e = @event
+            return nil if e == nil
+            Event.set_payload(e, payload)
+            Event.finish!(e)
+            FanoutIteration.iterate_guarding_exceptions(@listeners) { |s| Listener.call(s, e) }
+          end
+        end
+      end
+
+      class Handle
+        attr_reader name, id, payload, groups
+        private attr_accessor state
+
+        def start(h)
+          ensure_state!(h, :initialized)
+          @state = :started
+          FanoutIteration.iterate_guarding_exceptions(@groups) { |group| Group.start(group, @name, @id, @payload) }
+        end
+
+        def finish(h) = finish_with_values(h, @name, @id, @payload)
+
+        def finish_with_values(h, name, id, payload)
+          ensure_state!(h, :started)
+          @state = :finished
+          FanoutIteration.iterate_guarding_exceptions(@groups) { |group| Group.finish(group, name, id, payload) }
+        end
+
+        def ensure_state!(h, expected)
+          raise ArgumentError, "expected state to be #{Kernel.inspect(expected)} but was #{Kernel.inspect(@state)}" if @state != expected
+        end
+      end
+
+      module Subscribers
+        # Ruby's Matcher (a Regexp), a String, or AllMessages (nil), in one.
+        class Matcher
+          attr_reader pattern, exclusions
+
+          def unsubscribe!(m, name)
+            pat = @pattern
+            Set.add(@exclusions, name) if (pat in Regexp) && Regexp.match?(pat, name)
+          end
+
+          def ===(m, name)
+            pat = @pattern
+            case pat
+            in nil then true
+            in String then pat == name
+            else Regexp.match?(pat, name) && !Set.include?(@exclusions, name)
+            end
+          end
+        end
+
+        # Ruby's Evented, Timed and EventObject (the kind tells them apart).
+        class Subscriber
+          attr_reader pattern, delegate, kind
+
+          def publish(s, name, started, finished, id, payload)
+            case @kind
+            in :timed then Listener.call_timed(@delegate, name, started, finished, id, payload)
+            in :evented then Listener.publish(@delegate, name, started, finished, id, payload)
+            else nil
+            end
+          end
+
+          def publish_event(s, event)
+            case @kind
+            in :event_object then Listener.call(@delegate, event)
+            in :evented then Listener.publish_event(@delegate, event)
+            else publish(s, Event.name(event), Event.time(event), Event.end(event), Event.transaction_id(event), Event.payload(event))
+            end
+          end
+
+          def silenced?(s, name) = Listener.silenced?(@delegate, name)
+          def subscribed_to?(s, name) = Matcher.===(@pattern, name)
+          def unsubscribe!(s, name) = Matcher.unsubscribe!(@pattern, name)
+        end
+      end
+    end
+  end
+end

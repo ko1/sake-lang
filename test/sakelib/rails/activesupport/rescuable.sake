@@ -1,0 +1,61 @@
+# ActiveSupport::Rescuable: rescue_from, rescue_with_handler (the last declaration wins; a cause is tried).
+
+require "rails/activesupport/active_support/rescuable"
+
+class NotFound < StandardError
+end
+class Denied < StandardError
+end
+class Unknown < StandardError
+end
+generate "rails/activesupport/active_support/generate/active_support", "rescuable_decl.rb"
+
+class AppController
+  include ActiveSupport::Rescuable
+  def not_found(c, e) = puts("  not_found: #{Exception.message(e)}")
+  def denied(c, e) = puts("  denied: #{Kernel.inspect(e).String.delete_prefix("#<").split(":").Array.first}: #{Exception.message(e)}")
+  def run(c, kind)
+    case kind
+    in :not_found then raise NotFound, "no post 7"
+    in :denied then raise Denied, "admins only"
+    in :argument then raise ArgumentError, "bad id"
+    in :unknown then raise Unknown, "?"
+    in :cause
+      begin
+        raise NotFound, "inner"
+      rescue NotFound
+        raise Unknown, "outer"
+      end
+    else nil
+    end
+  end
+  def process(c, kind)
+    run(c, kind)
+    :ok
+  rescue => e
+    handled = rescue_with_handler(c, e) || raise(e)
+    "handled #{Exception.message(handled)}"
+  end
+end
+
+class AdminController < AppController
+  def oops(c, e) = puts("  oops: #{Exception.message(e)}")
+  def admin_not_found(c, e) = puts("  admin_not_found: #{Exception.message(e)}")
+end
+
+Array.each(Symbol[:none, :not_found, :denied, :argument, :cause]) do |kind|
+  puts("app #{kind}:")
+  p(AppController.process(AppController.new, kind))
+end
+puts("app unknown:")
+begin
+  AppController.process(AppController.new, :unknown)
+rescue Unknown => e
+  puts("  re-raised Unknown: #{Exception.message(e)}")
+end
+Array.each(Symbol[:not_found, :denied, :unknown]) do |kind|
+  puts("admin #{kind}:")
+  p(AdminController.process(AdminController.new, kind))
+end
+p(Array.map(AppController.rescue_handlers) { |name, handler| [name, handler] })
+p(Array.map(AdminController.rescue_handlers) { |name, handler| [name, handler] })

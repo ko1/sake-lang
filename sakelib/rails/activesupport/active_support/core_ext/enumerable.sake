@@ -1,0 +1,84 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/enumerable.rb (partial: on Array only; no Range#sum)
+#
+# Ruby adds these to Enumerable; here to Array (an Enumerable in Sake is `Enum`, the prelude's dispatcher).
+# minimum(:key), maximum(:key) and in_order_of(:key, ...) name a method; here a block computes the key.
+
+module Enumerable
+  class SoleItemExpectedError < StandardError
+  end
+end
+
+class Array
+  def minimum(xs) = Array.min(Array.map(xs) { |x| yield(x) })
+  def maximum(xs) = Array.max(Array.map(xs) { |x| yield(x) })
+
+  def index_by(xs)
+    result = Hash.new
+    Array.each(xs) { |elem| result[yield(elem)] = elem }
+    result
+  end
+
+  # Ruby: index_with(default) or index_with { |x| ... }
+  def index_with(xs, default = nil)
+    result = Hash.new
+    if block_given?
+      Array.each(xs) { |elem| result[elem] = yield(elem) }
+    else
+      Array.each(xs) { |elem| result[elem] = default }
+    end
+    result
+  end
+
+  def many?(xs)
+    cnt = 0
+    if block_given?
+      Array.any?(xs) do |x|
+        cnt += 1 if yield(x)
+        cnt > 1
+      end
+    else
+      Array.size(xs) > 1
+    end
+  end
+
+  def exclude?(xs, object) = !Array.include?(xs, object)
+
+  # Ruby: pluck(*keys) over elements that take `[]` (Hashes, Arrays); one key gives the values, more give Arrays.
+  def pluck(xs, *keys)
+    if Array.many?(keys)
+      Array.map(xs) { |element| Array.map(keys) { |key| element[key] } }
+    else
+      key = keys[0]
+      Array.map(xs) { |element| element[key] }
+    end
+  end
+
+  def pick(xs, *keys)
+    return nil if Array.empty?(xs)
+    first = xs[0]
+    Array.many?(keys) ? Array.map(keys) { |key| first[key] } : first[keys[0]]
+  end
+
+  def compact_blank(xs) = Array.reject(xs) { |x| Object.blank?(x) }
+  def compact_blank!(xs) = Array.delete_if(xs) { |x| Object.blank?(x) }
+
+  def in_order_of(xs, series, filter: true)
+    if filter
+      groups = Array.group_by(xs) { |x| yield(x) }
+      Array.flat_map(series) { |k| groups[k] || Any[] }.compact
+    else
+      Array.sort_by(xs) { |v| Array.index(series, yield(v)) || Array.size(series) }.compact
+    end
+  end
+
+  def sole(xs)
+    raise Enumerable::SoleItemExpectedError, "no item found" if Array.empty?(xs)
+    raise Enumerable::SoleItemExpectedError, "multiple items found" if Array.size(xs) > 1
+    xs[0]
+  end
+end
+
+class Hash
+  def compact_blank(h) = Hash.reject(h) { |_k, v| Object.blank?(v) }
+  def compact_blank!(h) = Hash.delete_if(h) { |_k, v| Object.blank?(v) }
+end

@@ -1,0 +1,227 @@
+# Port of activesupport-8.1.3/lib/active_support/values/time_zone.rb (partial: no us_zones/country_zones, no strptime/rfc3339, no YAML coder)
+#
+# Ruby's `ActiveSupport::TimeZone["Tokyo"]` is `ActiveSupport::TimeZone.lookup("Tokyo")`: in Sake `T[...]` is an
+# Array literal of T, and `new` is the constructor (Ruby's `TimeZone.new(name)` is `[]` too). `Time.find_zone`
+# (core_ext/time/zones) is Rails' other name for it.
+
+require "tzinfo"
+require "time"
+
+module ActiveSupport
+  class TimeZone
+    include Comparable
+
+    attr_reader name, explicit_utc_offset, tzinfo
+
+    # Ruby: MAPPING (Rails' friendly names => tzinfo identifiers)
+    def mapping = once do
+      Hash.of(
+        "International Date Line West" => "Etc/GMT+12", "Midway Island" => "Pacific/Midway",
+        "American Samoa" => "Pacific/Pago_Pago", "Hawaii" => "Pacific/Honolulu", "Alaska" => "America/Juneau",
+        "Pacific Time (US & Canada)" => "America/Los_Angeles", "Tijuana" => "America/Tijuana",
+        "Mountain Time (US & Canada)" => "America/Denver", "Arizona" => "America/Phoenix",
+        "Chihuahua" => "America/Chihuahua", "Mazatlan" => "America/Mazatlan",
+        "Central Time (US & Canada)" => "America/Chicago", "Saskatchewan" => "America/Regina",
+        "Guadalajara" => "America/Mexico_City", "Mexico City" => "America/Mexico_City",
+        "Monterrey" => "America/Monterrey", "Central America" => "America/Guatemala",
+        "Eastern Time (US & Canada)" => "America/New_York", "Indiana (East)" => "America/Indiana/Indianapolis",
+        "Bogota" => "America/Bogota", "Lima" => "America/Lima", "Quito" => "America/Lima",
+        "Atlantic Time (Canada)" => "America/Halifax", "Caracas" => "America/Caracas",
+        "La Paz" => "America/La_Paz", "Santiago" => "America/Santiago", "Asuncion" => "America/Asuncion",
+        "Newfoundland" => "America/St_Johns", "Brasilia" => "America/Sao_Paulo",
+        "Buenos Aires" => "America/Argentina/Buenos_Aires", "Montevideo" => "America/Montevideo",
+        "Georgetown" => "America/Guyana", "Puerto Rico" => "America/Puerto_Rico", "Greenland" => "America/Nuuk",
+        "Mid-Atlantic" => "Atlantic/South_Georgia", "Azores" => "Atlantic/Azores",
+        "Cape Verde Is." => "Atlantic/Cape_Verde", "Dublin" => "Europe/Dublin", "Edinburgh" => "Europe/London",
+        "Lisbon" => "Europe/Lisbon", "London" => "Europe/London", "Casablanca" => "Africa/Casablanca",
+        "Monrovia" => "Africa/Monrovia", "UTC" => "Etc/UTC", "Belgrade" => "Europe/Belgrade",
+        "Bratislava" => "Europe/Bratislava", "Budapest" => "Europe/Budapest", "Ljubljana" => "Europe/Ljubljana",
+        "Prague" => "Europe/Prague", "Sarajevo" => "Europe/Sarajevo", "Skopje" => "Europe/Skopje",
+        "Warsaw" => "Europe/Warsaw", "Zagreb" => "Europe/Zagreb", "Brussels" => "Europe/Brussels",
+        "Copenhagen" => "Europe/Copenhagen", "Madrid" => "Europe/Madrid", "Paris" => "Europe/Paris",
+        "Amsterdam" => "Europe/Amsterdam", "Berlin" => "Europe/Berlin", "Bern" => "Europe/Zurich",
+        "Zurich" => "Europe/Zurich", "Rome" => "Europe/Rome", "Stockholm" => "Europe/Stockholm",
+        "Vienna" => "Europe/Vienna", "West Central Africa" => "Africa/Algiers", "Bucharest" => "Europe/Bucharest",
+        "Cairo" => "Africa/Cairo", "Helsinki" => "Europe/Helsinki", "Kyiv" => "Europe/Kiev",
+        "Riga" => "Europe/Riga", "Sofia" => "Europe/Sofia", "Tallinn" => "Europe/Tallinn",
+        "Vilnius" => "Europe/Vilnius", "Athens" => "Europe/Athens", "Istanbul" => "Europe/Istanbul",
+        "Minsk" => "Europe/Minsk", "Jerusalem" => "Asia/Jerusalem", "Harare" => "Africa/Harare",
+        "Pretoria" => "Africa/Johannesburg", "Kaliningrad" => "Europe/Kaliningrad", "Moscow" => "Europe/Moscow",
+        "St. Petersburg" => "Europe/Moscow", "Volgograd" => "Europe/Volgograd", "Samara" => "Europe/Samara",
+        "Kuwait" => "Asia/Kuwait", "Riyadh" => "Asia/Riyadh", "Nairobi" => "Africa/Nairobi",
+        "Baghdad" => "Asia/Baghdad", "Tehran" => "Asia/Tehran", "Abu Dhabi" => "Asia/Muscat",
+        "Muscat" => "Asia/Muscat", "Baku" => "Asia/Baku", "Tbilisi" => "Asia/Tbilisi", "Yerevan" => "Asia/Yerevan",
+        "Kabul" => "Asia/Kabul", "Ekaterinburg" => "Asia/Yekaterinburg", "Islamabad" => "Asia/Karachi",
+        "Karachi" => "Asia/Karachi", "Tashkent" => "Asia/Tashkent", "Chennai" => "Asia/Kolkata",
+        "Kolkata" => "Asia/Kolkata", "Mumbai" => "Asia/Kolkata", "New Delhi" => "Asia/Kolkata",
+        "Kathmandu" => "Asia/Kathmandu", "Dhaka" => "Asia/Dhaka", "Sri Jayawardenepura" => "Asia/Colombo",
+        "Almaty" => "Asia/Almaty", "Astana" => "Asia/Almaty", "Novosibirsk" => "Asia/Novosibirsk",
+        "Rangoon" => "Asia/Rangoon", "Bangkok" => "Asia/Bangkok", "Hanoi" => "Asia/Bangkok",
+        "Jakarta" => "Asia/Jakarta", "Krasnoyarsk" => "Asia/Krasnoyarsk", "Beijing" => "Asia/Shanghai",
+        "Chongqing" => "Asia/Chongqing", "Hong Kong" => "Asia/Hong_Kong", "Urumqi" => "Asia/Urumqi",
+        "Kuala Lumpur" => "Asia/Kuala_Lumpur", "Singapore" => "Asia/Singapore", "Taipei" => "Asia/Taipei",
+        "Perth" => "Australia/Perth", "Irkutsk" => "Asia/Irkutsk", "Ulaanbaatar" => "Asia/Ulaanbaatar",
+        "Seoul" => "Asia/Seoul", "Osaka" => "Asia/Tokyo", "Sapporo" => "Asia/Tokyo", "Tokyo" => "Asia/Tokyo",
+        "Yakutsk" => "Asia/Yakutsk", "Darwin" => "Australia/Darwin", "Adelaide" => "Australia/Adelaide",
+        "Canberra" => "Australia/Canberra", "Melbourne" => "Australia/Melbourne", "Sydney" => "Australia/Sydney",
+        "Brisbane" => "Australia/Brisbane", "Hobart" => "Australia/Hobart", "Vladivostok" => "Asia/Vladivostok",
+        "Guam" => "Pacific/Guam", "Port Moresby" => "Pacific/Port_Moresby", "Magadan" => "Asia/Magadan",
+        "Srednekolymsk" => "Asia/Srednekolymsk", "Solomon Is." => "Pacific/Guadalcanal",
+        "New Caledonia" => "Pacific/Noumea", "Fiji" => "Pacific/Fiji", "Kamchatka" => "Asia/Kamchatka",
+        "Marshall Is." => "Pacific/Majuro", "Auckland" => "Pacific/Auckland", "Wellington" => "Pacific/Auckland",
+        "Nuku'alofa" => "Pacific/Tongatapu", "Tokelau Is." => "Pacific/Fakaofo",
+        "Chatham Is." => "Pacific/Chatham", "Samoa" => "Pacific/Apia"
+      )
+    end
+
+    def seconds_to_utc_offset(seconds, colon = true)
+      sign = seconds < 0 ? "-" : "+"
+      hours = Integer.abs(seconds) / 3600
+      minutes = (Integer.abs(seconds) % 3600) / 60
+      format(colon ? "%s%02d:%02d" : "%s%02d%02d", sign, hours, minutes)
+    end
+
+    def find_tzinfo(name) = TZInfo::Timezone.get(mapping[name] || name)
+
+    # Ruby: TimeZone.create(name), the constructor behind TimeZone[name]
+    def create(name) = TimeZone.new(name, nil, find_tzinfo(name))
+
+    def lazy_zones_map = once { Hash.new }
+
+    # Ruby: TimeZone[arg] for a name, a tzinfo identifier, a TZInfo::Timezone, or an offset (hours or seconds).
+    def lookup(arg)
+      case arg
+      in TimeZone then arg
+      in String
+        map = lazy_zones_map
+        found = map[arg]
+        return found if found
+        begin
+          made = create(arg)
+          map[arg] = made
+          made
+        rescue TZInfo::InvalidTimezoneIdentifier
+          nil
+        end
+      in TZInfo::Timezone
+        n = TZInfo::Timezone.name(arg)
+        map = lazy_zones_map
+        found = map[n]
+        return found if found
+        made = TimeZone.new(n, nil, arg)
+        map[n] = made
+        made
+      in Integer | Float | Duration
+        secs = (arg in Duration) ? Duration.to_i(arg) : arg
+        secs *= 3600 if Arithmetic.abs(secs) <= 13
+        Array.find(all) { |z| TimeZone.utc_offset(z) == Arithmetic.to_i(secs) }
+      end
+    end
+
+    def all = once { Hash.values(zones_map).Array.sort }
+
+    def zones_map = once do
+      zones = Hash.new
+      Hash.each(mapping) do |name, _id|
+        timezone = lookup(name)
+        zones[name] = timezone if timezone
+      end
+      zones
+    end
+
+    def standard_name(z) = mapping[@name] || @name
+
+    def utc_offset(z) = @explicit_utc_offset || TZInfo::TimezonePeriod.base_utc_offset(TZInfo::Timezone.current_period(@tzinfo))
+
+    def formatted_offset(z, colon = true, alternate_utc_string = nil)
+      off = utc_offset(z)
+      off == 0 && alternate_utc_string || seconds_to_utc_offset(off, colon)
+    end
+
+    def <=>(a, zone)
+      result = utc_offset(a) <=> TimeZone.utc_offset(zone)
+      result = @name <=> TimeZone.name(zone) if result == 0
+      result
+    end
+
+    def ==(a, zone) = (zone in TimeZone) && @name == TimeZone.name(zone)
+
+    def =~(z, re) = Regexp.match?(re, @name) || Regexp.match?(re, mapping[@name] || "")
+
+    def match?(z, re)
+      case re
+      in String then re == @name || re == mapping[@name]
+      in Regexp then Regexp.match?(re, @name) || Regexp.match?(re, mapping[@name] || "")
+      end
+    end
+
+    def to_s(z) = "(GMT#{formatted_offset(z)}) #{@name}"
+    def inspect(z) = "#<ActiveSupport::TimeZone name=#{Kernel.inspect(@name)}>"
+
+    # Ruby: local(*args): Time.utc(*args) read as this zone's wall clock.
+    def local(z, year, month = 1, day = 1, hour = 0, min = 0, sec = 0)
+      TimeWithZone.new(nil, z, Time.utc(year, month, day, hour, min, sec))
+    end
+
+    def at(z, secs) = Time.in_time_zone(Time.utc(Time.at(secs)), z)
+
+    def iso8601(z, str)
+      m = String.match(str, /\A(\d{4})-?(\d\d)-?(\d\d)(?:[T ](\d\d):?(\d\d)(?::?(\d\d)(\.\d+)?)?)?\s*(Z|[-+]\d\d(?::?\d\d)?)?\z/)
+      raise ArgumentError, "invalid date" unless m
+      sec = String.to_i(m[6] || "0") + (m[7] ? String.to_r(m[7] || "") : 0)
+      off = m[8]
+      if off
+        time = Time.new(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || ""), String.to_i(m[4] || "0"), String.to_i(m[5] || "0"), sec, off == "Z" ? "UTC" : off)
+        TimeWithZone.new(Time.getutc(time), z)
+      else
+        TimeWithZone.new(nil, z, Time.utc(String.to_i(m[1] || ""), String.to_i(m[2] || ""), String.to_i(m[3] || ""), String.to_i(m[4] || "0"), String.to_i(m[5] || "0"), sec))
+      end
+    end
+
+    # Ruby: parse(str, now = now()) through Date._parse; here sakelib/time's parser gives the same parts.
+    def parse(z, str, now = nil)
+      pt = Time::Core.parse_parts(str)
+      return nil unless Time::Parts.found_any?(pt)
+      n = now || TimeZone.now(z)
+      if (secs = Time::Parts.seconds(pt))
+        return TimeWithZone.new(Time.utc(Time.at(secs)), z)
+      end
+      year = Time::Parts.year(pt) || TimeWithZone.year(n)
+      mon = Time::Parts.mon(pt) || TimeWithZone.month(n)
+      mday = Time::Parts.mday(pt) || (Time::Parts.year(pt) || Time::Parts.mon(pt) ? 1 : TimeWithZone.day(n))
+      sec = (Time::Parts.sec(pt) || 0) + (Time::Parts.frac(pt) || 0)
+      zone = Time::Parts.zone(pt)
+      if zone
+        off = Time.zone_offset(zone) || 0
+        time = Time.new(year, mon, mday, Time::Parts.hour(pt) || 0, Time::Parts.min(pt) || 0, sec, off)
+        TimeWithZone.new(Time.getutc(time), z)
+      else
+        TimeWithZone.new(nil, z, Time.utc(year, mon, mday, Time::Parts.hour(pt) || 0, Time::Parts.min(pt) || 0, sec))
+      end
+    end
+
+    def now(z) = Time.in_time_zone(Time.getutc(Time.now), z)
+    def today(z) = TimeWithZone.to_date(now(z))
+    def tomorrow(z) = today(z) + 1
+    def yesterday(z) = today(z) - 1
+
+    # Ruby: utc_to_local(time): the wall clock as a UTC Time.
+    def utc_to_local(z, time) = Time.getutc(time) + TZInfo::Timezone.utc_to_local_offset(@tzinfo, Time.to_i(time))
+
+    def local_to_utc(z, time, dst = true)
+      Time.getutc(time) - TZInfo::TimezonePeriod.observed_utc_offset(period_for_local(z, time, dst))
+    end
+
+    def period_for_utc(z, time) = TZInfo::Timezone.period_for_utc(@tzinfo, Time.to_i(time))
+
+    # The local time is a Time whose wall clock is read as UTC (Ruby's transfer_time_values_to_utc_constructor).
+    def period_for_local(z, time, dst = true) = TZInfo::Timezone.period_for_local(@tzinfo, wall_seconds(time), dst)
+
+    def periods_for_local(z, time) = TZInfo::Timezone.periods_for_local(@tzinfo, wall_seconds(time))
+
+    def wall_seconds(time) = Time.to_i(time) + Time.utc_offset(time)
+
+    def abbr(z, time) = TZInfo::TimezonePeriod.abbreviation(period_for_utc(z, time))
+    def dst?(z, time) = TZInfo::TimezonePeriod.dst?(period_for_utc(z, time))
+  end
+end

@@ -1,0 +1,108 @@
+# Port of activesupport-8.1.3/lib/active_support/ordered_options.rb (partial: no pretty_print; InheritableOptions' parent is an OrderedOptions or a Hash)
+#
+# Ruby's OrderedOptions is a Hash whose method_missing reads `config.name`, writes `config.name = v` and checks
+# `config.name!`. Here it holds a Hash of Symbol keys; its method_missing is `option`, taking the method's name as a Symbol
+# (`OrderedOptions.option(o, :name=, v)`; the name `method_missing` is rejected in Sake), and generate/ordered_options.sake writes `name(o)`,
+# `set_name(o, v)` (Sake's writer name) and `name!(o)` for the names a program lists.
+
+require "core_ext/object/blank"
+require "as_json"
+
+module ActiveSupport
+  class OrderedOptions
+    attr_reader table
+    attr_accessor parent
+    include Indexable
+    include AsJson
+
+    def make = OrderedOptions.new(Hash.new, nil)
+
+    def key_sym(key) = (key in Symbol) ? key : String.to_sym(Kernel.to_s(key))
+
+    def []=(o, key, value)
+      @table[key_sym(key)] = value
+    end
+
+    # Ruby: InheritableOptions reads a missing key from its parent (the Hash's default block).
+    def [](o, key)
+      k = key_sym(key)
+      return @table[k] if Hash.key?(@table, k)
+      par = @parent
+      case par
+      in OrderedOptions then OrderedOptions.[](par, k)
+      in Hash then par[k]
+      else nil
+      end
+    end
+
+    def dig(o, key, *identifiers)
+      v = o[key]
+      return v if Array.empty?(identifiers) || v == nil
+      k2 = identifiers[0]
+      more = Array.drop(identifiers, 1)
+      case v
+      in Hash then Hash.dig(v, k2, *more)
+      in OrderedOptions then OrderedOptions.dig(v, k2, *more)
+      else raise TypeError, "#{Kernel.inspect(v)} does not have #dig method"
+      end
+    end
+
+    def option(o, method, *args)
+      name = Symbol.name(method)
+      if String.end_with?(name, "=")
+        o[String.chomp(name, "=")] = args[0]
+      elsif String.end_with?(name, "!")
+        name_string = String.chomp(name, "!")
+        Object.presence(o[name_string]) || raise(KeyError, ":#{name_string} is blank")
+      else
+        o[name]
+      end
+    end
+
+    def respond_to_missing?(o, name) = true
+    def as_json(o, options = nil) = to_h(o)
+    def extractable_options?(o) = true
+    def key?(o, key) = Hash.key?(@table, key_sym(key)) || parent_key?(o, key)
+
+    def parent_key?(o, key)
+      par = @parent
+      case par
+      in OrderedOptions then OrderedOptions.key?(par, key)
+      in Hash then Hash.key?(par, key_sym(key))
+      else false
+      end
+    end
+
+    def to_h(o)
+      par = @parent
+      case par
+      in OrderedOptions then Hash.merge(OrderedOptions.to_h(par), @table)
+      in Hash then Hash.merge(par, @table)
+      else Hash.dup(@table)
+      end
+    end
+
+    def each(o)
+      Hash.each(to_h(o)) { |k, v| yield(k, v) }
+      o
+    end
+
+    def keys(o) = Hash.keys(to_h(o))
+    def ==(o, other) = (other in OrderedOptions) && to_h(o) == OrderedOptions.to_h(other)
+    def inspect(o) = @parent == nil ? "#<ActiveSupport::OrderedOptions #{Kernel.inspect(@table)}>" : "#<ActiveSupport::InheritableOptions #{Kernel.inspect(to_h(o))}>"
+    def to_s(o) = Kernel.to_s(to_h(o))
+  end
+
+  # Ruby: class InheritableOptions < OrderedOptions; here an OrderedOptions with a parent (InheritableOptions.new(parent)).
+  module InheritableOptions
+    module_function
+
+    def new(parent = nil) = OrderedOptions.new(Hash.new, parent || Hash.new)
+
+    def overridden?(o, key)
+      OrderedOptions.parent_key?(o, key) && Hash.key?(OrderedOptions.table(o), OrderedOptions.key_sym(key))
+    end
+
+    def inheritable_copy(o) = new(o)
+  end
+end

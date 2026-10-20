@@ -1,0 +1,55 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/object/to_query.rb and object/to_param.rb (one file: to_param only requires to_query)
+#
+# Ruby defines to_param / to_query on Object, NilClass, TrueClass, FalseClass, Array and Hash, and each calls the
+# value's own; here `Object.to_param(x)` / `Object.to_query(x, key)` are the one `case` over them.
+
+require "cgi"
+
+module Object
+  module_function
+
+  def to_param(x)
+    case x
+    in nil | true | false then x
+    in Array then Array.to_param(x)
+    in Hash then Hash.to_query(x)
+    else Kernel.to_s(x)
+    end
+  end
+
+  def to_query(x, key)
+    case x
+    in nil then CGI.escape(Kernel.to_s(to_param(key)))
+    in Array then Array.to_query(x, key) || ""
+    in Hash then Hash.to_query(x, Kernel.to_s(key))
+    else "#{CGI.escape(Kernel.to_s(to_param(key)))}=#{CGI.escape(Kernel.to_s(to_param(x)))}"
+    end
+  end
+end
+
+class Array
+  def to_param(xs) = Array.map(xs) { |x| Object.to_param(x) }.join("/")
+
+  def to_query(xs, key)
+    prefix = "#{key}[]"
+    if Array.empty?(xs)
+      Object.to_query(nil, prefix)
+    else
+      Array.map(xs) { |value| Object.to_query(value, prefix) }.join("&")
+    end
+  end
+end
+
+class Hash
+  def to_query(h, namespace = nil)
+    query = Hash.filter_map(h) do |key, value|
+      unless ((value in Hash) && Hash.empty?(value)) || ((value in Array) && Array.empty?(value))
+        Object.to_query(value, namespace ? "#{namespace}[#{key}]" : key)
+      end
+    end
+    Array.sort!(query) unless String.include?(Kernel.to_s(namespace), "[]")
+    Array.join(query, "&")
+  end
+
+  def to_param(h, namespace = nil) = Hash.to_query(h, namespace)
+end

@@ -1,0 +1,78 @@
+# Port of activesupport-8.1.3/lib/active_support/subscriber.rb (partial: no method_added (a method defined after attach_to is not subscribed); no inherit_all:)
+#
+# Ruby subscribes "METHOD.NAMESPACE" for each public method of the subscriber (public_methods(false)) and
+# calls it with send. Sake has neither, so the includer names its events and calls one by name:
+#
+#   Ruby                                          Sake
+#   class Counter < ActiveSupport::Subscriber     class Counter; include ActiveSupport::Subscriber
+#     def process_action(event) ...                 def process_action(c, event) ...
+#                                                   def __events(c) = Symbol[:process_action]
+#                                                   def __event(c, method, event) = case method in :process_action then process_action(c, event) ... end
+#   Counter.attach_to :action_controller          ActiveSupport::Subscriber.attach_to(:action_controller, Counter.new)
+
+require "notifications"
+
+module ActiveSupport
+  module Subscriber
+    include ActiveSupport::Notifications::Listener
+
+    # Required of the includer: its event methods, and a call of one by name.
+    def __events(s) = raise(NotImplementedError)
+    def __event(s, method, event) = raise(NotImplementedError)
+
+    # Ruby's call(event): the method named by the event's name up to the first dot.
+    def call(s, event)
+      name = ActiveSupport::Notifications::Event.name(event)
+      i = String.index(name, ".") || String.size(name)
+      __event(s, String.to_sym(String.slice(name, 0, i) || ""), event)
+    end
+
+    # Ruby's patterns: pattern => the subscription.
+    def patterns(s) = Subscriber.patterns_of(s)
+
+    module_function
+
+    def subscribers = once { Subscriber[] }
+    def registry = once { Any[] }
+
+    def patterns_of(subscriber)
+      entry = Array.find(registry) { |e| Kernel.equal?(e[0], subscriber) }
+      return entry[1] if entry != nil
+      h = Hash.new
+      Array.push(registry, [subscriber, h])
+      h
+    end
+
+    # Ruby's attach_to(namespace, subscriber = new).
+    def attach_to(namespace, subscriber)
+      Array.push(subscribers, subscriber)
+      Array.each(Subscriber.__events(subscriber)) { |event| add_event_subscriber(subscriber, namespace, event) }
+      subscriber
+    end
+
+    # Ruby's detach_from(namespace): the attached subscriber of that class is given here.
+    def detach_from(namespace, subscriber)
+      return nil if !Array.any?(subscribers) { |s| Kernel.equal?(s, subscriber) }
+      Array.delete_if(subscribers) { |s| Kernel.equal?(s, subscriber) }
+      Array.each(Subscriber.__events(subscriber)) { |event| remove_event_subscriber(subscriber, namespace, event) }
+      nil
+    end
+
+    def add_event_subscriber(subscriber, namespace, event)
+      return nil if event == :start || event == :finish
+      pattern = "#{event}.#{namespace}"
+      patterns = patterns_of(subscriber)
+      return nil if Hash.key?(patterns, pattern)
+      patterns[pattern] = ActiveSupport::Notifications.subscribe(pattern, subscriber)
+    end
+
+    def remove_event_subscriber(subscriber, namespace, event)
+      pattern = "#{event}.#{namespace}"
+      patterns = patterns_of(subscriber)
+      subscription = patterns[pattern]
+      return nil if subscription == nil
+      ActiveSupport::Notifications.unsubscribe(subscription)
+      Hash.delete(patterns, pattern)
+    end
+  end
+end

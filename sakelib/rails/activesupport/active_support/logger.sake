@@ -1,0 +1,126 @@
+# Port of activesupport-8.1.3/lib/active_support/logger.rb, logger_silence.rb and logger_thread_safe_level.rb (partial: no logger_outputs_to?; the local level is the logger's, not per thread)
+#
+# The three files share one Sake class: LoggerSilence and LoggerThreadSafeLevel are concerns that add state
+# (silencer, the local level) to the logger, and a Sake mixin has no fields. ::Logger is sakelib's, whose
+# formatter is a format string: SimpleFormatter ("#{msg}\n") is "%<msg>s\n".
+
+require "logger"
+
+module ActiveSupport
+  class Logger < ::Logger
+    attr_accessor silencer
+    private attr_accessor local_level_
+    attr_accessor tag_stack_   # TaggedLogging's (tagged_logging.sake)
+
+    # Ruby's initialize(*args): ::Logger's, then the SimpleFormatter.
+    def initialize(l)
+      @shift_age = 0 if @shift_age == nil
+      @shift_size = 1048576 if @shift_size == nil
+      @level = 0 if @level == nil
+      @closed = false
+      @io = nil
+      @logdev => IO | String | nil
+      @level = ::Logger.coerce_level(@level)
+      @formatter ||= Logger.simple_formatter
+      @silencer = true if @silencer == nil
+    end
+
+    # Ruby's SimpleFormatter#call: the message (inspected unless a String) and a newline.
+    def simple_formatter = "%<msg>s\n"
+
+    # LoggerThreadSafeLevel: a level that overrides the logger's while log_at runs.
+    def local_level(l) = @local_level_
+
+    def set_local_level(l, level)
+      @local_level_ = case level
+                      in Integer then level
+                      in Symbol then ::Logger.coerce_level(level)
+                      in nil then nil
+                      else raise ArgumentError, "Invalid log level: #{Kernel.inspect(level)}"
+                      end
+    end
+
+    # Ruby's level: local_level || super. (`level` is the field's reader here, so this is effective_level.)
+    def effective_level(l) = @local_level_ || @level
+
+    def log_at(l, level)
+      old_local_level = @local_level_
+      set_local_level(l, level)
+      begin
+        yield
+      ensure
+        @local_level_ = old_local_level
+      end
+    end
+
+    # LoggerSilence: only messages at severity or above while the block runs (when silencer is on).
+    def silence(l, severity = ::Logger.ERROR)
+      @silencer ? log_at(l, severity) { yield(l) } : yield(l)
+    end
+
+    def debug?(l) = effective_level(l) <= 0
+    def info?(l) = effective_level(l) <= 1
+    def warn?(l) = effective_level(l) <= 2
+    def error?(l) = effective_level(l) <= 3
+    def fatal?(l) = effective_level(l) <= 4
+
+    # ::Logger's add, reading the effective level and passing the message through the tag stack.
+    def add(l, severity, message = nil, progname = nil)
+      sev = severity == nil ? 5 : severity
+      return true if sev < effective_level(l)
+      prog = progname == nil ? @progname : progname
+      msg = message
+      if msg == nil
+        if block_given?
+          msg = yield
+        else
+          msg = prog
+          prog = @progname
+        end
+      end
+      ts = @tag_stack_
+      msg = TaggedLogging::TagStack.format_message(ts, msg) if ts != nil
+      write(l, format_message(l, format_severity(sev), now(l), prog, msg))
+      true
+    end
+  end
+
+  # TaggedLogging's TagStack (tagged_logging.rb), here because the logger's add formats with it.
+  module TaggedLogging
+    class TagStack
+      attr_reader tags
+      private attr_accessor tags_string
+
+      def push_tags(ts, tags)
+        @tags_string = nil
+        list = Array.reject(Any[*tags].Array.flatten) { |t| t == nil || String.empty?(String.strip(Kernel.to_s(t))) }.Array.map { |t| Kernel.to_s(t) }
+        Array.concat(@tags, list)
+        list
+      end
+
+      def pop_tags(ts, count)
+        @tags_string = nil
+        popped = String[]
+        Integer.times(count) { t = Array.pop(@tags); Array.unshift(popped, t) if t != nil }
+        popped
+      end
+
+      def clear(ts)
+        @tags_string = nil
+        Array.clear(@tags)
+      end
+
+      def format_message(ts, message)
+        if Array.empty?(@tags)
+          message
+        elsif Array.size(@tags) == 1
+          "[#{@tags[0]}] #{message}"
+        else
+          @tags_string ||= "[#{Array.join(@tags, "] [")}] "
+          "#{@tags_string}#{message}"
+        end
+      end
+    end
+
+  end
+end

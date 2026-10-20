@@ -1,0 +1,59 @@
+# Port of activesupport-8.1.3/lib/active_support/key_generator.rb (partial: the digest is named by a String ("SHA1", "SHA256"), not an OpenSSL::Digest class)
+#
+# OpenSSL::PKCS5.pbkdf2_hmac is not in sakelib's openssl (HMAC only), so PBKDF2 (RFC 8018) is written here over
+# OpenSSL::HMAC. It is slow: one HMAC is ~20 ms in Sake, and Rails' default 2**16 iterations would take minutes
+# (Rails.application.key_generator uses 1000: ~20 s per key). See the notes: a built-in is asked for.
+
+require "openssl"
+
+module ActiveSupport
+  class KeyGenerator
+    attr_reader secret, iterations, hash_digest_class
+
+    # Ruby's KeyGenerator.new(secret, iterations: 2**16, hash_digest_class: SHA1).
+    def initialize(k)
+      @iterations = 65536 if @iterations == nil
+      @hash_digest_class = KeyGenerator.default_hash_digest_class if @hash_digest_class == nil
+    end
+
+    def default_hash_digest_class = "SHA1"
+
+    def generate_key(k, salt, key_size = 64) = KeyGenerator.pbkdf2_hmac(@secret, salt, @iterations, key_size, @hash_digest_class)
+
+    def inspect(k) = "#<ActiveSupport::KeyGenerator>"
+
+    # Ruby's OpenSSL::PKCS5.pbkdf2_hmac(pass, salt, iter, keylen, digest).
+    def pbkdf2_hmac(pass, salt, iter, keylen, digest)
+      out = ""
+      block = 1
+      while String.bytesize(out) < keylen
+        u = OpenSSL::HMAC.digest(digest, pass, String.b(salt) + Array.pack(Any[block], "N"))
+        t = String.bytes(u)
+        Integer.times(iter - 1) do
+          u = OpenSSL::HMAC.digest(digest, pass, u)
+          String.bytes(u).Array.each_with_index { |b, i| t[i] = Array.fetch(t, i) ^ b }
+        end
+        out += Array.pack(t, "C*")
+        block += 1
+      end
+      String.byteslice(out, 0, keylen) || ""
+    end
+  end
+
+  # Ruby's CachingKeyGenerator: a key per (salt, key size) is derived once.
+  class CachingKeyGenerator
+    attr_reader key_generator
+    private attr_reader cache_keys
+
+    def initialize(c)
+      @cache_keys = Hash.new
+    end
+
+    def generate_key(c, salt, key_size = 64)
+      k = "#{salt}|#{key_size}"
+      cached = @cache_keys[k]
+      return cached if cached != nil
+      @cache_keys[k] = KeyGenerator.generate_key(@key_generator, salt, key_size)
+    end
+  end
+end

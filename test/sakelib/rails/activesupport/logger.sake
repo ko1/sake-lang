@@ -1,0 +1,59 @@
+# ActiveSupport::Logger (SimpleFormatter, silence, log_at), TaggedLogging, BroadcastLogger.
+
+require "rails/activesupport/active_support/logger"
+require "rails/activesupport/active_support/tagged_logging"
+require "rails/activesupport/active_support/broadcast_logger"
+
+L = ActiveSupport::Logger
+
+log = L.new(IO.stdout)
+L.info(log, "hello")
+L.debug(log, "debug shown")
+L.info(log, 123)
+L.info(log, Any[1, "two"])
+L.info(log) { "lazy" }
+L.set_level(log, :info)
+L.debug(log, "hidden")
+p([L.level(log), L.debug?(log), L.info?(log)])
+L.silence(log) do
+  L.info(log, "silenced: hidden")
+  L.error(log, "error shown in silence")
+end
+L.log_at(log, :debug) { L.debug(log, "debug via log_at") }
+p(L.local_level(log))
+L.set_silencer(log, false)
+L.silence(log) { L.info(log, "silencer off: shown") }
+
+puts("tagged:")
+tagged = ActiveSupport::TaggedLogging.new(log)
+L.tagged(tagged, "BCX") { L.info(tagged, "Stuff") }
+L.tagged(tagged, "BCX", "Jason") { L.info(tagged, "Stuff") }
+L.tagged(tagged, "BCX") { L.tagged(tagged, "Jason") { L.info(tagged, "Stuff") } }
+req = L.tagged(tagged, "Req")
+L.info(req, "without a block")
+L.info(tagged, "the original has none")
+p(L.push_tags(tagged, "A", "", nil, "B"))
+p([L.current_tags(tagged), L.tags_text(tagged)])   # Ruby: the formatter's
+L.info(tagged, "pushed")
+L.pop_tags(tagged)
+p(L.current_tags(tagged))
+L.clear_tags!(tagged)
+L.info(tagged, "cleared")
+L.info(log, "the untagged logger")
+
+puts("broadcast:")
+a = L.new(IO.stdout)
+L.set_formatter(a, "A: %<msg>s\n")   # Ruby: a formatter Proc
+b = L.new(IO.stdout)
+L.set_formatter(b, "B: %<msg>s\n")
+L.set_level(b, :warn)
+both = ActiveSupport::BroadcastLogger.of(a, b)
+ActiveSupport::BroadcastLogger.info(both, "info to both")
+ActiveSupport::BroadcastLogger.warn(both, "warn to both")
+calls = 0
+ActiveSupport::BroadcastLogger.error(both) { calls += 1; "lazy error" }
+p([calls, ActiveSupport::BroadcastLogger.level(both), ActiveSupport::BroadcastLogger.debug?(both), ActiveSupport::BroadcastLogger.progname(both)])
+ActiveSupport::BroadcastLogger.silence(both) { ActiveSupport::BroadcastLogger.warn(both, "silenced warn"); ActiveSupport::BroadcastLogger.error(both, "silenced error") }
+ActiveSupport::BroadcastLogger.stop_broadcasting_to(both, b)
+ActiveSupport::BroadcastLogger.warn(both, "only A")
+p(Array.size(ActiveSupport::BroadcastLogger.broadcasts(both)))

@@ -1,0 +1,85 @@
+# Port of activesupport-8.1.3/lib/active_support/broadcast_logger.rb (partial: broadcasts are ActiveSupport::Loggers; no method_missing forwarding)
+#
+# Ruby defines the forwarding methods with class_eval over LOGGER_METHODS and sends each; here they are
+# written out. A block (the lazy message) runs once for all the loggers, as Ruby's dispatch.
+
+require "logger"
+
+module ActiveSupport
+  class BroadcastLogger
+    attr_reader broadcasts
+    attr_accessor progname
+
+    def initialize(b)
+      @progname = "Broadcast" if @progname == nil
+    end
+
+    # Ruby's BroadcastLogger.new(*loggers).
+    def of(*loggers)
+      b = BroadcastLogger.new(Logger[])
+      BroadcastLogger.broadcast_to(b, *loggers)
+      b
+    end
+
+    def broadcast_to(b, *loggers) = Array.concat(@broadcasts, loggers)
+    def stop_broadcasting_to(b, logger) = Array.delete_if(@broadcasts) { |l| Kernel.equal?(l, logger) }
+
+    def set_local_level(b, level) = Array.each(@broadcasts) { |l| Logger.set_local_level(l, level) }
+    def local_level(b) = Array.map(@broadcasts) { |l| Logger.local_level(l) }.Array.first
+
+    def level(b) = Array.map(@broadcasts) { |l| Logger.effective_level(l) }.Array.min
+    def set_level(b, level) = Array.each(@broadcasts) { |l| Logger.set_level(l, level) }
+    def set_formatter(b, f) = Array.each(@broadcasts) { |l| Logger.set_formatter(l, f) }
+    def formatter(b) = Array.map(@broadcasts) { |l| Logger.formatter(l) }.Array.first
+    def close(b) = Array.each(@broadcasts) { |l| Logger.close(l) }
+    def <<(b, message) = Array.map(@broadcasts) { |l| Logger.<<(l, message) }.Array.first
+
+    def add(b, severity, message = nil, progname = nil)
+      called = false
+      result = nil
+      Array.map(@broadcasts) do |l|
+        if block_given?
+          Logger.add(l, severity, message, progname) do
+            if !called
+              called = true
+              result = yield
+            end
+            result
+          end
+        else
+          Logger.add(l, severity, message, progname)
+        end
+      end.Array.first
+    end
+
+    def log(b, severity, message = nil, progname = nil, &blk) = add(b, severity, message, progname, &blk)
+    def debug(b, progname = nil, &blk) = add(b, 0, nil, progname, &blk)
+    def info(b, progname = nil, &blk) = add(b, 1, nil, progname, &blk)
+    def warn(b, progname = nil, &blk) = add(b, 2, nil, progname, &blk)
+    def error(b, progname = nil, &blk) = add(b, 3, nil, progname, &blk)
+    def fatal(b, progname = nil, &blk) = add(b, 4, nil, progname, &blk)
+    def unknown(b, progname = nil, &blk) = add(b, 5, nil, progname, &blk)
+
+    def debug?(b) = Array.any?(@broadcasts) { |l| Logger.debug?(l) }
+    def info?(b) = Array.any?(@broadcasts) { |l| Logger.info?(l) }
+    def warn?(b) = Array.any?(@broadcasts) { |l| Logger.warn?(l) }
+    def error?(b) = Array.any?(@broadcasts) { |l| Logger.error?(l) }
+    def fatal?(b) = Array.any?(@broadcasts) { |l| Logger.fatal?(l) }
+    def debug!(b) = Array.each(@broadcasts) { |l| Logger.debug!(l) }
+    def info!(b) = Array.each(@broadcasts) { |l| Logger.info!(l) }
+    def warn!(b) = Array.each(@broadcasts) { |l| Logger.warn!(l) }
+    def error!(b) = Array.each(@broadcasts) { |l| Logger.error!(l) }
+    def fatal!(b) = Array.each(@broadcasts) { |l| Logger.fatal!(l) }
+
+    # LoggerSilence over the broadcasts: each is silenced while the block runs.
+    def silence(b, severity = ::Logger.ERROR)
+      saved = Array.map(@broadcasts) { |l| Logger.local_level(l) }
+      begin
+        Array.each(@broadcasts) { |l| Logger.set_local_level(l, severity) if Logger.silencer(l) }
+        yield(b)
+      ensure
+        Array.each_with_index(@broadcasts) { |l, i| Logger.set_local_level(l, saved[i]) }
+      end
+    end
+  end
+end

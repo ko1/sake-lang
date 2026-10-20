@@ -1,0 +1,458 @@
+# Port of activesupport-8.1.3/lib/active_support/callbacks.rb (partial: filters and conditions are method names (Symbols) or Conditionals::Filter objects, not blocks, lambdas, Strings or callback objects; a terminator is a method name; a parent's set_callback after a subclass took its copy does not reach the subclass)
+#
+# Ruby stores each callback as a lambda that sends the method name to the target. Sake has no stored blocks and
+# no send, so the chain stores the names, and the includer has one function that calls a method by its name:
+#
+#   Ruby (the class body)                         Sake
+#   include ActiveSupport::Callbacks              include ActiveSupport::Callbacks
+#   define_callbacks :save                        def __callbacks(t) = Record.__class_callbacks  (the class attribute)
+#   set_callback :save, :before, :normalize       def Record.__class_callbacks = once { ...ClassMethods.set_callback(c, :save, :before, :normalize) }
+#   (target.send(:normalize))                     def __callback(t, filter) = case filter in :normalize then normalize(t) ...
+#   (target.send(:wrap, &block))                  def __around_callback(t, filter) = case filter in :wrap then wrap(t) { yield } ...
+#
+# ActiveSupport::Callbacks::Generate (generate/callbacks.sake) writes these three from the class bodies' lines.
+# `run_callbacks(t, :save) { }` and the chain's semantics (order, around nesting, conditions, halting with
+# `throw :abort`, skip_callback, prepend, duplicates) are Rails'.
+
+require "throw"
+
+module ActiveSupport
+  module Callbacks
+    # Required of the includer: the class's chains by name (Ruby's class_attribute :__callbacks).
+    def __callbacks(t) = raise(NotImplementedError)
+    # Required of the includer: Ruby's target.send(filter) for a before/after callback, a condition or a terminator.
+    def __callback(t, filter) = raise(NotImplementedError)
+    # Ruby's target.send(filter, &block) for an around callback: its yield runs the rest of the chain. An includer
+    # with around callbacks defines it; this default only takes the block, so a class without them need not.
+    def __around_callback(t, filter)
+      raise ArgumentError, "undefined method '#{filter}' for an around callback"
+      yield
+    end
+
+    # Runs the callbacks of kind around the block, as Ruby's run_callbacks(kind, type = nil) { }.
+    def run_callbacks(t, kind, type = nil)
+      callbacks = Hash.fetch(__callbacks(t), kind, nil)
+      if callbacks == nil || CallbackChain.empty?(callbacks)
+        yield if block_given?
+      else
+        env = Filters::Environment.new(t, false, nil)
+        next_sequence = CallbackChain.compile(callbacks, type)
+        if CallbackSequence.final?(next_sequence)
+          invoke_before(t, next_sequence, env)
+          env.Filters::Environment.value = !Filters::Environment.halted(env) && (block_given? ? yield : true)
+          invoke_after(t, next_sequence, env)
+          Filters::Environment.value(env)
+        else
+          if block_given?
+            invoke_sequence(t, next_sequence, env) { yield }
+          else
+            invoke_sequence(t, next_sequence, env) { true }
+          end
+        end
+      end
+    end
+
+    # Ruby's invoke_sequence Proc: an around callback's block is the rest of the sequence, from its nested one.
+    def invoke_sequence(t, sequence, env)
+      skipped = CallbackSequence[]
+      current = sequence
+      while true
+        invoke_before(t, current, env)
+        if CallbackSequence.final?(current)
+          env.Filters::Environment.value = !Filters::Environment.halted(env) && yield
+        elsif skip?(t, current, env)
+          Array.push(skipped, current)
+          nested = CallbackSequence.nested(current)
+          raise ArgumentError, "an around sequence has no nested sequence" if nested == nil
+          current = nested
+          next
+        else
+          nested = CallbackSequence.nested(current)
+          method = CallbackSequence.call_template(current)
+          raise ArgumentError, "an around sequence has no nested sequence" if nested == nil || method == nil
+          __around_callback(t, method) { invoke_sequence(t, nested, env) { yield } }
+        end
+        invoke_after(t, current, env)
+        while (s = Array.pop(skipped))
+          invoke_after(t, s, env)
+        end
+        return Filters::Environment.value(env)
+      end
+    end
+
+    # Ruby's private halted_callback_hook(filter, name): called when a before callback halts the chain.
+    def halted_callback_hook(t, filter, name) = nil
+
+    def invoke_before(t, sequence, env)
+      bs = CallbackSequence.before_(sequence)
+      Array.each(bs) { |b| before_call(t, b, env) } if bs != nil
+    end
+
+    def invoke_after(t, sequence, env)
+      as = CallbackSequence.after_(sequence)
+      Array.each(as) { |a| after_call(t, a, env) } if as != nil
+    end
+
+    def skip?(t, sequence, env)
+      Filters::Environment.halted(env) || !conditions_pass?(t, CallbackSequence.user_conditions(sequence))
+    end
+
+    # Ruby's user_conditions.all? { |c| c.call(target, value) }: :if conditions must be truthy, :unless falsy.
+    def conditions_pass?(t, conditions)
+      Array.all?(conditions) do |c|
+        v = condition_call(t, Conditionals::Condition.filter(c))
+        Conditionals::Condition.inverted(c) ? !v : !!v
+      end
+    end
+
+    def condition_call(t, filter)
+      case filter
+      in Symbol then __callback(t, filter)
+      else Conditionals::Filter.match?(filter, t)
+      end
+    end
+
+    # Ruby's Filters::Before#call.
+    def before_call(t, before, env)
+      halted = Filters::Environment.halted(env)
+      if !halted && conditions_pass?(t, Filters::Before.user_conditions(before))
+        filter = Filters::Before.filter(before)
+        terminator = Filters::Before.halted_lambda(before)
+        h = terminate?(t, filter, terminator)
+        env.Filters::Environment.halted = h
+        halted_callback_hook(t, filter, Filters::Before.name(before)) if h
+      end
+      env
+    end
+
+    # Ruby's chain_config[:terminator].call(target, result_lambda). The default (DefaultTerminator) halts on
+    # `throw :abort`; a Symbol terminator names a method asked after the callback ran (AbstractController's
+    # `->(controller, result_lambda) { result_lambda.call; controller.performed? }` is `:performed?`).
+    def terminate?(t, filter, terminator)
+      if terminator == nil
+        terminate = true
+        catch(:abort) do
+          __callback(t, filter)
+          terminate = false
+        end
+        terminate
+      else
+        __callback(t, filter)
+        !!__callback(t, terminator)
+      end
+    end
+
+    # Ruby's Filters::After#call.
+    def after_call(t, after, env)
+      halted = Filters::Environment.halted(env)
+      if (!halted || !Filters::After.halting(after)) && conditions_pass?(t, Filters::After.user_conditions(after))
+        __callback(t, Filters::After.user_callback(after))
+      end
+      env
+    end
+
+    module Conditionals
+      # A condition object, such as AbstractController's ActionFilter (`only:`/`except:`): Ruby calls its
+      # before/after/around method with the target.
+      module Filter
+        def match?(f, target) = raise(NotImplementedError)
+      end
+
+      # Sake only: a condition and whether it is an :unless one (Ruby's make_lambda / inverted_lambda).
+      class Condition
+        attr_reader filter, inverted
+      end
+    end
+
+    module Filters
+      Environment = Struct.new(:target, :halted, :value)
+
+      class Before
+        attr_reader user_conditions, halted_lambda, filter, name
+      end
+
+      class After
+        attr_reader user_callback, user_conditions, halting
+      end
+    end
+
+    # Ruby's CallbackChain config: {scope: [:kind], terminator: DEFAULT_TERMINATOR}.merge!(config).
+    class ChainConfig
+      attr_reader scope, terminator, skip_after_callbacks_if_terminated
+    end
+
+    class Callback
+      attr_accessor kind, name
+      attr_reader chain_config, filter
+      private attr_reader if_, unless_
+
+      def build(chain, filter, kind, options)
+        Callback.new(kind: kind, name: CallbackChain.name(chain), chain_config: CallbackChain.config(chain), filter: filter,
+          if_: Callback.check_conditionals(options[:if]), unless_: Callback.check_conditionals(options[:unless]))
+      end
+
+      def merge_conditional_options(c, chain, if_option, unless_option)
+        options = Hash.of(if: Array.dup(@if_), unless: Array.dup(@unless_))
+        Array.concat(options[:if], Callback.check_conditionals(unless_option))
+        Array.concat(options[:unless], Callback.check_conditionals(if_option))
+        Callback.build(chain, @filter, @kind, options)
+      end
+
+      def matches?(c, kind, filter) = @kind == kind && @filter == filter
+
+      # Every filter is a method name here, so a callback of the same kind and name is a duplicate.
+      def duplicates?(c, other) = matches?(c, Callback.kind(other), Callback.filter(other))
+
+      def if_conditions(c) = @if_
+      def unless_conditions(c) = @unless_
+
+      def check_conditionals(conditionals)
+        list = Any[]
+        case conditionals
+        in Array then Array.each(conditionals) { |x| Callback.add_conditional(list, x) }
+        else Callback.add_conditional(list, conditionals)
+        end
+        list
+      end
+
+      def add_conditional(list, x)
+        case x
+        in nil then nil
+        in Symbol then Array.push(list, x)
+        in String then raise ArgumentError, "Passing string to be evaluated in :if and :unless conditional options is not supported. Pass a symbol for an instance method, or a lambda, proc or block, instead."
+        in true | false | Integer | Float then raise ArgumentError, "a condition is a method name or a Conditionals::Filter, not #{Kernel.inspect(x)}"
+        else Array.push(list, x)   # a Conditionals::Filter (not `in Conditionals::Filter`: a program may have none)
+        end
+      end
+
+      def conditions_lambdas(c)
+        Array.map(@if_) { |x| Conditionals::Condition.new(x, false) } + Array.map(@unless_) { |x| Conditionals::Condition.new(x, true) }
+      end
+
+      def apply(c, callback_sequence)
+        user_conditions = conditions_lambdas(c)
+        config = @chain_config
+        case @kind
+        in :before
+          CallbackSequence.before(callback_sequence, Filters::Before.new(user_conditions, ChainConfig.terminator(config), @filter, @name))
+        in :after
+          CallbackSequence.after(callback_sequence, Filters::After.new(@filter, user_conditions, ChainConfig.skip_after_callbacks_if_terminated(config)))
+        else
+          CallbackSequence.around(callback_sequence, @filter, user_conditions)
+        end
+      end
+
+      def inspect(c) = "#<ActiveSupport::Callbacks::Callback #{@kind} #{Kernel.inspect(@filter)}>"
+    end
+
+    # Ruby's CallbackSequence: the befores and afters around one around callback, nested inside the next.
+    class CallbackSequence
+      attr_reader nested, call_template, user_conditions
+      attr_reader before_, after_   # Ruby: @before, @after
+
+      def before(s, b)
+        list = @before_ || Filters::Before[]
+        Array.unshift(list, b)
+        @before_ = list
+        s
+      end
+
+      def after(s, a)
+        list = @after_ || Filters::After[]
+        Array.push(list, a)
+        @after_ = list
+        s
+      end
+
+      def around(s, call_template, user_conditions)
+        CallbackSequence.new(s, call_template, user_conditions, nil, nil)
+      end
+
+      def final?(s) = @call_template == nil
+    end
+
+    class CallbackChain
+      include Enum
+      attr_reader name, config
+      private attr_reader chain   # Ruby: protected
+      private attr_accessor all_callbacks, single_callbacks, mutex
+
+      def initialize(c)
+        @chain = Callback[] if @chain == nil
+        @all_callbacks = nil
+        @single_callbacks = Hash.new
+        @mutex = Mutex.new
+      end
+
+      def each(c)
+        Array.each(@chain) { |cb| yield(cb) }
+      end
+
+      def index(c, o) = Array.index(@chain, o)
+      def empty?(c) = Array.empty?(@chain)
+      def size(c) = Array.size(@chain)
+
+      def insert(c, index, o)
+        clear_cache(c)
+        Array.insert(@chain, index, o)
+      end
+
+      def delete(c, o)
+        clear_cache(c)
+        Array.delete(@chain, o)
+      end
+
+      def clear(c)
+        clear_cache(c)
+        Array.clear(@chain)
+        c
+      end
+
+      # Ruby's dup (initialize_copy): the same callbacks in a new chain.
+      def dup(c) = CallbackChain.new(@name, @config, Array.dup(@chain))
+
+      def compile(c, type)
+        if type == nil
+          cached = @all_callbacks
+          return cached if cached != nil
+          Mutex.synchronize(@mutex) do
+            final_sequence = CallbackSequence.new(nil, nil, Any[], nil, nil)
+            @all_callbacks = Array.reverse(@chain).inject(final_sequence) do |callback_sequence, callback|
+              Callback.apply(callback, callback_sequence)
+            end
+          end
+        else
+          single = Hash.fetch(@single_callbacks, type, nil)
+          return single if single != nil
+          Mutex.synchronize(@mutex) do
+            final_sequence = CallbackSequence.new(nil, nil, Any[], nil, nil)
+            @single_callbacks[type] = Array.reverse(@chain).inject(final_sequence) do |callback_sequence, callback|
+              type == Callback.kind(callback) ? Callback.apply(callback, callback_sequence) : callback_sequence
+            end
+          end
+        end
+      end
+
+      def append(c, *callbacks) = Array.each(callbacks) { |cb| append_one(c, cb) }
+      def prepend(c, *callbacks) = Array.each(callbacks) { |cb| prepend_one(c, cb) }
+
+      def append_one(c, callback)
+        remove_duplicates(c, callback)
+        Array.push(@chain, callback)
+      end
+
+      def prepend_one(c, callback)
+        remove_duplicates(c, callback)
+        Array.unshift(@chain, callback)
+      end
+
+      def remove_duplicates(c, callback)
+        clear_cache(c)
+        Array.delete_if(@chain) { |cb| Callback.duplicates?(callback, cb) }
+      end
+
+      def clear_cache(c)
+        @all_callbacks = nil
+        Hash.clear(@single_callbacks)
+      end
+    end
+
+    # Ruby's ClassMethods: here functions of the class's chains (the class attribute __callbacks), which the
+    # generated class body passes first, as the routes' Mapper is passed to draw.
+    module ClassMethods
+      module_function
+
+      def CALLBACK_FILTER_TYPES = Symbol[:before, :after, :around]
+
+      # Ruby's class_attribute :__callbacks, default: {}.
+      def new_callbacks = Hash.new
+
+      # Sake only: a subclass's class attribute starts as its parent's (each later change copies the chain).
+      def inherit(callbacks) = Hash.dup(callbacks)
+
+      def normalize_callback_params(filter_list)
+        filters = Symbol[]
+        options = Hash.new
+        Array.each(filter_list) do |x|
+          case x
+          in Symbol then Array.push(filters, x)
+          else Hash.merge!(options, Record.to_h(x))
+          end
+        end
+        first = Array.first(filters)
+        type = first != nil && Array.include?(ClassMethods.CALLBACK_FILTER_TYPES, first) ? Array.shift(filters) || :before : :before
+        [type, filters, options]
+      end
+
+      # Ruby's set_callback(name, *filter_list): set_callback(c, :save, :before, :normalize, {if: :title?}).
+      def set_callback(callbacks, name, *filter_list)
+        type, filters, options = normalize_callback_params(filter_list)
+        self_chain = get_callbacks(callbacks, name)
+        mapped = Array.map(filters) { |filter| Callback.build(self_chain, filter, type, options) }
+        chain = CallbackChain.dup(self_chain)
+        options[:prepend] ? CallbackChain.prepend(chain, *mapped) : CallbackChain.append(chain, *mapped)
+        set_callbacks(callbacks, name, chain)
+      end
+
+      # Ruby's skip_callback(name, *filter_list): raises unless {raise: false}; {if:}/{unless:} keep it in other cases.
+      def skip_callback(callbacks, name, *filter_list)
+        type, filters, options = normalize_callback_params(filter_list)
+        options[:raise] = true unless Hash.key?(options, :raise)
+        chain = CallbackChain.dup(get_callbacks(callbacks, name))
+        Array.each(filters) do |filter|
+          callback = CallbackChain.find(chain) { |c| Callback.matches?(c, type, filter) }
+          if callback == nil && options[:raise]
+            raise ArgumentError, "#{String.capitalize(Symbol.to_s(type))} #{name} callback #{Kernel.inspect(filter)} has not been defined"
+          end
+          if callback != nil && (Hash.key?(options, :if) || Hash.key?(options, :unless))
+            new_callback = Callback.merge_conditional_options(callback, chain, options[:if], options[:unless])
+            CallbackChain.insert(chain, CallbackChain.index(chain, callback) || 0, new_callback)
+          end
+          CallbackChain.delete(chain, callback) if callback != nil
+        end
+        set_callbacks(callbacks, name, chain)
+      end
+
+      def reset_callbacks(callbacks, name)
+        set_callbacks(callbacks, name, CallbackChain.clear(CallbackChain.dup(get_callbacks(callbacks, name))))
+      end
+
+      # Ruby's define_callbacks(*names, terminator:, skip_after_callbacks_if_terminated:, scope:). The
+      # _run_NAME_callbacks functions its module_eval defines are generated with the class.
+      def define_callbacks(callbacks, *names)
+        options = Hash.new
+        syms = Symbol[]
+        Array.each(names) do |x|
+          case x
+          in Symbol then Array.push(syms, x)
+          else Hash.merge!(options, Record.to_h(x))
+          end
+        end
+        scope = options[:scope]
+        scopes = case scope
+                 in nil then Symbol[:kind]
+                 in Symbol then Symbol[scope]
+                 in Array then Array.map(scope) { |s| Kernel.to_s(s).String.to_sym }
+                 else raise ArgumentError, "scope must be a Symbol or an Array of Symbols"
+                 end
+        terminator = options[:terminator]
+        term = case terminator
+               in nil then nil
+               in Symbol then terminator
+               else raise ArgumentError, "a terminator is the name of a method"
+               end
+        config = ChainConfig.new(scopes, term, options[:skip_after_callbacks_if_terminated] == true)
+        Array.each(syms) do |name|
+          set_callbacks(callbacks, name, CallbackChain.new(name, config))
+        end
+      end
+
+      def get_callbacks(callbacks, name) = Hash.fetch(callbacks, name)
+
+      def set_callbacks(callbacks, name, chain)
+        callbacks[name] = chain
+        callbacks
+      end
+    end
+  end
+end

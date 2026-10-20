@@ -1,0 +1,35 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/class/attribute.rb and active_support/class_attribute.rb (partial: no instance reader or writer, no per-instance override)
+#
+# Ruby's class_attribute defines singleton methods with class_eval and redefines one when a subclass writes.
+# Sake has no class-level state but `once`, which is one value per place in the program, so each class gets
+# its own slot from generated code (ActiveSupport::ClassAttribute::Generate, generate/class_attribute.sake):
+#
+#   Ruby                                        Sake (generated)
+#   class Base; class_attribute :setting,       def Base.__class_attr_setting = once { Slot.new(1, true) }
+#     default: 1; end                           def Base.setting = Slot.value(Base.__class_attr_setting)
+#   Base.setting = 2                            def Base.set_setting(v) = Slot.write(Base.__class_attr_setting, v)
+#   Base.setting?                               def Base.setting? = !!Base.setting
+#   class Sub < Base; end                       def Sub.setting = ...the own value once written, else Base.setting
+#
+# `obj.setting` (the instance reader) would be a second `setting` with one more argument, which Sake does not
+# allow; it reads the class's value, so a program writes `K.setting`. The instance writer is left out.
+
+module ActiveSupport
+  module ClassAttribute
+    # One class's value; own is false until the class writes it (then the parent's is no longer read).
+    class Slot
+      attr_reader value, own
+
+      def write(s, v)
+        @value = v
+        @own = true
+        v
+      end
+
+      # A subclass's read: its own value, or the parent's.
+      def read(s, inherited)
+        @own ? @value : inherited
+      end
+    end
+  end
+end

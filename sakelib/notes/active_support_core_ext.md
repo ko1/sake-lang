@@ -1,5 +1,7 @@
 # active_support_core_ext (ActiveSupport's core extensions)
 
+> 2026-10-20: the code moved to the Rails tree (`sakelib/rails/activesupport/active_support/`, see `rails_activesupport_a.md`); `require "active_support_core_ext"` still works and keeps the names below (the core_ext modules are aliases: `StringExt = String`, `Blank = Object`, ...).
+
 `require "active_support_core_ext"` → `sakelib/active_support_core_ext.sake` (requires `active_support_inflector`).
 Test: `test/sakelib/active_support_core_ext.{sake,rb}` (identical output; the `.rb` uses activesupport 8.1.3).
 

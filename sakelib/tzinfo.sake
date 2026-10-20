@@ -1,0 +1,187 @@
+# Port of tzinfo-2.0.6/lib/tzinfo/{timezone,timezone_offset,timezone_period,data_sources/zoneinfo_reader}.rb (partial: the system zoneinfo only, no POSIX-TZ footer rule (a time after the last transition, 2037 in a fat file, keeps the last offset), no leap seconds, no Country)
+#
+# The tzinfo gem reads /usr/share/zoneinfo itself when tzinfo-data is not installed (ZoneinfoDataSource); this
+# is that path: the TZif v2 file's 64-bit transitions, types and abbreviations.
+
+module TZInfo
+  class InvalidTimezoneIdentifier < StandardError
+  end
+
+  class PeriodNotFound < StandardError
+  end
+
+  class AmbiguousTime < StandardError
+  end
+
+  # Ruby: TimezoneOffset (base_utc_offset, observed_utc_offset, abbreviation; dst? when they differ)
+  class TimezoneOffset
+    attr_reader base_utc_offset, observed_utc_offset, abbreviation
+
+    def std_offset(o) = @observed_utc_offset - @base_utc_offset
+    def dst?(o) = @observed_utc_offset != @base_utc_offset
+    def utc_total_offset(o) = @observed_utc_offset
+  end
+
+  # Ruby: TransitionsTimezonePeriod (the offset between two transitions; nil ends are open)
+  class TimezonePeriod
+    attr_reader offset, starts_at, ends_at
+
+    def base_utc_offset(p) = TimezoneOffset.base_utc_offset(@offset)
+    def observed_utc_offset(p) = TimezoneOffset.observed_utc_offset(@offset)
+    def utc_total_offset(p) = TimezoneOffset.observed_utc_offset(@offset)
+    def std_offset(p) = TimezoneOffset.std_offset(@offset)
+    def abbreviation(p) = TimezoneOffset.abbreviation(@offset)
+    def zone_identifier(p) = TimezoneOffset.abbreviation(@offset)
+    def dst?(p) = TimezoneOffset.dst?(@offset)
+    def ==(a, b) = @offset == TimezonePeriod.offset(b) && @starts_at == TimezonePeriod.starts_at(b)
+  end
+
+  class Timezone
+    attr_reader identifier, transitions, offsets, first_offset
+
+    def zoneinfo_dir = "/usr/share/zoneinfo"
+
+    def cache = once { Hash.new }
+
+    # Ruby: Timezone.get(identifier)
+    def get(identifier)
+      c = cache
+      found = c[identifier]
+      return found if found
+      path = File.join(zoneinfo_dir, identifier)
+      unless String.match?(identifier, /\A[A-Za-z0-9_+\-]+(\/[A-Za-z0-9_+\-]+)*\z/) && File.file?(path)
+        raise InvalidTimezoneIdentifier, "Invalid identifier: #{identifier}"
+      end
+      tz = read(identifier, File.read(path))
+      c[identifier] = tz
+      tz
+    end
+
+    def all_identifiers
+      Dir.glob("**/*", base: zoneinfo_dir).Array.select do |f|
+        String.match?(f, /\A[A-Z][A-Za-z_\-]+\/[A-Za-z_\-\/]+\z/) && File.file?(File.join(zoneinfo_dir, f))
+      end.sort
+    end
+
+    # (Sake only) String.unpack gives Integer | Float | String; these formats give Integers.
+    def unpack_ints(s, fmt) = Array.map(String.unpack(s, fmt)) { |x| (x in Integer) ? x : raise(InvalidTimezoneIdentifier, "bad TZif data") }
+
+    # Ruby: ZoneinfoReader#read (TZif version 2 or later, the 64-bit block)
+    def read(identifier, data)
+      raise InvalidTimezoneIdentifier, "Invalid identifier: #{identifier}" unless String.byteslice(data, 0, 4) == "TZif"
+      counts = unpack_ints(String.byteslice(data, 20, 24) || "", "N6")
+      isutcnt, isstdcnt, leapcnt, timecnt, typecnt, charcnt = counts
+      pos = 44 + timecnt * 5 + typecnt * 6 + charcnt + leapcnt * 8 + isstdcnt + isutcnt
+      counts = unpack_ints(String.byteslice(data, pos + 20, 24) || "", "N6")
+      isutcnt, isstdcnt, leapcnt, timecnt, typecnt, charcnt = counts
+      pos += 44
+      times = unpack_ints(String.byteslice(data, pos, timecnt * 8) || "", "q>#{timecnt}")
+      pos += timecnt * 8
+      indexes = unpack_ints(String.byteslice(data, pos, timecnt) || "", "C#{timecnt}")
+      pos += timecnt
+      types = Any[]
+      Integer.times(typecnt) do |i|
+        utoff, isdst, desig = unpack_ints(String.byteslice(data, pos + i * 6, 6) || "", "l>CC")
+        Array.push(types, [utoff, isdst == 1, desig])
+      end
+      pos += typecnt * 6
+      chars = String.byteslice(data, pos, charcnt) || ""
+      abbrs = Array.map(types) do |utoff, isdst, desig|
+        rest = String.byteslice(chars, desig, charcnt) || ""
+        String.split(rest, "\x00")[0] || ""
+      end
+      # Ruby derives a DST offset's base from the standard offsets around it; here the previous standard one.
+      offsets = TimezoneOffset[]
+      std_before = Hash.new
+      last_std = types[0] ? types[0][0] : 0
+      Array.each_with_index(indexes) do |ti, n|
+        t = types[ti]
+        next unless t
+        utoff, isdst, _d = t
+        if isdst
+          std_before[n] = last_std
+        else
+          last_std = utoff
+        end
+      end
+      transitions = Any[]
+      Array.each_with_index(times) do |at, n|
+        ti = indexes[n] || 0
+        t = types[ti] || [0, false, 0]
+        utoff, isdst, _d = t
+        base = isdst ? (std_before[n] || utoff - 3600) : utoff
+        o = TimezoneOffset.new(base, utoff, abbrs[ti] || "")
+        Array.push(offsets, o)
+        Array.push(transitions, [at, o])
+      end
+      # Before the first transition: the first standard type (Ruby: the first non-DST offset).
+      first_type = Array.find(types) { |utoff, isdst, _d| !isdst } || types[0] || [0, false, 0]
+      fi = Array.index(types, first_type) || 0
+      first = TimezoneOffset.new(first_type[0], first_type[0], abbrs[fi] || "")
+      Timezone.new(identifier, transitions, offsets, first)
+    end
+
+    def name(tz) = @identifier
+    def to_s(tz) = @identifier
+
+    # index of the last transition at or before the UTC timestamp, or -1
+    def transition_index(tz, ts)
+      lo = 0
+      hi = Array.size(@transitions)
+      while lo < hi
+        mid = (lo + hi) / 2
+        at, _o = @transitions[mid]
+        if at <= ts
+          lo = mid + 1
+        else
+          hi = mid
+        end
+      end
+      lo - 1
+    end
+
+    def period_at(tz, i)
+      if i < 0
+        nxt = @transitions[0]
+        TimezonePeriod.new(@first_offset, nil, nxt ? nxt[0] : nil)
+      else
+        at, o = @transitions[i]
+        nxt = @transitions[i + 1]
+        TimezonePeriod.new(o, at, nxt ? nxt[0] : nil)
+      end
+    end
+
+    # Ruby: period_for_utc(time) / period_for(time); the time as a UTC timestamp (Integer seconds)
+    def period_for_utc(tz, ts) = period_at(tz, transition_index(tz, Arithmetic.floor(ts)))
+
+    # Ruby: periods_for_local(local_time); the wall clock as seconds since the epoch read as UTC.
+    def periods_for_local(tz, local_ts)
+      found = TimezonePeriod[]
+      i = transition_index(tz, local_ts - 86400 * 2)
+      while i < Array.size(@transitions)
+        period = period_at(tz, i)
+        utc = local_ts - TimezonePeriod.observed_utc_offset(period)
+        s = TimezonePeriod.starts_at(period)
+        e = TimezonePeriod.ends_at(period)
+        Array.push(found, period) if (s == nil || utc >= s) && (e == nil || utc < e)
+        break if s != nil && s > local_ts + 86400 * 2
+        i += 1
+      end
+      found
+    end
+
+    # Ruby: period_for_local(local_time, dst = Timezone.default_dst) { |periods| ... }; the block is Rails' `periods.last`.
+    def period_for_local(tz, local_ts, dst = true)
+      results = periods_for_local(tz, local_ts)
+      raise PeriodNotFound, "#{local_ts} is an invalid local time." if Array.empty?(results)
+      return results[0] || raise(PeriodNotFound) if Array.size(results) == 1
+      by_dst = Array.select(results) { |r| TimezonePeriod.dst?(r) == dst }
+      return by_dst[0] || raise(PeriodNotFound) if Array.size(by_dst) == 1
+      Array.last(results) || raise(PeriodNotFound)
+    end
+
+    def current_period(tz) = period_for_utc(tz, Time.to_i(Time.now))
+    def utc_to_local_offset(tz, ts) = TimezonePeriod.observed_utc_offset(period_for_utc(tz, ts))
+    def ==(a, b) = @identifier == Timezone.identifier(b)
+  end
+end

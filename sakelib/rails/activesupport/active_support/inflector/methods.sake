@@ -1,0 +1,140 @@
+# Port of activesupport-8.1.3/lib/active_support/inflector/methods.rb (partial: no constantize, safe_constantize, const_regexp; one locale)
+#
+# Ruby's gsub blocks read $1 and $2; a Sake block gets the matched String only, so `gsub_match` (Sake only)
+# walks the matches and yields each MatchData.
+
+require "../inflections"
+
+module ActiveSupport
+  module Inflector
+    module_function
+
+    def pluralize(word, locale = :en) = apply_inflections(word, Inflections.plurals(inflections(locale)), locale)
+
+    def singularize(word, locale = :en) = apply_inflections(word, Inflections.singulars(inflections(locale)), locale)
+
+    def camelize(term, uppercase_first_letter = true)
+      string = term
+      acr = Inflections.acronyms(inflections)
+      if !uppercase_first_letter || uppercase_first_letter == :lower
+        string = String.sub(string, Inflections.acronyms_camelize_regex(inflections)) { |match| String.downcase(match) }
+      elsif String.match?(string, /\A[a-z\d]*\z/)
+        found = acr[string]
+        return found ? dup(found) : String.capitalize(string)
+      else
+        string = String.sub(string, /^[a-z\d]*/) { |match| acr[match] || String.capitalize(match) }
+      end
+      gsub_match(string, /(?:_|(\/))([a-z\d]*)/i) do |md|
+        word = md[2] || ""
+        substituted = acr[word] || String.capitalize(word)
+        md[1] ? "::#{substituted}" : substituted
+      end
+    end
+
+    def underscore(camel_cased_word)
+      return dup(camel_cased_word) unless String.match?(camel_cased_word, /[A-Z-]|::/)
+      word = String.gsub(camel_cased_word, "::", "/")
+      word = gsub_match(word, Inflections.acronyms_underscore_regex(inflections)) do |md|
+        "#{md[1] ? "_" : ""}#{String.downcase(md[2] || "")}"
+      end
+      word = String.gsub(word, /(?<=[A-Z])(?=[A-Z][a-z])|(?<=[a-z\d])(?=[A-Z])/, "_")
+      String.tr(word, "-", "_").downcase
+    end
+
+    def humanize(lower_case_and_underscored_word, capitalize: true, keep_id_suffix: false)
+      result = dup(lower_case_and_underscored_word)
+      Array.each(Inflections.humans(inflections)) { |rule, replacement| break if String.sub!(result, rule, replacement) }
+      result = String.tr(result, "_", " ").lstrip
+      if !keep_id_suffix && String.end_with?(lower_case_and_underscored_word, "_id")
+        result = String.delete_suffix(result, " id")
+      end
+      acr = Inflections.acronyms(inflections)
+      result = String.gsub(result, /([[[:alpha:]]\d]+)/i) do |match|
+        down = String.downcase(match)
+        acr[down] || down
+      end
+      result = String.sub(result, /\A[[:alpha:]]/) { |match| String.upcase(match) } if capitalize
+      result
+    end
+
+    def upcase_first(string)
+      String.length(string) > 0 ? String.upcase(String.[](string, 0) || "") + (String.[](string, 1..) || "") : ""
+    end
+
+    def downcase_first(string)
+      String.length(string) > 0 ? String.downcase(String.[](string, 0) || "") + (String.[](string, 1..) || "") : ""
+    end
+
+    def titleize(word, keep_id_suffix: false)
+      h = humanize(underscore(word), keep_id_suffix: keep_id_suffix)
+      String.gsub(h, /\b(?<!\w['’`()])[a-z]/) { |match| String.capitalize(match) }
+    end
+
+    def tableize(class_name) = pluralize(underscore(class_name))
+
+    def classify(table_name) = camelize(singularize(String.sub(table_name, /.*\./, "")))
+
+    def dasherize(underscored_word) = String.tr(underscored_word, "_", "-")
+
+    def demodulize(path)
+      i = String.rindex(path, "::")
+      i ? String.[](path, i + 2, String.length(path)) || "" : path
+    end
+
+    def deconstantize(path) = String.[](path, 0, String.rindex(path, "::") || 0) || ""
+
+    def foreign_key(class_name, separate_class_name_and_id_with_underscore = true)
+      underscore(demodulize(class_name)) + (separate_class_name_and_id_with_underscore ? "_id" : "id")
+    end
+
+    # Ruby: I18n.translate("number.nth.ordinals", number:); the en entry is locale/en.rb's lambda, here.
+    def ordinal(number)
+      return "st" if number == 1
+      return "nd" if number == 2
+      return "rd" if number == 3
+      return "th" if Array.include?(Any[4, 5, 6, 7, 8, 9, 10, 11, 12, 13], number)
+      num_modulo = Integer.abs(Arithmetic.to_i(number)) % 100
+      num_modulo %= 10 if num_modulo > 13
+      case num_modulo
+      in 1 then "st"
+      in 2 then "nd"
+      in 3 then "rd"
+      else "th"
+      end
+    end
+
+    def ordinalize(number) = "#{number}#{ordinal(number)}"
+
+    # private
+    def apply_inflections(word, rules, locale = :en)
+      result = dup(word)
+      if String.empty?(word) || Inflections::Uncountables.uncountable?(Inflections.uncountables(inflections(locale)), result)
+        result
+      else
+        Array.each(rules) { |rule, replacement| break if String.sub!(result, rule, replacement) }
+        result
+      end
+    end
+
+    # (Sake only) gsub whose block gets the MatchData, for Ruby's blocks that read $1, $2.
+    def gsub_match(string, re)
+      out = ""
+      pos = 0
+      len = String.length(string)
+      while pos <= len
+        md = Regexp.match(re, string, pos)
+        break unless md
+        b = MatchData.begin(md, 0)
+        e = MatchData.end(md, 0)
+        out += (String.[](string, pos, b - pos) || "") + yield(md)
+        if e == b
+          out += String.[](string, b, 1) || ""
+          pos = b + 1
+        else
+          pos = e
+        end
+      end
+      out + (String.[](string, pos, len) || "")
+    end
+  end
+end

@@ -1,0 +1,185 @@
+# Port of activesupport-8.1.3/lib/active_support/hash_with_indifferent_access.rb and core_ext/hash/indifferent_access.rb (partial: no default procs, to_proc, transform_keys with a Hash, slice!)
+#
+# Ruby's HashWithIndifferentAccess is a Hash subclass whose keys are Strings, Symbols converted on the way in
+# (convert_key) and nested Hashes converted to HashWithIndifferentAccess (convert_value). Here it holds that
+# Hash; `h[:a]` and `h["a"]` are `HashWithIndifferentAccess.[](h, :a)` (or `h[:a]`, through Indexable).
+
+require "core_ext/hash/keys"
+require "as_json"
+
+module ActiveSupport
+  class HashWithIndifferentAccess
+    attr_reader table
+    include Indexable
+    include AsJson
+
+    # Ruby: HashWithIndifferentAccess.new(constructor = nil)
+    def make(constructor = nil)
+      h = HashWithIndifferentAccess.new(Hash.new)
+      case constructor
+      in nil then h
+      in Hash then update(h, constructor)
+      in HashWithIndifferentAccess then update(h, HashWithIndifferentAccess.table(constructor))
+      end
+    end
+
+    def extractable_options?(h) = true
+    def with_indifferent_access(h) = dup(h)
+    def nested_under_indifferent_access(h) = h
+
+    def []=(h, key, value)
+      @table[convert_key(key)] = convert_value(value)
+    end
+
+    def store(h, key, value)
+      @table[convert_key(key)] = convert_value(value)
+    end
+
+    def update(h, *other_hashes)
+      Array.each(other_hashes) do |other|
+        o = (other in HashWithIndifferentAccess) ? HashWithIndifferentAccess.table(other) : other
+        o => Hash
+        Hash.each(o) do |key, value|
+          if block_given? && Hash.key?(@table, convert_key(key))
+            @table[convert_key(key)] = convert_value(yield(convert_key(key), @table[convert_key(key)], value))
+          else
+            @table[convert_key(key)] = convert_value(value)
+          end
+        end
+      end
+      h
+    end
+
+    def merge!(h, *other_hashes) = update(h, *other_hashes)
+
+    def key?(h, key) = Hash.key?(@table, convert_key(key))
+    def include?(h, key) = key?(h, key)
+    def has_key?(h, key) = key?(h, key)
+    def member?(h, key) = key?(h, key)
+    def [](h, key) = @table[convert_key(key)]
+
+    def assoc(h, key) = Hash.assoc(@table, convert_key(key))
+
+    def fetch(h, key, default = nil)
+      k = convert_key(key)
+      return @table[k] if Hash.key?(@table, k)
+      return yield(k) if block_given?
+      return default if default != nil
+      raise KeyError, "key not found: #{Kernel.inspect(k)}"
+    end
+
+    # Ruby: dig(*args) converts the first key, then Hash#dig; here each step is taken in turn, since the
+    # values are HashWithIndifferentAccess, Hashes and Arrays (whose elements may be HashWithIndifferentAccess).
+    def dig(h, key, *rest)
+      v = @table[convert_key(key)]
+      Array.each(rest) do |k|
+        break if v == nil
+        v = case v
+            in HashWithIndifferentAccess then HashWithIndifferentAccess.[](v, k)
+            in Hash then v[k]
+            in Array then (k in Integer) ? v[k] : raise(TypeError, "no implicit conversion of #{Kernel.inspect(k)} into Integer")
+            else raise TypeError, "#{Kernel.inspect(v)} does not have #dig method"
+            end
+      end
+      v
+    end
+
+    def values_at(h, *keys) = Array.map(keys) { |k| @table[convert_key(k)] }
+
+    def fetch_values(h, *indices) = Array.map(indices) { |k| fetch(h, k) }
+
+    def dup(h) = HashWithIndifferentAccess.new(Hash.dup(@table))
+
+    def merge(h, *hashes) = block_given? ? update(dup(h), *hashes) { |k, a, b| yield(k, a, b) } : update(dup(h), *hashes)
+
+    def reverse_merge(h, other_hash) = update(make(other_hash), @table)
+    def with_defaults(h, other_hash) = reverse_merge(h, other_hash)
+
+    def reverse_merge!(h, other_hash)
+      Hash.replace(@table, HashWithIndifferentAccess.table(reverse_merge(h, other_hash)))
+      h
+    end
+
+    def replace(h, other_hash)
+      Hash.replace(@table, HashWithIndifferentAccess.table(make(other_hash)))
+      h
+    end
+
+    def delete(h, key) = Hash.delete(@table, convert_key(key))
+
+    def except(h, *keys) = HashWithIndifferentAccess.new(Hash.except(@table, *Array.map(keys) { |k| convert_key(k) }))
+    def without(h, *keys) = except(h, *keys)
+
+    def symbolize_keys(h) = Hash.symbolize_keys(to_hash(h))
+    def to_options(h) = symbolize_keys(h)
+    def deep_symbolize_keys(h) = Hash.deep_symbolize_keys(to_hash(h))
+    def stringify_keys(h) = dup(h)
+    def deep_stringify_keys(h) = dup(h)
+
+    def select(h) = HashWithIndifferentAccess.new(Hash.select(@table) { |k, v| yield(k, v) })
+    def reject(h) = HashWithIndifferentAccess.new(Hash.reject(@table) { |k, v| yield(k, v) })
+    def transform_values(h) = HashWithIndifferentAccess.new(Hash.transform_values(@table) { |v| yield(v) })
+
+    def transform_keys(h)
+      result = make
+      Hash.each(@table) { |k, v| result[yield(k)] = v }
+      result
+    end
+
+    def slice(h, *keys) = HashWithIndifferentAccess.new(Hash.slice(@table, *Array.map(keys) { |k| convert_key(k) }))
+    def compact(h) = HashWithIndifferentAccess.new(Hash.compact(@table))
+
+    # Ruby: to_hash converts nested HashWithIndifferentAccess (and Arrays of them) back to Hashes.
+    def to_hash(h) = Hash.transform_values(@table) { |v| convert_value_to_hash(v) }
+    def to_h(h) = to_hash(h)
+
+    def each(h)
+      Hash.each(@table) { |k, v| yield(k, v) }
+      h
+    end
+
+    def keys(h) = Hash.keys(@table)
+    def values(h) = Hash.values(@table)
+    def size(h) = Hash.size(@table)
+    def length(h) = Hash.size(@table)
+    def empty?(h) = Hash.empty?(@table)
+    def blank?(h) = Hash.empty?(@table)
+    def to_a(h) = Hash.to_a(@table)
+
+    def ==(h, other)
+      case other
+      in HashWithIndifferentAccess then @table == HashWithIndifferentAccess.table(other)
+      in Hash then @table == HashWithIndifferentAccess.table(make(other))
+      else false
+      end
+    end
+
+    def as_json(h, options = nil) = to_hash(h)
+    def inspect(h) = Kernel.inspect(@table)
+    def to_s(h) = Kernel.inspect(@table)
+
+    # private
+    def convert_key(key) = (key in Symbol) ? Symbol.name(key) : key
+
+    def convert_value(value)
+      case value
+      in Hash then make(value)
+      in Array then Array.map(value) { |e| convert_value(e) }
+      else value
+      end
+    end
+
+    def convert_value_to_hash(value)
+      case value
+      in HashWithIndifferentAccess then to_hash(value)
+      in Array then Array.map(value) { |e| convert_value_to_hash(e) }
+      else value
+      end
+    end
+  end
+end
+
+class Hash
+  def with_indifferent_access(h) = ActiveSupport::HashWithIndifferentAccess.make(h)
+  def nested_under_indifferent_access(h) = ActiveSupport::HashWithIndifferentAccess.make(h)
+end

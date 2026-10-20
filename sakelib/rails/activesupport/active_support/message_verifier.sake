@@ -1,0 +1,106 @@
+# Port of activesupport-8.1.3/lib/active_support/message_verifier.rb (partial: no rotation (Messages::Rotator); serializer ::JSON only, see messages/codec.sake)
+#
+#   Ruby                                                  Sake
+#   v = MessageVerifier.new("secret", serializer: JSON)   v = MessageVerifier.new("secret")
+#   v.generate(value, purpose: :login)                    MessageVerifier.generate(v, value, {purpose: :login})
+#   v.verified(message, purpose: :login)                  MessageVerifier.verified(v, message, {purpose: :login})
+
+require "openssl"
+require "security_utils"
+require "messages/codec"
+
+module ActiveSupport
+  class MessageVerifier
+    attr_reader secret, digest, url_safe
+
+    class InvalidSignature < StandardError
+    end
+
+    # Ruby's MessageVerifier.new(secret, digest: "SHA1", url_safe: false).
+    def initialize(v)
+      @digest = "SHA1" if @digest == nil
+      @url_safe = false if @url_safe == nil
+      raise ArgumentError, "Secret should not be nil." if @secret == nil
+    end
+
+    def SEPARATOR = "--"
+
+    def valid_message?(v, message)
+      extract_encoded(v, message)
+      true
+    rescue Messages::InvalidMessageFormat
+      false
+    end
+
+    # nil for a bad signature, expiry or purpose; a bad serialization raises.
+    def verified(v, message, options = nil)
+      read_message(v, message, options)
+    rescue Messages::InvalidMessageFormat, Messages::InvalidMessageContent
+      nil
+    end
+
+    def verify(v, message, options = nil)
+      read_message(v, message, options)
+    rescue Messages::InvalidMessageFormat, Messages::InvalidMessageContent => e
+      raise InvalidSignature, Exception.message(e)
+    end
+
+    def generate(v, value, options = nil) = create_message(v, value, options)
+
+    def create_message(v, value, options)
+      sign_encoded(v, Messages::Codec.encode(Messages::Metadata.serialize_with_metadata(value, options), @url_safe))
+    end
+
+    def read_message(v, message, options)
+      Messages::Metadata.deserialize_with_metadata(decode(v, extract_encoded(v, message)), options)
+    end
+
+    def inspect(v) = "#<ActiveSupport::MessageVerifier>"
+
+    # Ruby's decode: the other Base64 alphabet is tried when the configured one fails.
+    def decode(v, encoded)
+      Messages::Codec.decode(encoded, @url_safe)
+    rescue Messages::InvalidMessageFormat
+      Messages::Codec.decode(encoded, !@url_safe)
+    end
+
+    def sign_encoded(v, encoded) = encoded + MessageVerifier.SEPARATOR + generate_digest(v, encoded)
+
+    def extract_encoded(v, signed)
+      raise Messages::InvalidMessageFormat, "invalid message string" if signed == nil || !String.valid_encoding?(signed)
+      encoded = nil
+      digest = nil
+      separator_index = separator_index_for(v, signed)
+      if separator_index != nil
+        encoded = String.slice(signed, 0, separator_index)
+        digest = String.slice(signed, separator_index + 2, digest_length_in_hex(v))
+      end
+      raise Messages::InvalidMessageFormat, "mismatched digest" unless digest_matches_data?(v, digest, encoded)
+      encoded || ""
+    end
+
+    def generate_digest(v, data) = OpenSSL::HMAC.hexdigest(@digest, @secret, data)
+
+    # Ruby's OpenSSL::Digest.new(@digest).digest_length * 2.
+    def digest_length_in_hex(v)
+      case String.upcase(@digest)
+      in "MD5" then 32
+      in "SHA1" then 40
+      in "SHA256" then 64
+      in "SHA384" then 96
+      else 128
+      end
+    end
+
+    def separator_index_for(v, signed_message)
+      index = String.length(signed_message) - digest_length_in_hex(v) - 2
+      return nil if index < 0 || String.slice(signed_message, index, 2) != MessageVerifier.SEPARATOR
+      index
+    end
+
+    def digest_matches_data?(v, digest, data)
+      return false if data == nil || digest == nil || String.empty?(String.strip(data)) || String.empty?(String.strip(digest))
+      SecurityUtils.secure_compare(digest, generate_digest(v, data))
+    end
+  end
+end

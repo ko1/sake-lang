@@ -1,0 +1,126 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/date_and_time/calculations.rb (partial: no all_day/all_week/... Ranges; Date.beginning_of_week is :monday)
+#
+# Ruby's module is included by Time, Date and DateTime; here by Time, Date and ActiveSupport::TimeWithZone (Ruby
+# reaches TimeWithZone through method_missing). A bare `month(x)` calls the includer's own. Ruby's
+# `acts_like?(:time) ? x.beginning_of_day : x` (first_hour / last_hour) is a function each includer defines.
+
+module DateAndTime
+  module Calculations
+    # required: the includer's own
+    def advance(x, options) = raise(NotImplementedError)
+    def change(x, options) = raise(NotImplementedError)
+    def first_hour(x, date_or_time) = raise(NotImplementedError)
+    def last_hour(x, date_or_time) = raise(NotImplementedError)
+    def midnight_if_time(x, date_or_time) = raise(NotImplementedError)
+    def copy_time_to(x, other) = raise(NotImplementedError)
+
+    def days_into_week = once { Hash.of(sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6) }
+    def weekend_days = once { Integer[6, 0] }
+    def default_beginning_of_week = :monday
+
+    def yesterday(x) = advance(x, Hash.of(days: -1))
+    def tomorrow(x) = advance(x, Hash.of(days: 1))
+    def prev_day(x) = advance(x, Hash.of(days: -1))
+    def next_day(x) = advance(x, Hash.of(days: 1))
+    def on_weekend?(x) = Array.include?(weekend_days, wday(x))
+    def on_weekday?(x) = !Array.include?(weekend_days, wday(x))
+    def before?(x, date_or_time) = x < date_or_time
+    def after?(x, date_or_time) = x > date_or_time
+    def days_ago(x, days) = advance(x, Hash.of(days: -days))
+    def days_since(x, days) = advance(x, Hash.of(days: days))
+    def weeks_ago(x, weeks) = advance(x, Hash.of(weeks: -weeks))
+    def weeks_since(x, weeks) = advance(x, Hash.of(weeks: weeks))
+    def months_ago(x, months) = advance(x, Hash.of(months: -months))
+    def months_since(x, months) = advance(x, Hash.of(months: months))
+    def years_ago(x, years) = advance(x, Hash.of(years: -years))
+    def years_since(x, years) = advance(x, Hash.of(years: years))
+
+    def beginning_of_month(x) = first_hour(x, change(x, Hash.of(day: 1)))
+    def at_beginning_of_month(x) = beginning_of_month(x)
+
+    def beginning_of_quarter(x)
+      first_quarter_month = month(x) - (2 + month(x)) % 3
+      change(beginning_of_month(x), Hash.of(month: first_quarter_month))
+    end
+
+    def end_of_quarter(x)
+      last_quarter_month = month(x) + (12 - month(x)) % 3
+      end_of_month(change(beginning_of_month(x), Hash.of(month: last_quarter_month)))
+    end
+
+    def quarter(x) = Float.ceil(month(x) / 3.0)
+
+    def beginning_of_year(x) = beginning_of_month(change(x, Hash.of(month: 1)))
+    def at_beginning_of_year(x) = beginning_of_year(x)
+
+    def next_week(x, given_day_in_next_week = default_beginning_of_week, same_time: false)
+      result = first_hour(x, days_since(beginning_of_week(weeks_since(x, 1)), days_span(given_day_in_next_week)))
+      same_time ? copy_time_to(x, result) : result
+    end
+
+    def next_weekday(x)
+      on_weekend?(next_day(x)) ? next_week(x, :monday, same_time: true) : next_day(x)
+    end
+
+    def next_quarter(x) = months_since(x, 3)
+
+    def prev_week(x, start_day = default_beginning_of_week, same_time: false)
+      result = first_hour(x, days_since(beginning_of_week(weeks_ago(x, 1)), days_span(start_day)))
+      same_time ? copy_time_to(x, result) : result
+    end
+
+    def last_week(x, start_day = default_beginning_of_week, same_time: false) = prev_week(x, start_day, same_time: same_time)
+
+    def prev_weekday(x) = on_weekend?(prev_day(x)) ? copy_time_to(x, beginning_of_week(x, :friday)) : prev_day(x)
+    def last_weekday(x) = prev_weekday(x)
+    def last_month(x) = months_ago(x, 1)
+    def prev_quarter(x) = months_ago(x, 3)
+    def last_quarter(x) = months_ago(x, 3)
+    def last_year(x) = years_ago(x, 1)
+
+    def days_to_week_start(x, start_day = default_beginning_of_week)
+      start_day_number = Hash.fetch(days_into_week, start_day)
+      (wday(x) - start_day_number) % 7
+    end
+
+    def beginning_of_week(x, start_day = default_beginning_of_week)
+      midnight_if_time(x, days_ago(x, days_to_week_start(x, start_day)))
+    end
+
+    def at_beginning_of_week(x, start_day = default_beginning_of_week) = beginning_of_week(x, start_day)
+    def monday(x) = beginning_of_week(x, :monday)
+
+    def end_of_week(x, start_day = default_beginning_of_week)
+      last_hour(x, days_since(x, 6 - days_to_week_start(x, start_day)))
+    end
+
+    def at_end_of_week(x, start_day = default_beginning_of_week) = end_of_week(x, start_day)
+    def sunday(x) = end_of_week(x, :monday)
+
+    def end_of_month(x)
+      last_day = Time.days_in_month(month(x), year(x))
+      last_hour(x, days_since(x, last_day - day(x)))
+    end
+
+    def at_end_of_month(x) = end_of_month(x)
+    def end_of_year(x) = end_of_month(change(x, Hash.of(month: 12)))
+    def at_end_of_year(x) = end_of_year(x)
+
+    def next_occurring(x, day_of_week)
+      from_now = Hash.fetch(days_into_week, day_of_week) - wday(x)
+      from_now += 7 unless from_now > 0
+      advance(x, Hash.of(days: from_now))
+    end
+
+    def prev_occurring(x, day_of_week)
+      ago = wday(x) - Hash.fetch(days_into_week, day_of_week)
+      ago += 7 unless ago > 0
+      advance(x, Hash.of(days: -ago))
+    end
+
+    # private
+    def days_span(day)
+      (Hash.fetch(days_into_week, day) - Hash.fetch(days_into_week, default_beginning_of_week)) % 7
+    end
+  end
+end

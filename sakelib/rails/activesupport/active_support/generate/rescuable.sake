@@ -1,0 +1,74 @@
+# Port of the class-body side of activesupport-8.1.3/lib/active_support/rescuable.rb (Sake only): the generator
+#
+# `rescue_from NotFound, Denied, with: :handler` lines (class_body.sake) become the class attribute
+# rescue_handlers (a subclass starts from its parent's) and the two functions rescuable.sake requires. A class
+# name is matched with `e in Name`; StandardError and Exception match every exception (Sake's exception
+# classes have no common parent to test). A handler is called with the target and the exception.
+
+require "class_body"
+
+module ActiveSupport
+  module Rescuable
+    module Generate
+      module_function
+
+      def CALLS = String["rescue_from"]
+
+      # [line, class names, handler] of every rescue_from of body and its ancestors, and of body alone.
+      def declarations(body, path)
+        list = Any[]
+        Array.each(ActiveSupport::Generate.declarations(body, Generate.CALLS)) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          names = String[]
+          handler = nil
+          Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+            o = ActiveSupport::Generate.option(a)
+            if o == nil
+              name = String.delete_suffix(String.delete_prefix(a, "\""), "\"")
+              raise ArgumentError, "#{path}:#{n}: #{a} must be an Exception class or a String referencing an Exception class" if !String.match?(name, /\A[A-Z][\w:]*\z/)
+              Array.push(names, name)
+              next
+            end
+            key, v = o
+            raise ArgumentError, "#{path}:#{n}: unknown keyword: :#{key}" if key != "with"
+            raise ArgumentError, "#{path}:#{n}: a handler is a method name (a block has no Sake form)" if !ActiveSupport::Generate.symbol?(v)
+            handler = v
+          end
+          raise ArgumentError, "#{path}:#{n}: Need a handler. Pass the with: keyword argument or provide a block." if handler == nil
+          Array.push(list, [n, names, handler])
+        end
+        list
+      end
+
+      def class_source(body, bodies, path)
+        k = ActiveSupport::Generate::ClassBody.name(body)
+        all = Array.flat_map(ActiveSupport::Generate.lineage(body, bodies)) { |b| declarations(b, path) }
+        return "" if Array.empty?(all)
+        parent = ActiveSupport::Generate.parent_name(body, bodies)
+        names = Array.flat_map(all) { |x| x[1] }.Array.uniq
+        handlers = Array.map(all) { |x| x[2] }.Array.uniq
+        s = "# sake-origin: #{path}:#{ActiveSupport::Generate::ClassBody.line(body)}\n"
+        s += "def #{k}.__rescue_handlers(t) = #{k}.rescue_handlers\n"
+        s += "def #{k}.__rescue_match?(t, class_name, e)\n  case class_name\n"
+        Array.each(names) do |name|
+          test = name == "StandardError" || name == "Exception" ? "true" : "e in #{name}"
+          s += "  in #{Kernel.inspect(name)} then #{test}\n"
+        end
+        s += "  else false\n  end\nend\n"
+        s += "def #{k}.__rescue_call(t, handler, e)\n  case handler\n"
+        Array.each(handlers) { |h| s += "  in #{h} then #{String.delete_prefix(h, ":")}(t, e)\n" }
+        s += "  else raise ArgumentError, \"undefined method '\#{handler}' for an instance of #{k}\"\n  end\nend\n"
+        s += "def #{k}.rescue_handlers = once do\n"
+        s += parent == nil ? "  h = Any[]\n" : "  h = Array.dup(#{parent}.rescue_handlers)\n"
+        Array.each(declarations(body, path)) do |x|
+          n, ns, handler = x
+          s += "# sake-origin: #{path}:#{n}\n"
+          args = Array.map(ns) { |c| Kernel.inspect(c) }.Array.join(", ")
+          s += "  ActiveSupport::Rescuable::ClassMethods.rescue_from(h, #{args}, {with: #{handler}})\n"
+        end
+        s += "# sake-origin: none\n  h\nend\n"
+        s
+      end
+    end
+  end
+end

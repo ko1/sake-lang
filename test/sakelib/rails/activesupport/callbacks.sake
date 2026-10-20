@@ -1,0 +1,139 @@
+# ActiveSupport::Callbacks: define_callbacks / set_callback / skip_callback / run_callbacks, conditions,
+# halting with throw :abort, around callbacks, a subclass's chain, a terminator, an object condition.
+
+require "rails/activesupport/active_support/callbacks"
+
+class Post
+  attr_accessor title, draft, quiet
+  include ActiveSupport::Callbacks
+  def initialize(r)
+    @draft = false if @draft == nil
+    @quiet = false if @quiet == nil
+  end
+  def check(r)
+    puts("  check #{Kernel.inspect(@title)}")
+    throw :abort if String.empty?(String.strip(@title))
+  end
+  def normalize(r)
+    puts("  normalize")
+    @title = String.strip(@title)
+  end
+  def title?(r) = @title != ""
+  def draft?(r) = @draft
+  def quiet?(r) = @quiet
+  def wrap(r)
+    puts("  wrap {")
+    yield
+    puts("  } wrap")
+  end
+  def log_after(r) = puts("  after #{Kernel.inspect(@title)}")
+  def audit(r) = puts("  audit")
+  def halted_callback_hook(r, filter, name) = puts("  halted by #{Kernel.inspect(filter)} in #{Kernel.inspect(name)}")
+  def save(r)
+    run_callbacks(r, :save) do
+      puts("  saving #{Kernel.inspect(@title)}")
+      true
+    end
+  end
+end
+
+class Draft < Post
+  def notify(r) = puts("  notify")
+end
+
+class Controller
+  attr_accessor user, performed
+  include ActiveSupport::Callbacks
+  def initialize(c) = nil
+  def performed?(c) = @performed
+  def authenticate(c)
+    puts("  authenticate #{Kernel.inspect(@user)}")
+    @performed = true if @user == nil
+  end
+  def log_action(c) = puts("  log_action")
+  def timing(c)
+    puts("  timing {")
+    yield
+    puts("  } timing")
+  end
+  def halted_callback_hook(c, filter, name) = puts("  halted by #{Kernel.inspect(filter)} in #{Kernel.inspect(name)}")
+  def process(c, action) = run_callbacks(c, :process_action) { puts("  #{action}"); action }
+end
+
+# The class bodies (callbacks_decl.rb, the same file Ruby requires) become Sake source here.
+generate "rails/activesupport/active_support/generate/active_support", "callbacks_decl.rb"
+
+# An object condition, as AbstractController's ActionFilter for `only:` (Ruby calls its `before`).
+class OnlyActions
+  attr_reader actions
+  include ActiveSupport::Callbacks::Conditionals::Filter
+  def match?(f, controller)
+    case controller
+    in Admin then Array.include?(@actions, Admin.action_name(controller))
+    else false
+    end
+  end
+end
+
+# Without the generator: the three functions written by hand, and the class body as a once.
+class Admin
+  include ActiveSupport::Callbacks
+  attr_accessor action_name
+  def __callbacks(a) = Admin.__class_callbacks
+  def __callback(a, filter)
+    case filter
+    in :load then load(a)
+    else raise ArgumentError, "undefined method '#{filter}' for an instance of Admin"
+    end
+  end
+  def load(a) = puts("  load for #{@action_name}")
+  def process(a) = run_callbacks(a, :process_action) { puts("  #{@action_name}") }
+end
+def Admin.__class_callbacks = once do
+  c = ActiveSupport::Callbacks::ClassMethods.new_callbacks
+  ActiveSupport::Callbacks::ClassMethods.define_callbacks(c, :process_action)
+  ActiveSupport::Callbacks::ClassMethods.set_callback(c, :process_action, :before, :load, {if: OnlyActions.new(String["show", "edit"])})
+  c
+end
+
+def kinds_filters(chain) = Enum.map(chain) { |c| [ActiveSupport::Callbacks::Callback.kind(c), ActiveSupport::Callbacks::Callback.filter(c)] }
+
+puts("save:")
+p(Post.save(Post.new(" Hello ")))
+puts("halted:")
+p(Post.save(Post.new("  ")))
+puts("quiet:")
+p(Post.save(Post.new("q", false, true)))
+puts("destroy:")
+p(Post.run_callbacks(Post.new("d"), :destroy) { puts("  destroying"); :destroyed })
+puts("only before:")
+p(Post.run_callbacks(Post.new(" b "), :save, :before))
+puts("no block:")
+p(Post.run_callbacks(Post.new("n"), :save))
+puts("_run_save_callbacks:")
+p(Post._run_save_callbacks(Post.new("r")) { 42 })
+puts("draft:")
+p(Draft.save(Draft.new(" D ")))
+puts("quiet draft:")
+p(Draft.save(Draft.new("qd", false, true)))
+puts("chains:")
+p(kinds_filters(Post._save_callbacks))
+p(kinds_filters(Draft._save_callbacks))
+p(kinds_filters(Post._destroy_callbacks))
+puts("skip a missing callback:")
+begin
+  ActiveSupport::Callbacks::ClassMethods.skip_callback(Post.__class_callbacks, :save, :before, :nope)
+rescue ArgumentError => e
+  puts("  ArgumentError: #{Exception.message(e)}")
+end
+ActiveSupport::Callbacks::ClassMethods.skip_callback(Post.__class_callbacks, :save, :before, :nope, {raise: false})
+puts("terminator:")
+p(Controller.process(Controller.new("ko1"), :index))
+p(Controller.process(Controller.new(nil), :index))
+puts("object condition:")
+Admin.process(Admin.new("show"))
+Admin.process(Admin.new("index"))
+puts("reset_callbacks:")
+ActiveSupport::Callbacks::ClassMethods.reset_callbacks(Post.__class_callbacks, :destroy)
+p(kinds_filters(Post._destroy_callbacks))
+p(Post.run_callbacks(Post.new("d"), :destroy) { :destroyed })

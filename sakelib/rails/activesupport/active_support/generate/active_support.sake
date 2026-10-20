@@ -1,0 +1,32 @@
+# Port of nothing (Sake only): the program `generate` runs for ActiveSupport's class-body DSLs
+#
+#   generate "rails/activesupport/active_support/generate/active_support", "app/models/class_bodies.rb"
+#
+# Each argument is a file of class bodies (class_body.sake); every line must be one a generator knows. The
+# generated source of each class is printed: class_attribute, callbacks, rescue_from, CurrentAttributes.
+
+require "class_body"
+require "callbacks"
+require "class_attribute"
+require "rescuable"
+require "current_attributes"
+
+def known_calls
+  ActiveSupport::Callbacks::Generate.CALLS + ActiveSupport::ClassAttribute::Generate.CALLS +
+    ActiveSupport::Rescuable::Generate.CALLS + ActiveSupport::CurrentAttributes::Generate.CALLS
+end
+
+Array.each(ARGV) do |path|
+  bodies = ActiveSupport::Generate.parse(File.read(path), path)
+  Array.each(bodies) { |body| ActiveSupport::CurrentAttributes::Generate.expand(body) }
+  Array.each(bodies) do |body|
+    Array.each(ActiveSupport::Generate::ClassBody.declarations(body)) do |d|
+      next if Array.include?(known_calls, ActiveSupport::Generate::Declaration.call(d))
+      raise ArgumentError, "#{path}:#{ActiveSupport::Generate::Declaration.line(d)}: `#{ActiveSupport::Generate::Declaration.call(d)}` is not a class-body declaration a generator knows"
+    end
+    print(ActiveSupport::ClassAttribute::Generate.class_source(body, bodies, path))
+    print(ActiveSupport::Callbacks::Generate.class_source(body, bodies, path))
+    print(ActiveSupport::Rescuable::Generate.class_source(body, bodies, path))
+    print(ActiveSupport::CurrentAttributes::Generate.class_source(body, path))
+  end
+end

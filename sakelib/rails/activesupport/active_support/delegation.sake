@@ -1,0 +1,50 @@
+# Port of activesupport-8.1.3/lib/active_support/delegation.rb (partial: no signature:, private:, as:, method_missing delegation (delegate_missing_to))
+#
+# Ruby's Delegation.generate builds `def name(...) = to.name(...)` as source and module_evals it. Here it returns
+# the Sake source (`def Post.name(obj)`, outside the class: generated code is joined before the file's own classes) for a generator to print (generate/delegation.sake): Sake needs the target's type, since the
+# call names it (`User.name(@author)` for Ruby's `author.name`), so `to` is "field:Type". A method's arguments
+# are written out (Ruby's `...`): "name" takes none, "name/2" takes two.
+
+module ActiveSupport
+  # Ruby: DelegationError < NoMethodError (Sake has no NoMethodError to subclass)
+  class DelegationError < StandardError
+  end
+
+  module Delegation
+    module_function
+
+    def nil_target_message(method_name, target) = "#{method_name} delegated to #{target}, but #{target} is nil"
+
+    # Ruby: generate(owner, methods, to:, prefix:, allow_nil:)
+    def generate(owner, methods, to, prefix = nil, allow_nil = false)
+      raise ArgumentError, "Delegation needs a target. Supply a keyword argument 'to' (e.g. delegate :hello, to: :greeter)." if String.empty?(to)
+      receiver, target_type = String.split(to, ":", 2)
+      raise ArgumentError, "Sake needs the target's type: to: \"#{to}:Type\"" unless receiver && target_type
+      method_prefix = case prefix
+                      in nil | "" | "false" then ""
+                      in "true" then "#{receiver}_"
+                      else "#{prefix}_"
+                      end
+      lines = String[]
+      Array.each(methods) do |spec|
+        method, arity = String.split(spec, "/", 2)
+        method => String
+        n = arity ? String.to_i(arity) : 0
+        params = Array.map(Range.to_a(1..n)) { |i| "arg#{i}" }
+        sig = Array.join(Array.prepend(Array.dup(params), "obj"), ", ")
+        call_args = Array.join(Array.prepend(Array.dup(params), "target"), ", ")
+        method_name = "#{method_prefix}#{method}"
+        Array.push(lines, "def #{owner}.#{method_name}(#{sig})")
+        Array.push(lines, "  target = @#{receiver}")
+        if allow_nil
+          Array.push(lines, "  target ? #{target_type}.#{method}(#{call_args}) : nil")
+        else
+          Array.push(lines, "  raise ActiveSupport::DelegationError, #{Kernel.inspect(nil_target_message(method_name, receiver))} unless target")
+          Array.push(lines, "  #{target_type}.#{method}(#{call_args})")
+        end
+        Array.push(lines, "end")
+      end
+      Array.join(lines, "\n") + "\n"
+    end
+  end
+end

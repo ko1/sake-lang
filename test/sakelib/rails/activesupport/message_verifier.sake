@@ -1,0 +1,62 @@
+# ActiveSupport::MessageVerifier (JSON, purpose, expiry, SHA256, url_safe) and KeyGenerator (PBKDF2).
+
+require "rails/activesupport/active_support/message_verifier"
+require "rails/activesupport/active_support/key_generator"
+require "json"
+
+MV = ActiveSupport::MessageVerifier
+v = MV.new("s3krit")   # Ruby: serializer: JSON, and the metadata in it (Rails 7.1's default)
+m = MV.generate(v, Hash.of("user_id" => 7, "role" => "admin"))
+puts(m)
+p([MV.verified(v, m), MV.valid_message?(v, m)])
+tampered = String.slice(m, 0, String.size(m) - 1) + (String.end_with?(m, "0") ? "1" : "0")
+p([MV.verified(v, tampered), MV.valid_message?(v, tampered), MV.verified(v, nil), MV.verified(v, "garbage")])
+begin
+  MV.verify(v, tampered)
+rescue MV::InvalidSignature => e
+  puts("InvalidSignature: #{Exception.message(e)}")
+end
+puts("purpose:")
+m2 = MV.generate(v, "hello", {purpose: :login})
+puts(m2)
+p([MV.verified(v, m2, {purpose: :login}), MV.verified(v, m2), MV.verified(v, m2, {purpose: :other})])
+begin
+  MV.verify(v, m2, {purpose: :other})
+rescue MV::InvalidSignature => e
+  puts("InvalidSignature: #{Exception.message(e)}")
+end
+puts("expiry:")
+m3 = MV.generate(v, Any[1, 2], {expires_at: Time.utc(2000, 1, 1)})
+puts(m3)
+p(MV.verified(v, m3))
+begin
+  MV.verify(v, m3)
+rescue MV::InvalidSignature => e
+  puts("InvalidSignature: #{Exception.message(e)}")
+end
+m4 = MV.generate(v, 42, {expires_at: Time.utc(2100, 1, 1, 12, 30, 15), purpose: "share"})
+puts(m4)
+p(MV.verified(v, m4, {purpose: "share"}))
+puts("SHA256, url_safe:")
+v2 = MV.new("s3krit", digest: "SHA256", url_safe: true)
+m5 = MV.generate(v2, "a/b?c>>>")
+puts(m5)
+p([MV.verified(v2, m5), MV.verified(v, m5)])
+puts("a signed message that is not JSON:")
+bad = Base64.strict_encode64("not json")
+bad = "#{bad}--#{OpenSSL::HMAC.hexdigest("SHA1", "s3krit", bad)}"
+begin
+  MV.verified(v, bad)
+rescue ActiveSupport::Messages::InvalidMessageSerialization => e   # Ruby: the serializer's own error
+  puts("JSON::ParserError")
+end
+puts("key generator:")
+kg = ActiveSupport::KeyGenerator.new("secret_key_base", iterations: 3)
+k1 = ActiveSupport::KeyGenerator.generate_key(kg, "signed cookie", 32)
+puts(String.unpack1(k1, "H*"))
+kg256 = ActiveSupport::KeyGenerator.new("secret_key_base", iterations: 2, hash_digest_class: "SHA256")
+puts(String.unpack1(ActiveSupport::KeyGenerator.generate_key(kg256, "authenticated encrypted cookie", 32), "H*"))
+caching = ActiveSupport::CachingKeyGenerator.new(kg)
+p(ActiveSupport::CachingKeyGenerator.generate_key(caching, "signed cookie", 32) == k1)
+v3 = MV.new(k1)
+p(MV.verified(v3, MV.generate(v3, "with a derived key")))

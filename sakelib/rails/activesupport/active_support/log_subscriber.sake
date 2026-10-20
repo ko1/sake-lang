@@ -1,0 +1,111 @@
+# Port of activesupport-8.1.3/lib/active_support/log_subscriber.rb (partial: no subscribe_log_level / event levels; an error in an event method is logged, not also reported)
+#
+# A log subscriber includes ActiveSupport::LogSubscriber (Ruby: < ActiveSupport::LogSubscriber) and names its
+# events as a Subscriber does (subscriber.sake). The logger is LogSubscriber's, as Ruby's LogSubscriber.logger.
+
+require "subscriber"
+require "logger"
+require "broadcast_logger"
+
+module ActiveSupport
+  module LogSubscriber
+    include ActiveSupport::Subscriber
+
+    def call(s, event)
+      return nil if LogSubscriber.logger == nil
+      name = ActiveSupport::Notifications::Event.name(event)
+      i = String.index(name, ".") || String.size(name)
+      begin
+        __event(s, String.to_sym(String.slice(name, 0, i) || ""), event)
+      rescue => e
+        log_exception(s, name, e)
+      end
+    end
+
+    def silenced?(s, name) = LogSubscriber.logger == nil
+
+    def debug(s, progname = nil) = LogSubscriber.log(0, progname)
+    def info(s, progname = nil) = LogSubscriber.log(1, progname)
+    def warn(s, progname = nil) = LogSubscriber.log(2, progname)
+    def error(s, progname = nil) = LogSubscriber.log(3, progname)
+    def fatal(s, progname = nil) = LogSubscriber.log(4, progname)
+    def unknown(s, progname = nil) = LogSubscriber.log(5, progname)
+
+    # Ruby's color(text, color, mode_options = {}): color is a Symbol (:red) or an escape sequence.
+    def color(s, text, color, mode_options = nil)
+      return text unless LogSubscriber.colorize_logging
+      code = (color in Symbol) ? LogSubscriber.color_code(color) : color
+      mode = LogSubscriber.mode_from(mode_options)
+      "#{mode}#{code}#{text}\e[0m"
+    end
+
+    def log_exception(s, name, e)
+      LogSubscriber.log(3, "Could not log #{Kernel.inspect(name)} event. #{ActiveSupport::Notifications.class_name(e)}: #{Exception.message(e)} #{Kernel.inspect(Exception.backtrace(e))}")
+    end
+
+    module_function
+
+    def BLACK = "\e[30m"
+    def RED = "\e[31m"
+    def GREEN = "\e[32m"
+    def YELLOW = "\e[33m"
+    def BLUE = "\e[34m"
+    def MAGENTA = "\e[35m"
+    def CYAN = "\e[36m"
+    def WHITE = "\e[37m"
+
+    def color_code(c)
+      case c
+      in :black then LogSubscriber.BLACK
+      in :red then LogSubscriber.RED
+      in :green then LogSubscriber.GREEN
+      in :yellow then LogSubscriber.YELLOW
+      in :blue then LogSubscriber.BLUE
+      in :magenta then LogSubscriber.MAGENTA
+      in :cyan then LogSubscriber.CYAN
+      in :white then LogSubscriber.WHITE
+      else raise ArgumentError, "uninitialized constant ActiveSupport::LogSubscriber::#{String.upcase(Symbol.to_s(c))}"
+      end
+    end
+
+    # Ruby's MODES.values_at(*options.compact_blank.keys).
+    def mode_from(options)
+      return nil if options == nil
+      h = Record.to_h(options)
+      modes = Integer[]
+      Hash.each(h) do |k, v|
+        next unless v
+        case k
+        in :clear then Array.push(modes, 0)
+        in :bold then Array.push(modes, 1)
+        in :italic then Array.push(modes, 3)
+        in :underline then Array.push(modes, 4)
+        else nil
+        end
+      end
+      Array.empty?(modes) ? nil : "\e[#{Array.join(modes, ";")}m"
+    end
+
+    # Ruby's mattr_accessor :colorize_logging, default: true, and the logger class attribute.
+    def settings = once { Hash.of(colorize_logging: true) }
+    def colorize_logging = settings[:colorize_logging] == true
+    def set_colorize_logging(v) = settings[:colorize_logging] = v
+    def logger_slot = once { Any[nil] }
+    def logger
+      l = logger_slot[0]
+      case l
+      in ActiveSupport::Logger | ActiveSupport::BroadcastLogger then l
+      else nil
+      end
+    end
+    def set_logger(l) = logger_slot[0] = l
+    def log_subscribers = Subscriber.subscribers
+    def attach_to(namespace, subscriber) = Subscriber.attach_to(namespace, subscriber)
+    def detach_from(namespace, subscriber) = Subscriber.detach_from(namespace, subscriber)
+
+    def log(severity, progname)
+      l = logger
+      (ActiveSupport::Logger | ActiveSupport::BroadcastLogger).add(l, severity, nil, progname) if l != nil
+    end
+  end
+end

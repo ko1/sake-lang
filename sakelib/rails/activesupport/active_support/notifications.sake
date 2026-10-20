@@ -1,0 +1,62 @@
+# Port of activesupport-8.1.3/lib/active_support/notifications.rb (partial: one notifier for the program, not per thread; no monotonic_subscribe)
+#
+# Ruby's subscribers are blocks, or objects Fanout inspects with respond_to?/arity. Sake has neither, so a
+# subscriber is an object whose class includes ActiveSupport::Notifications::Listener and says which of
+# Ruby's three kinds it is:
+#
+#   Ruby                                               Sake
+#   subscribe("sql") { |event| ... }                   class SqlListener; include Listener; def call(l, event) = ...
+#   subscribe("sql") { |name, start, fin, id, payload| }   def listener_kind(l) = :timed; def call_timed(l, name, start, fin, id, payload)
+#   subscribe("sql", obj) # obj has start and finish   def listener_kind(l) = :evented; def start(l, name, id, payload); def finish(...)
+#   instrument("sql", sql: "SELECT 1") { }             instrument("sql", Hash.of(sql: "SELECT 1")) { }
+
+require "notifications/instrumenter"
+require "notifications/fanout"
+
+module ActiveSupport
+  module Notifications
+    module_function
+
+    # Ruby's class attribute notifier (a Fanout).
+    def notifier = once { Fanout.new }
+
+    # Ruby's publish(name, *args): the arguments of a timed listener.
+    def publish(name, started, finished, id, payload) = Fanout.publish(notifier, name, started, finished, id, payload)
+    def publish_event(event) = Fanout.publish_event(notifier, event)
+
+    # Ruby's instrument(name, payload = {}) { |payload| }: the subscribers see it only when one listens.
+    def instrument(name, payload = nil)
+      payload ||= Hash.new
+      if Fanout.listening?(notifier, name)
+        Instrumenter.instrument(instrumenter, name, payload) { block_given? ? yield(payload) : nil }
+      else
+        block_given? ? yield(payload) : nil
+      end
+    end
+
+    # Ruby's subscribe(pattern = nil, callback = nil): pattern is a String, a Regexp or nil (every event).
+    def subscribe(pattern, callback) = Fanout.subscribe(notifier, pattern, callback)
+
+    # Ruby's subscribed(callback, pattern) { }: subscribed only while the block runs.
+    def subscribed(callback, pattern = nil)
+      subscriber = Fanout.subscribe(notifier, pattern, callback)
+      begin
+        yield
+      ensure
+        unsubscribe(subscriber)
+      end
+    end
+
+    def unsubscribe(subscriber_or_name) = Fanout.unsubscribe(notifier, subscriber_or_name)
+
+    # Ruby's registry[notifier] ||= Instrumenter.new(notifier) (per thread there; one here).
+    def instrumenter = once { Instrumenter.new(notifier) }
+
+    # Ruby's exception.class.name (Sake has no class names of values: it is read from inspect).
+    def class_name(e)
+      s = Kernel.inspect(e)
+      m = String.match(s, /\A#<((?:\w|::)+)/)
+      m ? Kernel.to_s(m[1]) : s
+    end
+  end
+end

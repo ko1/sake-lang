@@ -1,0 +1,66 @@
+# ActiveSupport::Subscriber and LogSubscriber: attach_to, events by method name, color, detach_from.
+
+require "rails/activesupport/active_support/log_subscriber"
+require "rails/activesupport/active_support/logger"
+
+class SqlLogSubscriber
+  include ActiveSupport::LogSubscriber
+  def sql(s, event)
+    info(s, "  #{color(s, "SQL", :blue, {bold: true})} #{ActiveSupport::Notifications::Event.payload(event)[:sql]}")
+  end
+  def cache(s, event) = debug(s, "  cache #{ActiveSupport::Notifications::Event.payload(event)[:key]}")
+  def broken(s, event) = raise("boom")
+  def __events(s) = Symbol[:broken, :sql, :cache]   # Ruby: public_methods(false), in its order
+  def __event(s, method, event)
+    case method
+    in :sql then sql(s, event)
+    in :cache then cache(s, event)
+    in :broken then broken(s, event)
+    else nil
+    end
+  end
+end
+
+class Counter
+  private attr_reader count
+  include ActiveSupport::Subscriber
+  def initialize(c)
+    @count = 0
+  end
+  def process_action(c, event)
+    @count += 1
+    puts("  process_action #{ActiveSupport::Notifications::Event.payload(event)[:action]} (#{@count})")
+  end
+  def __events(c) = Symbol[:process_action]
+  def __event(c, method, event) = method == :process_action ? process_action(c, event) : nil
+end
+
+N = ActiveSupport::Notifications
+log = ActiveSupport::Logger.new(IO.stdout)
+ActiveSupport::Logger.set_level(log, :info)
+ActiveSupport::LogSubscriber.set_logger(log)
+sql_subscriber = SqlLogSubscriber.new
+ActiveSupport::LogSubscriber.attach_to(:active_record, sql_subscriber)
+puts("log subscriber:")
+N.instrument("sql.active_record", Hash.of(sql: "SELECT 1"))
+N.instrument("cache.active_record", Hash.of(key: "k"))
+ActiveSupport::Logger.set_level(log, :debug)
+N.instrument("cache.active_record", Hash.of(key: "k2"))
+ActiveSupport::LogSubscriber.set_colorize_logging(false)
+N.instrument("sql.active_record", Hash.of(sql: "SELECT 2"))
+p(Hash.keys(SqlLogSubscriber.patterns(sql_subscriber)))
+puts("subscriber:")
+counter = Counter.new
+ActiveSupport::Subscriber.attach_to(:action_controller, counter)
+N.instrument("process_action.action_controller", Hash.of(action: "index"))
+N.instrument("process_action.action_controller", Hash.of(action: "show"))
+p(Hash.keys(Counter.patterns(counter)))
+puts("detach_from:")
+ActiveSupport::LogSubscriber.detach_from(:active_record, sql_subscriber)
+N.instrument("sql.active_record", Hash.of(sql: "SELECT 3"))
+p(Hash.keys(SqlLogSubscriber.patterns(sql_subscriber)))
+puts("no logger:")
+ActiveSupport::LogSubscriber.attach_to(:active_record, sql_subscriber)
+ActiveSupport::LogSubscriber.set_logger(nil)
+N.instrument("sql.active_record", Hash.of(sql: "SELECT 4"))
+p(N::Fanout.listening?(N.notifier, "sql.active_record"))

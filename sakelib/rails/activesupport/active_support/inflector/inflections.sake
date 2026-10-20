@@ -1,0 +1,160 @@
+# Port of activesupport-8.1.3/lib/active_support/inflector/inflections.rb (partial: no locales but :en, no initialize_dup)
+#
+# Ruby keeps one Inflections per locale in a Concurrent::Map; here one Hash of them, made once. The rules are
+# Arrays of [rule, replacement] Tuples (rule a Regexp or a String), as Ruby's.
+
+module ActiveSupport
+  module Inflector
+    class Inflections
+      # Ruby: class Uncountables (an Array of lowercase words with a cached pattern).
+      class Uncountables
+        attr_reader members
+        attr_accessor pattern
+
+        def delete(u, entry)
+          Array.delete(@members, entry)
+          @pattern = nil
+        end
+
+        def <<(u, word)
+          Array.push(@members, String.downcase(word))
+          @pattern = nil
+          u
+        end
+
+        def flatten(u) = Array.dup(@members)
+        def empty?(u) = Array.empty?(@members)
+        def to_a(u) = Array.dup(@members)
+
+        def add(u, words)
+          Array.concat(@members, Array.map(words) { |w| String.downcase(w) })
+          @pattern = nil
+          u
+        end
+
+        def uncountable?(u, str)
+          pat = @pattern
+          if pat == nil
+            members_pattern = Array.join(Array.map(@members) { |w| "(?i:#{Regexp.escape(w)})" }, "|")
+            pat = Regexp.new("\\b(?:#{members_pattern})\\Z", "i")
+            @pattern = pat
+          end
+          return false if Array.empty?(@members)
+          Regexp.match?(pat, str)
+        end
+      end
+
+      attr_reader plurals, singulars, uncountables, humans, acronyms
+      attr_reader acronyms_camelize_regex, acronyms_underscore_regex
+
+      # Ruby: Inflections.new
+      def make
+        i = Inflections.new(Any[], Any[], Uncountables.new(String[], nil), Any[], Hash.new, /(?=a)b/, /(?=a)b/)
+        define_acronym_regex_patterns(i)
+        i
+      end
+
+      def table = once { Hash.new }
+
+      # Ruby: Inflections.instance(locale = :en)
+      def instance(locale = :en)
+        t = table
+        found = t[locale]
+        return found if found
+        made = make
+        t[locale] = made
+        made
+      end
+
+      def instance_or_fallback(locale) = instance(locale)
+
+      def acronym(i, word)
+        @acronyms[String.downcase(word)] = word
+        define_acronym_regex_patterns(i)
+      end
+
+      def plural(i, rule, replacement)
+        Uncountables.delete(@uncountables, rule) if rule in String
+        Uncountables.delete(@uncountables, replacement)
+        Array.prepend(@plurals, [rule, replacement])
+      end
+
+      def singular(i, rule, replacement)
+        Uncountables.delete(@uncountables, rule) if rule in String
+        Uncountables.delete(@uncountables, replacement)
+        Array.prepend(@singulars, [rule, replacement])
+      end
+
+      def irregular(i, singular, plural)
+        Uncountables.delete(@uncountables, singular)
+        Uncountables.delete(@uncountables, plural)
+        s0 = String.[](singular, 0) || ""
+        srest = String.[](singular, 1..) || ""
+        p0 = String.[](plural, 0) || ""
+        prest = String.[](plural, 1..) || ""
+        if String.upcase(s0) == String.upcase(p0)
+          plural(i, Regexp.new("(#{s0})#{srest}$", "i"), '\1' + prest)
+          plural(i, Regexp.new("(#{p0})#{prest}$", "i"), '\1' + prest)
+          singular(i, Regexp.new("(#{s0})#{srest}$", "i"), '\1' + srest)
+          singular(i, Regexp.new("(#{p0})#{prest}$", "i"), '\1' + srest)
+        else
+          plural(i, Regexp.new("#{String.upcase(s0)}(?i)#{srest}$"), String.upcase(p0) + prest)
+          plural(i, Regexp.new("#{String.downcase(s0)}(?i)#{srest}$"), String.downcase(p0) + prest)
+          plural(i, Regexp.new("#{String.upcase(p0)}(?i)#{prest}$"), String.upcase(p0) + prest)
+          plural(i, Regexp.new("#{String.downcase(p0)}(?i)#{prest}$"), String.downcase(p0) + prest)
+          singular(i, Regexp.new("#{String.upcase(s0)}(?i)#{srest}$"), String.upcase(s0) + srest)
+          singular(i, Regexp.new("#{String.downcase(s0)}(?i)#{srest}$"), String.downcase(s0) + srest)
+          singular(i, Regexp.new("#{String.upcase(p0)}(?i)#{prest}$"), String.upcase(s0) + srest)
+          singular(i, Regexp.new("#{String.downcase(p0)}(?i)#{prest}$"), String.downcase(s0) + srest)
+        end
+      end
+
+      def uncountable(i, *words) = Uncountables.add(@uncountables, words)
+
+      def human(i, rule, replacement) = Array.prepend(@humans, [rule, replacement])
+
+      def clear(i, scope = :all)
+        case scope
+        in :all
+          clear(i, :acronyms)
+          clear(i, :plurals)
+          clear(i, :singulars)
+          clear(i, :uncountables)
+          clear(i, :humans)
+        in :acronyms
+          Hash.clear(@acronyms)
+          define_acronym_regex_patterns(i)
+        in :uncountables
+          Array.clear(Uncountables.members(@uncountables))
+          Uncountables.set_pattern(@uncountables, nil)
+        in :plurals then Array.clear(@plurals)
+        in :singulars then Array.clear(@singulars)
+        in :humans then Array.clear(@humans)
+        else
+        end
+        i
+      end
+
+      # private
+      def define_acronym_regex_patterns(i)
+        sorted = Hash.empty?(@acronyms) ? String[] : Array.sort_by(Hash.values(@acronyms)) { |a| -String.length(a) }
+        acronym_regex = Array.empty?(sorted) ? "(?=a)b" : Array.join(sorted, "|")
+        @acronyms_camelize_regex = Regexp.new("^(?:(?:#{acronym_regex})(?=\\b|[A-Z_])|\\w)")
+        # Ruby's /(?:(?<=([A-Za-z\d]))|\b)(#{acronym_regex})(?=\b|[^a-z])/
+        @acronyms_underscore_regex = Regexp.new("(?:(?<=([A-Za-z\\d]))|\\b)(#{acronym_regex})(?=\\b|[^a-z])")
+        nil
+      end
+    end
+
+    module_function
+
+    # Ruby: inflections(locale = :en) { |inflect| ... }
+    def inflections(locale = :en)
+      if block_given?
+        yield(Inflections.instance(locale))
+      else
+        Inflections.instance_or_fallback(locale)
+      end
+    end
+  end
+end

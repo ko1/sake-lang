@@ -1,0 +1,69 @@
+# Port of activesupport-8.1.3/lib/active_support/json/encoding.rb (partial: JSONGemEncoder only; no options but :escape)
+#
+# Ruby's encode calls value.as_json, then jsonify (Strings, numbers, nil, true, false kept; Hash keys made
+# Strings), then ::JSON.generate, then escapes <, >, & and U+2028/2029. Here as_json is `Object.as_json`
+# (core_ext/object/json), and ::JSON.generate is sakelib/json.
+
+require "json"
+require "../core_ext/object/json"
+
+module ActiveSupport
+  module JSON
+    module Encoding
+      module_function
+
+      def escaped_chars = once do
+        Hash.of("\u2028" => '\u2028', "\u2029" => '\u2029', ">" => '\u003e', "<" => '\u003c', "&" => '\u0026')
+      end
+
+      def full_escape_regex = /[\u2028\u2029><&]/
+
+      def escape_html_entities_in_json = true
+      def escape_js_separators_in_json = true
+      def use_standard_json_time_format = true
+      def time_precision = 3
+
+      class JSONGemEncoder
+        attr_reader options
+
+        def encode(e, value)
+          v = Hash.empty?(@options) ? value : Object.as_json(value)
+          json = stringify(e, jsonify(e, v))
+          return json unless Hash.fetch(@options, :escape, true)
+          String.gsub(json, Encoding.full_escape_regex, Encoding.escaped_chars)
+        end
+
+        # private
+        def jsonify(e, value)
+          case value
+          in String | Integer | Symbol | nil | true | false then value
+          in Float | Rational then Object.as_json(value)
+          in Hash
+            result = Hash.new
+            Hash.each(value) do |k, v|
+              key = (k in Symbol | String) ? k : Kernel.to_s(k)
+              result[key] = jsonify(e, v)
+            end
+            result
+          in Array then Array.map(value) { |v| jsonify(e, v) }
+          else jsonify(e, Object.as_json(value))
+          end
+        end
+
+        def stringify(e, jsonified) = ::JSON.generate(jsonified)
+      end
+    end
+
+    module_function
+
+    def encode(value, options = nil) = Encoding::JSONGemEncoder.encode(Encoding::JSONGemEncoder.new(options || Hash.new), value)
+    def dump(value, options = nil) = encode(value, options)
+  end
+end
+
+module Object
+  module_function
+
+  # Ruby: Object#to_json(options) through ActiveSupport's encoder
+  def to_json(x, options = nil) = ActiveSupport::JSON.encode(x, options)
+end

@@ -1,0 +1,61 @@
+# Port of activesupport-8.1.3/lib/active_support/rescuable.rb (partial: handlers are method names that take the exception; no block handlers; no `object:` keyword)
+#
+# Ruby stores [class name, handler] pairs in a class attribute and finds the handler with
+# `const_get(name) === exception`, then calls `object.method(handler)`. Sake keeps the pairs (the names are
+# Strings, as Rails stores them), and the includer has two generated functions for the rest:
+#
+#   Ruby                                          Sake (generate/rescuable.sake writes it from the class body)
+#   rescue_from NotFound, with: :not_found        def C.rescue_handlers = once { ...rescue_from(h, "NotFound", {with: :not_found}) }
+#   const_get("NotFound") === exception           def C.__rescue_match?(t, name, e) = case name in "NotFound" then e in NotFound ...
+#   object.method(:not_found).call(exception)     def C.__rescue_call(t, handler, e) = case handler in :not_found then not_found(t, e) ...
+
+module ActiveSupport
+  module Rescuable
+    # Required of the includer: the class attribute rescue_handlers, its pairs, and the two calls above.
+    def __rescue_handlers(t) = raise(NotImplementedError)
+    def __rescue_match?(t, class_name, exception) = raise(NotImplementedError)
+    def __rescue_call(t, handler, exception) = raise(NotImplementedError)
+
+    # Ruby's rescue_with_handler(exception): the exception handled (it or a cause), or nil.
+    def rescue_with_handler(t, exception, visited_exceptions = nil)
+      visited = visited_exceptions || Any[]
+      Array.push(visited, exception)
+      handler = handler_for_rescue(t, exception)
+      if handler != nil
+        __rescue_call(t, handler, exception)
+        exception
+      else
+        cause = Exception.cause(exception)
+        return nil if cause == nil || Array.any?(visited) { |v| Kernel.equal?(v, cause) }
+        rescue_with_handler(t, cause, visited)
+      end
+    end
+
+    def handler_for_rescue(t, exception) = find_rescue_handler(t, exception)
+
+    # The last handler declared whose class matches wins, as Ruby's reverse_each.detect.
+    def find_rescue_handler(t, exception)
+      pair = Array.reverse(__rescue_handlers(t)).Array.find { |name, _| __rescue_match?(t, name, exception) }
+      pair == nil ? nil : pair[1]
+    end
+
+    module ClassMethods
+      module_function
+
+      # Ruby's rescue_from(*klasses, with:): rescue_from(handlers, "NotFound", "Denied", {with: :h}).
+      def rescue_from(handlers, *klasses_and_options)
+        with = nil
+        klasses = String[]
+        Array.each(klasses_and_options) do |x|
+          case x
+          in String then Array.push(klasses, x)
+          else with = Record.to_h(x)[:with]
+          end
+        end
+        raise ArgumentError, "Need a handler. Pass the with: keyword argument or provide a block." if with == nil
+        Array.each(klasses) { |key| Array.push(handlers, [key, with]) }
+        handlers
+      end
+    end
+  end
+end

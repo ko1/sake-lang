@@ -1,0 +1,67 @@
+# Port of activesupport-8.1.3/lib/active_support/parameter_filter.rb (partial: no Proc filters, which would rewrite a value in place)
+#
+# Filters are Strings, Symbols or Regexps, as Ruby's; a String with a dot ("credit_card.code") matches the
+# full key. Params are Hashes whose values are Strings, numbers, Arrays and nested Hashes (a JSON value).
+
+module ActiveSupport
+  class ParameterFilter
+    attr_reader mask
+    private attr_reader no_filters, regexps, deep_regexps
+
+    def FILTERED = "[FILTERED]"
+
+    # Ruby's ParameterFilter.new(filters = [], mask: FILTERED).
+    def of(filters, mask = nil)
+      f = ParameterFilter.new(mask || ParameterFilter.FILTERED, false, Any[], nil)
+      ParameterFilter.compile_filters!(f, filters)
+      f
+    end
+
+    def filter(f, params) = @no_filters ? Hash.dup(params) : call(f, params, nil, params)
+    def filter_param(f, key, value) = @no_filters ? value : value_for_key(f, key, value, nil, nil)
+
+    def compile_filters!(f, filters)
+      @no_filters = Array.empty?(filters)
+      return nil if @no_filters
+      strings = String[]
+      deep_strings = String[]
+      deep = Any[]
+      Array.each(filters) do |item|
+        case item
+        in Regexp
+          String.include?(Regexp.source(item), "\\.") ? Array.push(deep, item) : Array.push(@regexps, item)
+        else
+          s = Regexp.escape(Kernel.to_s(item))
+          String.include?(s, "\\.") ? Array.push(deep_strings, s) : Array.push(strings, s)
+        end
+      end
+      Array.push(@regexps, Regexp.new(Array.join(strings, "|"), "i")) unless Array.empty?(strings)
+      Array.push(deep, Regexp.new(Array.join(deep_strings, "|"), "i")) unless Array.empty?(deep_strings)
+      @deep_regexps = deep unless Array.empty?(deep)
+    end
+
+    def call(f, params, full_parent_key, original_params)
+      filtered_params = Hash.new
+      Hash.each(params) do |key, value|
+        filtered_params[key] = value_for_key(f, key, value, full_parent_key, original_params)
+      end
+      filtered_params
+    end
+
+    def value_for_key(f, key, value, full_parent_key, original_params)
+      deep = @deep_regexps
+      full_key = full_parent_key ? "#{full_parent_key}.#{key}" : Kernel.to_s(key)
+      if Array.any?(@regexps) { |r| Regexp.match?(r, Kernel.to_s(key)) }
+        @mask
+      elsif deep != nil && Array.any?(deep) { |r| Regexp.match?(r, full_key) }
+        @mask
+      else
+        case value
+        in Hash then call(f, value, full_key, original_params)
+        in Array then Array.map(value) { |v| value_for_key(f, key, v, full_parent_key, original_params) }
+        else value
+        end
+      end
+    end
+  end
+end

@@ -1,0 +1,11 @@
+gem "activesupport", "8.1.3"
+require "active_support"
+require "active_support/number_helper"
+
+# ActiveSupport::NumberHelper (number_helper and number_helper/*); the full coverage is test/sakelib/active_support_number_helper.
+N = ActiveSupport::NumberHelper
+p(N.number_to_delimited(1234567.891), N.number_to_delimited("98765.4321", delimiter: " ", separator: ","), N.number_to_delimited("not a number"))
+p(N.number_to_rounded(3.14159, precision: 2), N.number_to_rounded(1234.5678, precision: 2, significant: true), N.number_to_rounded(1.5, precision: 3, strip_insignificant_zeros: true))
+p(N.number_to_currency(1234.506), N.number_to_currency(-1234.5, negative_format: "(%u%n)"), N.number_to_currency(1234.5, unit: "€", format: "%n %u", separator: ",", delimiter: "."))
+p(N.number_to_percentage(45.678), N.number_to_percentage(100, precision: 0), N.number_to_human_size(5_000_000), N.number_to_human_size(1024), N.number_to_human(489_939_000))
+p(N.number_to_human(1234, precision: 2), N.number_to_phone(8005551212, area_code: true), N.number_to_phone(8005551212, country_code: 1, extension: 42), N.number_to_currency(nil))

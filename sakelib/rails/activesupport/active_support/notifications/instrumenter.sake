@@ -1,0 +1,97 @@
+# Port of activesupport-8.1.3/lib/active_support/notifications/instrumenter.rb (partial: no LegacyHandle (every notifier is a Fanout); Event#allocations and #gc_time are 0, Sake has no allocation or GC counters)
+
+require "securerandom"
+
+module ActiveSupport
+  module Notifications
+    class Instrumenter
+      attr_reader notifier, id
+
+      def initialize(i)
+        @id = SecureRandom.hex(10) if @id == nil
+      end
+
+      # Ruby's instrument(name, payload = {}) { |payload| }: a raise is recorded in the payload and raised again.
+      def instrument(i, name, payload)
+        handle = Fanout.build_handle(@notifier, name, @id, payload)
+        Fanout::Handle.start(handle)
+        begin
+          yield(payload)
+        rescue => e
+          payload[:exception] = [Notifications.class_name(e), Exception.message(e)]
+          payload[:exception_object] = e
+          raise e
+        ensure
+          Fanout::Handle.finish(handle)
+        end
+      end
+
+      def new_event(i, name, payload = nil) = Event.new_event(name, nil, nil, @id, payload || Hash.new)
+
+      def start(i, name, payload) = Fanout.start(@notifier, name, @id, payload)
+      def finish(i, name, payload) = Fanout.finish(@notifier, name, @id, payload)
+    end
+
+    class Event
+      attr_reader name, transaction_id
+      attr_accessor payload
+      private attr_accessor time_, end_, cpu_time_start, cpu_time_finish
+
+      # Ruby's Event.new(name, start, ending, transaction_id, payload): start and ending are Times or nil.
+      def new_event(name, start, ending, transaction_id, payload)
+        Event.new(name, transaction_id, Hash.dup(payload),
+          start == nil ? nil : Time.to_f(start) * 1000.0, ending == nil ? nil : Time.to_f(ending) * 1000.0, 0.0, 0.0)
+      end
+
+      def time(e)
+        t = @time_
+        t == nil ? nil : t / 1000.0
+      end
+
+      def end(e)
+        t = @end_
+        t == nil ? nil : t / 1000.0
+      end
+
+      def record(e)
+        start!(e)
+        begin
+          yield(@payload)
+        rescue => ex
+          @payload[:exception] = [Notifications.class_name(ex), Exception.message(ex)]
+          @payload[:exception_object] = ex
+          raise ex
+        ensure
+          finish!(e)
+        end
+      end
+
+      def start!(e)
+        @time_ = Event.now
+        @cpu_time_start = Event.now_cpu
+      end
+
+      def finish!(e)
+        @cpu_time_finish = Event.now_cpu
+        @end_ = Event.now
+      end
+
+      def cpu_time(e) = (@cpu_time_finish || 0.0) - (@cpu_time_start || 0.0)
+
+      def idle_time(e)
+        diff = duration(e) - cpu_time(e)
+        diff > 0.0 ? diff : 0.0
+      end
+
+      def allocations(e) = 0
+      def gc_time(e) = 0.0
+
+      # Milliseconds, as Ruby's.
+      def duration(e) = (@end_ || 0.0) - (@time_ || 0.0)
+
+      def now = Process.clock_gettime(Process.CLOCK_MONOTONIC) * 1000.0
+      # Ruby's CLOCK_THREAD_CPUTIME_ID; Sake has the process's.
+      def now_cpu = Process.clock_gettime(Process.CLOCK_PROCESS_CPUTIME_ID) * 1000.0
+    end
+  end
+end

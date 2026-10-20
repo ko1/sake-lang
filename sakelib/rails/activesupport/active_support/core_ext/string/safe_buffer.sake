@@ -1,0 +1,161 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/string/output_safety.rb (partial: no bytesplice, []=, set_block_back_references, encode_with) (part 1 of 2: output_safety.sake requires this, then joins the generated methods)
+#
+# Ruby's SafeBuffer is a String subclass with an @html_unsafe flag. Here it is a class holding the String and
+# the flag; `puts`, `"#{}"` and `to_s` give the String. A Sake value is never a String and a SafeBuffer at
+# once, so `ActiveSupport::SafeBuffer.concat(b, x)` and String's operations are kept apart: Ruby's unsafe
+# methods (upcase, gsub, ...) give a plain String as in Ruby, from `SafeBuffer.upcase(b)`.
+
+require "cgi"
+require "../../as_json"
+require "../object/blank"
+
+module Object
+  module_function
+
+  # Ruby: Object#html_safe? is false, Numeric's true, SafeBuffer's its flag.
+  def html_safe?(x)
+    case x
+    in ActiveSupport::SafeBuffer then ActiveSupport::SafeBuffer.html_safe?(x)
+    in Integer | Float | Rational then true
+    else false
+    end
+  end
+
+  # (Sake only) Ruby's `s.to_s` of a value bound for HTML: a SafeBuffer's String, or the value's to_s.
+  def html_text(x)
+    case x
+    in ActiveSupport::SafeBuffer then ActiveSupport::SafeBuffer.to_str(x)
+    in String then x
+    else Kernel.to_s(x)
+    end
+  end
+end
+
+module ActiveSupport
+  class SafeBuffer
+    attr_accessor str
+    attr_accessor html_unsafe
+    include Arithmetic
+    include AsJson
+
+    class SafeConcatError < StandardError
+    end
+
+    def unsafe_string_methods = once { String["capitalize", "chomp", "chop", "delete", "delete_prefix", "delete_suffix", "downcase", "lstrip", "next", "reverse", "rstrip", "scrub", "squeeze", "strip", "succ", "swapcase", "tr", "tr_s", "unicode_normalize", "upcase"] }
+
+    # Ruby: SafeBuffer.new(str = "")
+    def make(str = "") = SafeBuffer.new(Kernel.dup(str), nil)
+
+    def [](b, index, length = nil)
+      new_string = length ? String.[](@str, index, length) : String.[](@str, index)
+      return nil unless new_string
+      string_into_safe_buffer(new_string, html_safe?(b))
+    end
+
+    def slice(b, index, length = nil) = SafeBuffer.[](b, index, length)
+
+    def safe_concat(b, value)
+      raise SafeConcatError, "Could not concatenate to the buffer because it is not HTML safe." unless html_safe?(b)
+      String.concat(@str, Object.html_text(value))
+      b
+    end
+
+    def concat(b, value)
+      String.concat(@str, implicit_html_escape_interpolated_argument(b, value)) unless value == nil
+      b
+    end
+
+    def <<(b, value) = concat(b, value)
+
+    def insert(b, index, value)
+      String.insert(@str, index, implicit_html_escape_interpolated_argument(b, value))
+      b
+    end
+
+    def prepend(b, value)
+      String.prepend(@str, implicit_html_escape_interpolated_argument(b, value))
+      b
+    end
+
+    def replace(b, value)
+      String.replace(@str, implicit_html_escape_interpolated_argument(b, value))
+      b
+    end
+
+    def dup(b) = SafeBuffer.new(Kernel.dup(@str), @html_unsafe)
+
+    def +(b, other) = SafeBuffer.concat(SafeBuffer.dup(b), other)
+
+    def *(b, n)
+      new_safe_buffer = SafeBuffer.new(@str * n, nil)
+      mark_unsafe!(new_safe_buffer) if @html_unsafe
+      new_safe_buffer
+    end
+
+    # Ruby: % with an Array (or one value) or a Hash; each argument escaped unless html_safe?. A Hash fills
+    # %{name} (Sake's String#% takes an Array only).
+    def %(b, args)
+      formatted = case args
+                  in Hash
+                    escaped = Hash.transform_values(args) { |arg| explicit_html_escape_interpolated_argument(b, arg) }
+                    String.gsub(@str, /%\{(\w+)\}/) { |m| escaped[String.to_sym(String.[](m, 2...-1) || "")] || m }
+                  in Array then format(@str, *Array.map(args) { |arg| explicit_html_escape_interpolated_argument(b, arg) })
+                  else format(@str, explicit_html_escape_interpolated_argument(b, args))
+                  end
+      new_safe_buffer = SafeBuffer.new(formatted, nil)
+      mark_unsafe!(new_safe_buffer) if @html_unsafe
+      new_safe_buffer
+    end
+
+    def html_safe?(b) = @html_unsafe == nil
+    def to_s(b) = @str
+    def to_str(b) = @str
+    def as_json(b, options = nil) = @str
+    def to_param(b) = @str
+    def inspect(b) = Kernel.inspect(@str)
+    def length(b) = String.length(@str)
+    def size(b) = String.length(@str)
+    def empty?(b) = String.empty?(@str)
+    def blank?(b) = String.blank?(@str)
+    def ==(b, other) = Object.html_text(other) == @str
+    def html_safe(b) = b
+
+    # Ruby's UNSAFE_STRING_METHODS_WITH_BACKREF: gsub and sub give a plain String; the bang forms mark unsafe.
+    def gsub(b, pattern, replacement) = String.gsub(@str, pattern, replacement)
+    def sub(b, pattern, replacement) = String.sub(@str, pattern, replacement)
+
+    def gsub!(b, pattern, replacement)
+      @html_unsafe = true
+      String.gsub!(@str, pattern, replacement)
+    end
+
+    def sub!(b, pattern, replacement)
+      @html_unsafe = true
+      String.sub!(@str, pattern, replacement)
+    end
+
+    # protected
+    def mark_unsafe!(b) = @html_unsafe = true
+
+    # private
+    def explicit_html_escape_interpolated_argument(b, arg)
+      (!html_safe?(b) || Object.html_safe?(arg)) ? Object.html_text(arg) : CGI.escapeHTML(Object.html_text(arg))
+    end
+
+    def implicit_html_escape_interpolated_argument(b, arg)
+      if !html_safe?(b) || Object.html_safe?(arg)
+        Object.html_text(arg)
+      else
+        CGI.escapeHTML(Object.html_text(arg))
+      end
+    end
+
+    def string_into_safe_buffer(new_string, is_html_safe) = SafeBuffer.new(new_string, is_html_safe ? nil : true)
+  end
+end
+
+class String
+  def html_safe(s) = ActiveSupport::SafeBuffer.make(s)
+  def html_safe?(s) = false
+end
+

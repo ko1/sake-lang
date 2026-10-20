@@ -1,0 +1,72 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/erb/util.rb (partial: no tokenize)
+#
+# Ruby prepends ActiveSupport::CoreExt::ERBUtil to ERB::Util, so `ERB::Util.html_escape` keeps a SafeBuffer and
+# returns one. Sake cannot redefine sakelib/erb's ERB::Util.html_escape (one name is one function), so Rails'
+# version is `ActiveSupport::CoreExt::ERBUtil.html_escape` (and `h`); the functions Rails adds to ERB::Util
+# (html_escape_once, json_escape, xml_name_escape) are added there.
+
+require "erb"
+require "cgi"
+require "../string/safe_buffer"
+require "../object/blank"
+
+module ActiveSupport
+  module CoreExt
+    module ERBUtil
+      module_function
+
+      # Ruby: the original html_escape with a SafeBuffer let through (s.to_s first).
+      def unwrapped_html_escape(s)
+        case s
+        in SafeBuffer then SafeBuffer.html_safe?(s) ? SafeBuffer.to_str(s) : CGI.escapeHTML(SafeBuffer.to_str(s))
+        in String then CGI.escapeHTML(s)
+        in Integer | Float then Kernel.to_s(s)
+        else CGI.escapeHTML(Kernel.to_s(s))
+        end
+      end
+
+      def html_escape(s) = String.html_safe(unwrapped_html_escape(s))
+      def h(s) = html_escape(s)
+    end
+  end
+end
+
+class ERB
+  module Util
+    module_function
+
+    def html_escape_table = once { Hash.of("&" => "&amp;", ">" => "&gt;", "<" => "&lt;", '"' => "&quot;", "'" => "&#39;") }
+    def html_escape_once_regexp = /["><']|&(?!([a-zA-Z]+|(#\d+)|(#[xX][\dA-Fa-f]+));)/
+
+    def tag_name_start_codepoints
+      "@:A-Z_a-z\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2FF}\u{370}-\u{37D}\u{37F}-\u{1FFF}" \
+        "\u{200C}-\u{200D}\u{2070}-\u{218F}\u{2C00}-\u{2FEF}\u{3001}-\u{D7FF}\u{F900}-\u{FDCF}" \
+        "\u{FDF0}-\u{FFFD}\u{10000}-\u{EFFFF}"
+    end
+
+    def tag_name_following_codepoints = "#{tag_name_start_codepoints}\\-.0-9\u{B7}\u{0300}-\u{036F}\u{203F}-\u{2040}"
+    def invalid_tag_name_start_regexp = once { Regexp.new("[^#{tag_name_start_codepoints}]") }
+    def invalid_tag_name_following_regexp = once { Regexp.new("[^#{tag_name_following_codepoints}]") }
+    def safe_xml_tag_name_regexp = once { Regexp.new("\\A[#{tag_name_start_codepoints}][#{tag_name_following_codepoints}]*\\z") }
+
+    def html_escape_once(s)
+      String.html_safe(String.gsub(Object.html_text(s), html_escape_once_regexp, html_escape_table))
+    end
+
+    def json_escape(s)
+      result = Object.html_text(s)
+      result = String.gsub(result, ">", '\u003e').gsub("<", '\u003c').gsub("&", '\u0026')
+      result = String.gsub(result, "\u2028", '\u2028').gsub("\u2029", '\u2029')
+      Object.html_safe?(s) ? String.html_safe(result) : result
+    end
+
+    def xml_name_escape(name)
+      return "" if String.blank?(name)
+      return name if String.match?(name, safe_xml_tag_name_regexp)
+      starting_char = String.gsub(String.[](name, 0) || "", invalid_tag_name_start_regexp, "_")
+      return starting_char if String.size(name) == 1
+      following_chars = String.gsub(String.[](name, 1..) || "", invalid_tag_name_following_regexp, "_")
+      starting_char + following_chars
+    end
+  end
+end

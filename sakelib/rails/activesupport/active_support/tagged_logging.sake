@@ -1,0 +1,78 @@
+# Port of activesupport-8.1.3/lib/active_support/tagged_logging.rb (partial: the tags are the logger's, not per thread; no LocalTagStorage)
+#
+# Ruby extends the logger and its formatter with modules. Sake cannot extend an object, so the tag stack is a
+# field of ActiveSupport::Logger (logger.sake, which also has TagStack: the logger's add uses it), set by
+# TaggedLogging.new on a copy, as Ruby's clone + extend:
+#
+#   Ruby                                          Sake
+#   logger = ActiveSupport::TaggedLogging.new(l)  logger = ActiveSupport::TaggedLogging.new(l)
+#   logger.tagged("BCX") { logger.info "x" }      ActiveSupport::Logger.tagged(logger, "BCX") { Logger.info(logger, "x") }
+
+require "logger"
+
+module ActiveSupport
+  module TaggedLogging
+    module_function
+
+    # Ruby's TaggedLogging.new(logger): a copy of the logger with its own tag stack.
+    def new(logger)
+      l = dup(logger)
+      Logger.set_tag_stack_(l, TagStack.new(String[], nil))
+      l
+    end
+
+    def logger(dev) = TaggedLogging.new(Logger.new(dev))
+  end
+
+  class Logger
+    # Ruby's tagged(*tags) { |logger| }: the tags apply while the block runs; without a block, a new logger
+    # with the current tags and these.
+    def tagged(l, *tags)
+      ts = @tag_stack_
+      if block_given?
+        return yield(l) if ts == nil
+        pushed_count = Array.size(TaggedLogging::TagStack.push_tags(ts, tags))
+        begin
+          yield(l)
+        ensure
+          TaggedLogging::TagStack.pop_tags(ts, pushed_count)
+        end
+      else
+        logger = TaggedLogging.new(l)
+        lts = Logger.tag_stack_(logger)
+        if lts != nil
+          TaggedLogging::TagStack.push_tags(lts, current_tags(l))
+          TaggedLogging::TagStack.push_tags(lts, tags)
+        end
+        logger
+      end
+    end
+
+    def push_tags(l, *tags)
+      ts = @tag_stack_
+      ts == nil ? String[] : TaggedLogging::TagStack.push_tags(ts, tags)
+    end
+
+    def pop_tags(l, count = 1)
+      ts = @tag_stack_
+      TaggedLogging::TagStack.pop_tags(ts, count) if ts != nil
+    end
+
+    def clear_tags!(l)
+      ts = @tag_stack_
+      TaggedLogging::TagStack.clear(ts) if ts != nil
+    end
+
+    def current_tags(l)
+      ts = @tag_stack_
+      ts == nil ? String[] : TaggedLogging::TagStack.tags(ts)
+    end
+
+    def tags_text(l)
+      ts = @tag_stack_
+      ts == nil ? "" : Kernel.to_s(TaggedLogging::TagStack.format_message(ts, ""))
+    end
+
+    def flush(l) = clear_tags!(l)
+  end
+end

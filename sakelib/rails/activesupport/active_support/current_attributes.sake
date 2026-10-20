@@ -1,0 +1,58 @@
+# Port of activesupport-8.1.3/lib/active_support/current_attributes.rb (partial: one instance for the program, not per thread or fiber; no clear_all; attributes are fields, so `attributes` lists the non-nil ones)
+#
+# Ruby defines the attribute methods with CodeGenerator and delegates the class's methods to the instance with
+# method_missing. In Sake the attributes are the class's fields, and generate/current_attributes.sake writes
+# the instance, the defaults and the reset callbacks from the class body:
+#
+#   Ruby                                          Sake
+#   class Current < ActiveSupport::CurrentAttributes   class Current
+#     attribute :user                                  attr_accessor user; include ActiveSupport::CurrentAttributes
+#   Current.user = u                              Current.instance.Current.user = u
+#   Current.user                                  Current.user(Current.instance)
+#   Current.reset                                 ActiveSupport::CurrentAttributes.reset(Current.instance)
+#   Current.set(user: u) { }                      ActiveSupport::CurrentAttributes.set(Current.instance, Hash.of(user: u)) { }
+#
+# `Current.user` cannot be both the class's reader and the field's (one name is one function), so the instance
+# is written out.
+
+require "callbacks"
+
+module ActiveSupport
+  module CurrentAttributes
+    include ActiveSupport::Callbacks
+
+    # Required of the includer (generated): the defaults written into the fields.
+    def __reset_attributes(c) = raise(NotImplementedError)
+
+    def INVALID_ATTRIBUTE_NAMES = Symbol[:set, :reset, :resets, :instance, :before_reset, :after_reset, :reset_all, :clear_all]
+
+    # Ruby's attributes: name => value of the attributes that have one.
+    def attributes(c)
+      h = Hash.new
+      Array.each(field_names) do |n|
+        v = read_field(c, n)
+        h[n] = v if v != nil
+      end
+      h
+    end
+
+    # Ruby's set(attributes) { } (Object#with): the attributes are restored after the block.
+    def set(c, attributes)
+      old = Hash.new
+      Hash.each(attributes) { |k, _| old[k] = read_field(c, k) }
+      begin
+        Hash.each(attributes) { |k, v| write_field(c, k, v) }
+        yield
+      ensure
+        Hash.each(old) { |k, v| write_field(c, k, v) }
+      end
+    end
+
+    def reset(c)
+      run_callbacks(c, :reset) do
+        __reset_attributes(c)
+        nil
+      end
+    end
+  end
+end

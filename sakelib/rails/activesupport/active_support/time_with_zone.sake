@@ -1,0 +1,273 @@
+# Port of activesupport-8.1.3/lib/active_support/time_with_zone.rb (partial: no YAML coder, no method_missing beyond the calculations listed, no DateTime)
+#
+# Ruby's fields are @utc, @time (the wall clock as a UTC Time), @time_zone, @period, filled lazily; here the
+# same four, named utc_time / local_time / cached_period so that `utc`, `time` and `period` stay the methods.
+# Ruby's method_missing sends what TimeWithZone lacks to the wall-clock Time and wraps the result again; here
+# that is `wrap_with_time_zone` around each Time calculation that is listed (beginning_of_day & co.).
+
+require "date"
+require "as_json"
+require "values/time_zone"
+require "core_ext/time/calculations"
+require "core_ext/time/conversions"
+require "core_ext/time/zones"
+require "core_ext/date_and_time/calculations"
+
+module ActiveSupport
+  class TimeWithZone
+    include Comparable
+    include Arithmetic
+    include AsJson
+    include DateAndTime::Calculations
+
+    attr_accessor utc_time
+    attr_reader time_zone
+    attr_accessor local_time, cached_period, is_utc
+
+    # Ruby: TimeWithZone.new(utc_time, time_zone, local_time = nil, period = nil)
+    def initialize(t)
+      u = @utc_time
+      if u
+        @utc_time = Time.getutc(u)
+      else
+        lt = @local_time
+        lt => Time
+        @local_time = Time.utc?(lt) ? lt : transfer_time_values_to_utc_constructor(lt)
+        @cached_period = get_period_and_ensure_valid_local_time(t, @cached_period)
+      end
+      z = zone(t)
+      @is_utc = z == "UTC" || z == "UCT"
+    end
+
+    # private
+    def transfer_time_values_to_utc_constructor(time)
+      Time.utc(Time.year(time), Time.month(time), Time.day(time), Time.hour(time), Time.min(time), Time.sec(time) + Time.subsec(time))
+    end
+
+    def get_period_and_ensure_valid_local_time(t, period)
+      return period if period
+      begin
+        TimeZone.period_for_local(@time_zone, local_time_or_raise(t))
+      rescue TZInfo::PeriodNotFound
+        @local_time = local_time_or_raise(t) + 3600
+        retry
+      end
+    end
+
+    def local_time_or_raise(t) = @local_time || raise(ArgumentError, "no local time")
+
+    def time(t)
+      lt = @local_time
+      return lt if lt
+      made = Time.getutc(utc(t)) + utc_offset(t)
+      @local_time = made
+      made
+    end
+
+    def utc(t)
+      u = @utc_time
+      return u if u
+      made = local_time_or_raise(t) - utc_offset(t)
+      @utc_time = made
+      made
+    end
+
+    def comparable_time(t) = utc(t)
+    def getgm(t) = utc(t)
+    def getutc(t) = utc(t)
+    def gmtime(t) = utc(t)
+
+    def period(t)
+      cp = @cached_period
+      return cp if cp
+      made = TimeZone.period_for_utc(@time_zone, utc(t))
+      @cached_period = made
+      made
+    end
+
+    def in_time_zone(t, new_zone = Time.zone_or_utc)
+      z = Time.find_zone!(new_zone)
+      return t if @time_zone == z
+      Time.in_time_zone(utc(t), z)
+    end
+
+    def localtime(t, utc_offset = nil) = utc_offset ? Time.getlocal(utc(t), utc_offset) : Time.getlocal(utc(t))
+    def getlocal(t, utc_offset = nil) = localtime(t, utc_offset)
+
+    def dst?(t) = TZInfo::TimezonePeriod.dst?(period(t))
+    def isdst(t) = dst?(t)
+    def utc?(t) = @is_utc == true
+    def gmt?(t) = utc?(t)
+    def utc_offset(t) = TZInfo::TimezonePeriod.observed_utc_offset(period(t))
+    def gmt_offset(t) = utc_offset(t)
+    def gmtoff(t) = utc_offset(t)
+
+    def formatted_offset(t, colon = true, alternate_utc_string = nil)
+      utc?(t) && alternate_utc_string || TimeZone.seconds_to_utc_offset(utc_offset(t), colon)
+    end
+
+    def zone(t) = TZInfo::TimezonePeriod.abbreviation(period(t))
+
+    def inspect(t) = "#{Time.strftime(time(t), "%F %H:%M:%S.%9N")} #{zone(t)} #{formatted_offset(t)}"
+
+    def xmlschema(t, fraction_digits = 0)
+      precision = fraction_digits || 0
+      if utc?(t)
+        Time.iso8601(utc(t), precision)
+      else
+        str = Time.iso8601(time(t), precision)
+        String.sub(str, /(Z|[+-]\d{2}:\d{2})\z/, formatted_offset(t, true, "Z"))
+      end
+    end
+
+    def iso8601(t, fraction_digits = 0) = xmlschema(t, fraction_digits)
+    def rfc3339(t, fraction_digits = 0) = xmlschema(t, fraction_digits)
+
+    # Ruby: as_json with use_standard_json_time_format (true) and time_precision (3)
+    def as_json(t, options = nil) = xmlschema(t, 3)
+
+    def httpdate(t) = Time.httpdate(utc(t))
+    def rfc2822(t) = to_fs(t, :rfc822)
+    def rfc822(t) = rfc2822(t)
+
+    def to_s(t) = "#{Time.strftime(time(t), "%Y-%m-%d %H:%M:%S")} #{formatted_offset(t, false, "UTC")}"
+
+    def to_fs(t, format = :default)
+      return Time.to_fs(utc(t), format) if format == :db
+      case format
+      in :rfc822 then strftime(t, "%a, %d %b %Y %H:%M:%S #{formatted_offset(t, false)}")
+      in :long_ordinal then strftime(t, "%B #{ActiveSupport::Inflector.ordinalize(day(t))}, %Y %H:%M")
+      in :iso8601 then xmlschema(t)
+      in :inspect then strftime(t, "%Y-%m-%d %H:%M:%S.%9N #{formatted_offset(t)}")
+      else
+        fmt = Time.date_formats[format]
+        fmt ? strftime(t, fmt) : to_s(t)
+      end
+    end
+
+    def to_formatted_s(t, format = :default) = to_fs(t, format)
+
+    def strftime(t, format)
+      z = zone(t)
+      f = String.gsub(format, /((?:\A|[^%])(?:%%)*)%Z/) { |m| String.delete_suffix(m, "%Z") + z }
+      Time.strftime(Time.getlocal(utc(t), utc_offset(t)), f)
+    end
+
+    def <=>(a, other)
+      case other
+      in TimeWithZone then utc(a) <=> TimeWithZone.utc(other)
+      in Time then utc(a) <=> other
+      end
+    end
+
+    def ==(a, other) = (other in TimeWithZone | Time) && (a <=> other) == 0
+
+    def before?(a, other) = a < other
+    def after?(a, other) = a > other
+    def between?(a, min, max) = a >= min && a <= max
+    def past?(t) = Time.past?(utc(t))
+    def future?(t) = Time.future?(utc(t))
+    def today?(t) = to_date(t) == TimeZone.today(@time_zone)
+    def tomorrow?(t) = to_date(t) == TimeZone.tomorrow(@time_zone)
+    def yesterday?(t) = to_date(t) == TimeZone.yesterday(@time_zone)
+
+    # Ruby: + with a variable Duration (days, months, ...) goes through method_missing (the wall clock).
+    def +(t, other)
+      case other
+      in Duration
+        if Duration.variable?(other)
+          Duration.since(other, t)
+        else
+          Time.in_time_zone(utc(t) + Duration.value(other), @time_zone)
+        end
+      in Integer | Float | Rational then Time.in_time_zone(utc(t) + other, @time_zone)
+      end
+    end
+
+    def since(t, other) = t + other
+    def in(t, other) = t + other
+
+    # Ruby: - a time gives seconds (Float); - a number or Duration gives a TimeWithZone.
+    def -(t, other)
+      case other
+      in TimeWithZone then Time.-(utc(t), TimeWithZone.utc(other))
+      in Time then Time.-(utc(t), Time.getutc(other))
+      in Duration
+        if Duration.variable?(other)
+          Duration.ago(other, t)
+        else
+          Time.in_time_zone(utc(t) - Duration.value(other), @time_zone)
+        end
+      in Integer | Float | Rational then Time.in_time_zone(utc(t) - other, @time_zone)
+      end
+    end
+
+    def ago(t, other) = t - other
+
+    # Ruby: change(options) with :zone or :offset besides Time#change's keys.
+    def change(t, options)
+      if Hash.key?(options, :zone) && Hash.key?(options, :offset)
+        raise ArgumentError, "Can't change both :offset and :zone at the same time: #{Kernel.inspect(options)}"
+      end
+      new_time = Time.change(time(t), Hash.except(options, :zone))
+      zname = options[:zone]
+      new_zone = zname ? Time.find_zone!(Kernel.to_s(zname)) : @time_zone
+      periods = TimeZone.periods_for_local(new_zone, new_time)
+      keep = Array.include?(periods, period(t)) ? period(t) : nil
+      TimeWithZone.new(nil, new_zone, new_time, keep)
+    end
+
+    def advance(t, options)
+      if Array.any?(options.Hash.values_at(:years, :weeks, :months, :days)) { |v| v != nil }
+        wrap_with_time_zone(t, Time.advance(time(t), options))
+      else
+        Time.in_time_zone(Time.advance(utc(t), options), @time_zone)
+      end
+    end
+
+    def year(t) = Time.year(time(t))
+    def mon(t) = Time.mon(time(t))
+    def month(t) = Time.month(time(t))
+    def day(t) = Time.day(time(t))
+    def mday(t) = Time.mday(time(t))
+    def wday(t) = Time.wday(time(t))
+    def yday(t) = Time.yday(time(t))
+    def hour(t) = Time.hour(time(t))
+    def min(t) = Time.min(time(t))
+    def sec(t) = Time.sec(time(t))
+    def usec(t) = Time.usec(time(t))
+    def nsec(t) = Time.nsec(time(t))
+    def to_date(t) = Date.new(year(t), month(t), day(t))
+
+    def to_a(t)
+      [sec(t), min(t), hour(t), day(t), mon(t), year(t), wday(t), yday(t), dst?(t), zone(t)]
+    end
+
+    def to_f(t) = Time.to_f(utc(t))
+    def to_i(t) = Time.to_i(utc(t))
+    def to_r(t) = Time.to_r(utc(t))
+    def to_time(t) = Time.getlocal(utc(t), utc_offset(t))
+
+    # Ruby: wrap_with_time_zone(time): a Time that method_missing got back, as a TimeWithZone in this zone.
+    def wrap_with_time_zone(t, time) = TimeWithZone.new(nil, @time_zone, time)
+
+    # Ruby's method_missing reaching Time's own calculations; DateAndTime::Calculations' (beginning_of_month,
+    # next_week, ...) are included instead, and reach these through change and advance.
+    def beginning_of_day(t) = wrap_with_time_zone(t, Time.beginning_of_day(time(t)))
+    def middle_of_day(t) = wrap_with_time_zone(t, Time.middle_of_day(time(t)))
+    def end_of_day(t) = wrap_with_time_zone(t, Time.end_of_day(time(t)))
+    def beginning_of_hour(t) = wrap_with_time_zone(t, Time.beginning_of_hour(time(t)))
+    def end_of_hour(t) = wrap_with_time_zone(t, Time.end_of_hour(time(t)))
+    def beginning_of_minute(t) = wrap_with_time_zone(t, Time.beginning_of_minute(time(t)))
+    def midnight(t) = beginning_of_day(t)
+
+    # DateAndTime::Calculations' hooks
+    def first_hour(t, date_or_time) = TimeWithZone.beginning_of_day(date_or_time)
+    def last_hour(t, date_or_time) = TimeWithZone.end_of_day(date_or_time)
+    def midnight_if_time(t, date_or_time) = TimeWithZone.beginning_of_day(date_or_time)
+
+    def copy_time_to(t, other)
+      TimeWithZone.change(other, Hash.of(hour: hour(t), min: min(t), sec: sec(t), nsec: nsec(t)))
+    end
+  end
+end

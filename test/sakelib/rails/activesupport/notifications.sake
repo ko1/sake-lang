@@ -1,0 +1,98 @@
+# ActiveSupport::Notifications: subscribe (String, Regexp, all), the three listener kinds, instrument,
+# exceptions in the payload, unsubscribe, subscribed, publish, errors in listeners, Event.
+
+require "rails/activesupport/active_support/notifications"
+
+N = ActiveSupport::Notifications
+E = ActiveSupport::Notifications::Event
+
+def show(payload) = Kernel.inspect(Hash.except(payload, :exception_object))
+
+# A listener called with an Event (Ruby: call with one parameter).
+class Collector
+  attr_reader tag
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    puts("  #{@tag}: #{E.name(event)} #{show(E.payload(event))} #{E.duration(event) >= 0} #{String.size(E.transaction_id(event))}")
+  end
+end
+
+# A listener called with the times (Ruby: call with five parameters).
+class Timer
+  include ActiveSupport::Notifications::Listener
+  def listener_kind(l) = :timed
+  def call_timed(l, name, started, finished, id, payload)
+    puts("  timer: #{name} #{finished >= started} #{String.size(id)} #{show(payload)}")
+  end
+end
+
+# A listener with start and finish (Ruby: Evented).
+class Tracer
+  include ActiveSupport::Notifications::Listener
+  def listener_kind(l) = :evented
+  def start(l, name, id, payload) = puts("  start #{name}")
+  def finish(l, name, id, payload) = puts("  finish #{name} #{show(payload)}")
+end
+
+class Failing
+  attr_reader error
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    name = E.name(event)
+    raise ArgumentError, "from #{name}" if @error == :argument
+    raise KeyError, "from #{name}"
+  end
+end
+
+puts("instrument:")
+sql = N.subscribe("sql.active_record", Collector.new("sql"))
+ar = N.subscribe(/\.active_record\z/, Timer.new)
+all = N.subscribe(nil, Tracer.new)
+p(N.instrument("sql.active_record", Hash.of(sql: "SELECT 1")) { |payload| payload[:rows] = 1; :result })
+p(N.instrument("instantiation.active_record", Hash.of(count: 2)))
+p(N.instrument("render.action_view") { :rendered })
+puts("listening:")
+p([N::Fanout.listening?(N.notifier, "sql.active_record"), N::Fanout.listening?(N.notifier, "nothing")])
+N.unsubscribe(all)
+p(N::Fanout.listening?(N.notifier, "nothing"))
+p(N.instrument("nothing") { :no_listener })
+puts("exception:")
+begin
+  N.instrument("sql.active_record", Hash.of(sql: "BAD")) { raise ArgumentError, "syntax error" }
+rescue ArgumentError => e
+  puts("  rescued #{Exception.message(e)}")
+end
+puts("unsubscribe by name (a Regexp subscriber excludes it):")
+N.unsubscribe("sql.active_record")
+N.instrument("sql.active_record", Hash.of(sql: "SELECT 2"))
+N.instrument("cache.active_record", Hash.of(key: "k"))
+N.unsubscribe(ar)
+puts("subscribed:")
+N.subscribed(Collector.new("temp"), "temp.app") do
+  N.instrument("temp.app", Hash.of(n: 1))
+end
+N.instrument("temp.app", Hash.of(n: 2))
+puts("publish:")
+t = N.subscribe("pub.app", Timer.new)
+N.publish("pub.app", Time.now, Time.now, "x" * 20, Hash.of(via: :publish))
+N.unsubscribe(t)
+puts("errors in listeners:")
+f1 = N.subscribe("fail.app", Failing.new(:argument))
+begin
+  N.instrument("fail.app")
+rescue ArgumentError => e
+  puts("  ArgumentError: #{Exception.message(e)}")
+end
+f2 = N.subscribe("fail.app", Failing.new(:key))
+begin
+  N.instrument("fail.app")
+rescue ActiveSupport::Notifications::InstrumentationSubscriberError => e
+  puts("  #{Exception.message(e)}")
+  p(Array.map(ActiveSupport::Notifications::InstrumentationSubscriberError.exceptions(e)) { Exception.message(it) })
+end
+N.unsubscribe(f1)
+N.unsubscribe(f2)
+puts("event:")
+ev = E.new_event("job.app", nil, nil, "id1", Hash.of(job: "Mail"))
+p(E.record(ev) { |payload| payload[:done] = true; :ok })
+p([E.name(ev), E.transaction_id(ev), E.payload(ev), E.duration(ev) >= 0, (E.time(ev) || 0) <= (E.end(ev) || 0), E.allocations(ev) >= 0])

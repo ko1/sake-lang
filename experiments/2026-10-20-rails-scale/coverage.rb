@@ -14,7 +14,7 @@ problems = []
 files.each do |f|
   path = File.join(ROOT, f)
   gem = f.split("/").first
-  head = File.foreach(path).first(3).join
+  head = File.foreach(path).first(8).join
   r = rows[gem]
   r[:sake] += code_lines(path)
   r[:files] += 1
@@ -22,16 +22,17 @@ files.each do |f|
     r[:sake_only] += 1
     next
   end
-  m = head.match(/# Port of (.+?)(?: \(partial[^)]*\))?\s*$/) or (problems << "#{f}: no 'Port of' header"; next)
+  head = head.lines.take_while { _1.start_with?("#") }.join
+  first = head[%r{[\w-]+-8\.1\.3/lib/[\w/]+\.rb}] or (problems << "#{f}: no 'Port of <gem>-8.1.3/lib/...' header"; next)
+  # The directories a relative path may start from: the first file's, then each one up to lib/.
+  bases = [File.dirname(first)]
+  bases << File.dirname(bases.last) until bases.last.end_with?("/lib")
   r[:partial] += 1 if head.include?("(partial")
-  m[1].split(/,\s*/).each do |spec|
-    spec = spec.sub(/ \(.*\z/, "")
-    full = spec.include?("-8.1.3/") ? File.join(GEMS, spec) : nil
-    if full.nil? || !File.file?(full)
-      problems << "#{f}: cannot find #{spec}"
-      next
-    end
-    r[:rb][full] ||= code_lines(full)
+  # Paths after the first are relative to the same lib/ (`... methods.rb and inflector/*.rb`); globs expand.
+  head.scan(%r{(?:[\w-]+-8\.1\.3/lib/)?[\w/*]+\.rb}).each do |spec|
+    found = spec.include?("-8.1.3/") ? Dir.glob(File.join(GEMS, spec)) : bases.lazy.map { Dir.glob(File.join(GEMS, _1, spec)) }.find(&:any?) || []
+    problems << "#{f}: cannot find #{spec}" if found.empty?
+    found.each { r[:rb][_1] ||= code_lines(_1) }
   end
 end
 

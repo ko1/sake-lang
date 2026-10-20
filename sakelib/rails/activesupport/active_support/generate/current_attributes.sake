@@ -1,0 +1,69 @@
+# Port of the class-body side of activesupport-8.1.3/lib/active_support/current_attributes.rb (Sake only): the generator
+#
+# `attribute :a, :b, default: v`, `before_reset :m`, `resets :m` / `after_reset :m` (class_body.sake) become the
+# instance (Ruby: current_instances[key] ||= new), the defaults, and the reset callbacks: `expand` turns the
+# reset declarations into callbacks lines (define_callbacks :reset, set_callback :reset, ...) for callbacks.sake.
+
+require "class_body"
+
+module ActiveSupport
+  module CurrentAttributes
+    module Generate
+      module_function
+
+      def CALLS = String["attribute", "before_reset", "resets", "after_reset"]
+      def INVALID_ATTRIBUTE_NAMES = String[":set", ":reset", ":resets", ":instance", ":before_reset", ":after_reset", ":reset_all", ":clear_all"]
+
+      # The reset declarations as callbacks lines, in place.
+      def expand(body)
+        decls = ActiveSupport::Generate::ClassBody.declarations(body)
+        first = Array.find(decls) { |d| ActiveSupport::Generate::Declaration.call(d) == "attribute" }
+        return nil if first == nil
+        n = ActiveSupport::Generate::Declaration.line(first)
+        Array.map!(decls) do |d|
+          args = ActiveSupport::Generate::Declaration.args(d)
+          line = ActiveSupport::Generate::Declaration.line(d)
+          case ActiveSupport::Generate::Declaration.call(d)
+          in "before_reset" then ActiveSupport::Generate::Declaration.new(line, "set_callback", String[":reset", ":before"] + args)
+          in "resets" | "after_reset" then ActiveSupport::Generate::Declaration.new(line, "set_callback", String[":reset", ":after"] + args)
+          else d
+          end
+        end
+        Array.unshift(decls, ActiveSupport::Generate::Declaration.new(n, "define_callbacks", String[":reset"]))
+      end
+
+      def class_source(body, path)
+        k = ActiveSupport::Generate::ClassBody.name(body)
+        attrs = Any[]
+        Array.each(ActiveSupport::Generate.declarations(body, String["attribute"])) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          default = "nil"
+          names = String[]
+          Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+            o = ActiveSupport::Generate.option(a)
+            if o == nil
+              raise ArgumentError, "#{path}:#{n}: Restricted attribute names: #{String.delete_prefix(a, ":")}" if Array.include?(Generate.INVALID_ATTRIBUTE_NAMES, a)
+              Array.push(names, String.delete_prefix(a, ":"))
+            else
+              key, v = o
+              raise ArgumentError, "#{path}:#{n}: unknown keyword: :#{key}" if key != "default"
+              default = ActiveSupport::Generate.value(v, n, path)
+            end
+          end
+          Array.each(names) { |a| Array.push(attrs, [a, default, n]) }
+        end
+        return "" if Array.empty?(attrs)
+        s = "# sake-origin: #{path}:#{ActiveSupport::Generate::ClassBody.line(body)}\n"
+        s += "def #{k}.instance = once { #{k}.new }\n"
+        s += "def #{k}.initialize(c) = __reset_attributes(c)\n"
+        s += "def #{k}.__reset_attributes(c)\n"
+        Array.each(attrs) do |x|
+          a, default, n = x
+          s += "# sake-origin: #{path}:#{n}\n  @#{a} = #{default}\n"
+        end
+        s += "# sake-origin: none\nend\n"
+        s
+      end
+    end
+  end
+end

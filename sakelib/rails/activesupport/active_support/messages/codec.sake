@@ -1,0 +1,94 @@
+# Port of activesupport-8.1.3/lib/active_support/messages/codec.rb and messages/metadata.rb (partial: the serializer is ::JSON only (no Marshal, MessagePack or fallbacks); metadata always uses the message serializer (Rails 7.1's use_message_serializer_for_metadata = true); Ruby's throw/catch of :invalid_message_* are the exceptions below)
+#
+# Codec is Ruby's base class of MessageVerifier and MessageEncryptor; Sake has no inheritance, so its functions
+# are a module of functions over the options, called by the verifier.
+
+require "json"
+require "base64"
+require "time"
+
+module ActiveSupport
+  module Messages
+    # Ruby's throw :invalid_message_format / :invalid_message_serialization / :invalid_message_content.
+    class InvalidMessageFormat < StandardError
+    end
+    class InvalidMessageSerialization < StandardError
+    end
+    class InvalidMessageContent < StandardError
+    end
+
+    module Codec
+      module_function
+
+      def encode(data, url_safe) = url_safe ? Base64.urlsafe_encode64(data, padding: false) : Base64.strict_encode64(data)
+
+      def decode(encoded, url_safe)
+        url_safe ? Base64.urlsafe_decode64(encoded) : Base64.strict_decode64(encoded)
+      rescue => error
+        raise InvalidMessageFormat, Exception.message(error)
+      end
+
+      def serialize(data) = JSON.generate(data)
+
+      def deserialize(serialized)
+        JSON.parse(serialized)
+      rescue JSON::ParserError => error
+        raise InvalidMessageSerialization, Exception.message(error)
+      end
+    end
+
+    module Metadata
+      module_function
+
+      # Ruby's serialize_with_metadata(data, purpose:, expires_at:, expires_in:): {"_rails" => {"data", "exp", "pur"}}.
+      def serialize_with_metadata(data, metadata)
+        h = metadata == nil ? Hash.new : Record.to_h(metadata)
+        has_metadata = Hash.any?(h) { |k, v| v }
+        return Codec.serialize(data) if !has_metadata
+        Codec.serialize(wrap_in_metadata_envelope(data, h[:expires_at], h[:expires_in], h[:purpose]))
+      end
+
+      def deserialize_with_metadata(message, expected)
+        h = expected == nil ? Hash.new : Record.to_h(expected)
+        deserialized = Codec.deserialize(message)
+        if metadata_envelope?(deserialized)
+          extract_from_metadata_envelope(deserialized, h[:purpose])["data"]
+        elsif Hash.none?(h) { |k, v| v }
+          deserialized
+        else
+          raise InvalidMessageContent, "missing metadata"
+        end
+      end
+
+      def wrap_in_metadata_envelope(data, expires_at, expires_in, purpose)
+        hash = Hash.of("data" => data)
+        expiry = pick_expiry(expires_at, expires_in)
+        hash["exp"] = expiry if expiry != nil
+        hash["pur"] = Kernel.to_s(purpose) if purpose != nil
+        Hash.of("_rails" => hash)
+      end
+
+      def extract_from_metadata_envelope(envelope, purpose)
+        raise InvalidMessageContent, "missing metadata" unless envelope in Hash
+        hash = envelope["_rails"]
+        raise InvalidMessageContent, "missing metadata" unless hash in Hash
+        exp = hash["exp"]
+        raise InvalidMessageContent, "expired" if (exp in String) && Time.now >= Time.xmlschema(exp)   # Ruby's Time.iso8601(s)
+        raise InvalidMessageContent, "mismatched purpose" if Kernel.to_s(hash["pur"]) != Kernel.to_s(purpose)
+        hash
+      end
+
+      def metadata_envelope?(object) = (object in Hash) && Hash.key?(object, "_rails")
+
+      # Times are written as ISO 8601 with milliseconds (Ruby: expiry.iso8601(3)); expires_in is seconds.
+      def pick_expiry(expires_at, expires_in)
+        expiry = if expires_at in Time
+                   Time.getutc(expires_at)
+                 elsif expires_in in Integer | Float
+                   Time.getutc(Time.now + expires_in)
+                 end
+        expiry == nil ? nil : Time.iso8601(expiry, 3)
+      end
+    end
+  end
+end

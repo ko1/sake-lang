@@ -1,0 +1,56 @@
+# Port of activesupport-8.1.3/lib/active_support/core_ext/time/zones.rb and date_and_time/zones.rb (Sake needs them together)
+#
+# Ruby's `Time.zone` / `Time.zone = z` cannot be named so: `Time.zone(t)` is a built-in (Time#zone), and a built-in
+# name cannot be given a second meaning. They are `Time.current_zone` / `Time.set_zone(z)`; the zone is kept in
+# one holder made once (Ruby: IsolatedExecutionState[:time_zone]).
+
+require "../../values/time_zone"
+
+class Time
+  class ZoneState
+    attr_accessor zone, zone_default
+  end
+
+  def zone_state = once { ZoneState.new(nil, nil) }
+
+  # Ruby: Time.zone
+  def current_zone = ZoneState.zone(zone_state) || ZoneState.zone_default(zone_state)
+
+  # Ruby: Time.zone = time_zone
+  def set_zone(time_zone)
+    ZoneState.set_zone(zone_state, find_zone!(time_zone))
+  end
+
+  def set_zone_default(time_zone)
+    ZoneState.set_zone_default(zone_state, find_zone!(time_zone))
+  end
+
+  # (Sake only) Time.zone, or UTC when none is set: the default of in_time_zone.
+  def zone_or_utc = current_zone || find_zone!("UTC")
+
+  # Ruby: Time.zone.now (Time.current when a zone is set)
+  def zone_now = ActiveSupport::TimeZone.now(zone_or_utc)
+
+  def use_zone(time_zone)
+    new_zone = find_zone!(time_zone)
+    old_zone = ZoneState.zone(zone_state)
+    begin
+      ZoneState.set_zone(zone_state, new_zone)
+      yield
+    ensure
+      ZoneState.set_zone(zone_state, old_zone)
+    end
+  end
+
+  def find_zone!(time_zone)
+    ActiveSupport::TimeZone.lookup(time_zone) || raise(ArgumentError, "Invalid Timezone: #{time_zone}")
+  end
+
+  def find_zone(time_zone) = ActiveSupport::TimeZone.lookup(time_zone)
+
+  # DateAndTime::Zones#in_time_zone(zone = ::Time.zone)
+  def in_time_zone(t, zone = nil)
+    z = zone ? find_zone!(zone) : zone_or_utc
+    ActiveSupport::TimeWithZone.new(Time.getutc(t), z)
+  end
+end

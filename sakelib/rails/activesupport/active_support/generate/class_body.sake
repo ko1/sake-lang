@@ -1,0 +1,121 @@
+# Port of nothing (Sake only): class bodies as data, for the generators of ActiveSupport's class-body DSLs
+#
+# Ruby runs a class body's lines (`set_callback :save, :before, :x`, `class_attribute :y, default: 1`,
+# `rescue_from E, with: :h`, `attribute :user`) when the class is loaded. Sake has no code in a class body, so
+# these lines are kept in a file of class bodies, which Ruby can require as is, and the generators turn them
+# into Sake functions. `parse` reads the file; each generator (callbacks.sake, class_attribute.sake, ...) takes
+# the declarations it knows, and `value` turns a Ruby literal argument into Sake.
+
+module ActiveSupport
+  module Generate
+    class ClassBody
+      attr_reader name, parent, line, declarations
+    end
+
+    # One line of a class body: `call arg, arg, key: value`.
+    class Declaration
+      attr_reader line, call, args
+    end
+
+    module_function
+
+    # class NAME [< PARENT] ... end, with one declaration per line; `include X` lines are skipped (the app's
+    # class writes its include itself).
+    def parse(text, path)
+      bodies = ClassBody[]
+      current = nil
+      String.lines(text).Array.each_with_index do |raw, i|
+        line = String.strip(raw)
+        n = i + 1
+        next if line == "" || String.start_with?(line, "#")
+        m = String.match(line, /\Aclass ([A-Z][\w:]*)(?: < ([A-Z][\w:]*))?\z/)
+        if m
+          body = ClassBody.new(Kernel.to_s(m[1]), m[2], n, Declaration[])
+          Array.push(bodies, body)
+          current = body
+          next
+        end
+        if line == "end"
+          current = nil
+          next
+        end
+        raise ArgumentError, "#{path}:#{n}: a declaration outside a class body" if current == nil
+        next if String.start_with?(line, "include ") || String.start_with?(line, "extend ")
+        call, rest = String.split(line, " ", 2).Array.values_at(0, 1)
+        args = Array.map(split_args(Kernel.to_s(rest))) { |a| String.strip(a) }
+        Array.push(ClassBody.declarations(current), Declaration.new(n, Kernel.to_s(call), args))
+      end
+      bodies
+    end
+
+    # Splits at the commas outside brackets, braces and parentheses.
+    def split_args(s)
+      parts = String[]
+      depth = 0
+      cur = ""
+      String.each_char(s) do |c|
+        if c == "," && depth == 0
+          Array.push(parts, cur)
+          cur = ""
+          next
+        end
+        depth += 1 if c == "[" || c == "{" || c == "("
+        depth -= 1 if c == "]" || c == "}" || c == ")"
+        cur += c
+      end
+      Array.push(parts, cur) if String.strip(cur) != ""
+      parts
+    end
+
+    # An argument's `key: value` split, or nil for a positional one.
+    def option(a)
+      m = String.match(a, /\A(\w+): (.*)\z/)
+      return nil if m == nil
+      [Kernel.to_s(m[1]), String.strip(Kernel.to_s(m[2]))]
+    end
+
+    def symbol?(a) = String.match?(a, /\A:\w+[?!]?\z/)
+    def symbol(a) = String.to_sym(String.delete_prefix(a, ":"))
+
+    # A Ruby literal as Sake: Symbols, Strings, numbers, true/false/nil, Arrays of them, `{}`; a constant
+    # (an exception class) stays.
+    def value(v, n, path)
+      return v if symbol?(v) || v == "true" || v == "false" || v == "nil"
+      return v if String.match?(v, /\A-?\d+(\.\d+)?\z/) || String.match?(v, /\A"[^"\\#]*"\z/)
+      return v if String.match?(v, /\A[A-Z][\w:]*\z/)
+      return "Hash.new" if v == "{}"
+      if String.start_with?(v, "[") && String.end_with?(v, "]")
+        items = Array.map(split_args(String.slice(v, 1...-1) || "")) { |x| value(String.strip(x), n, path) }
+        return "Any[#{Array.join(items, ", ")}]"
+      end
+      raise ArgumentError, "#{path}:#{n}: `#{v}` has no Sake form here (a block or a lambda: name a method instead)"
+    end
+
+    # Positional Sake arguments, with the `key: value` ones gathered into one trailing Record.
+    def join_args(pos, opts)
+      list = Array.dup(pos)
+      Array.push(list, "{#{Array.join(opts, ", ")}}") if !Array.empty?(opts)
+      Array.join(list, ", ")
+    end
+
+    # The bodies from the root to body, among the parsed ones.
+    def lineage(body, bodies)
+      chain = ClassBody[body]
+      parent = ClassBody.parent(body)
+      while parent != nil
+        pb = Array.find(bodies) { |b| ClassBody.name(b) == parent }
+        break if pb == nil
+        Array.unshift(chain, pb)
+        parent = ClassBody.parent(pb)
+      end
+      chain
+    end
+
+    def parent_name(body, bodies)
+      chain = lineage(body, bodies)
+      Array.size(chain) > 1 ? ClassBody.name(Array.fetch(chain, -2)) : nil
+    end
+
+    def declarations(body, calls) = Array.select(ClassBody.declarations(body)) { |d| Array.include?(calls, Declaration.call(d)) }
+  end
+end

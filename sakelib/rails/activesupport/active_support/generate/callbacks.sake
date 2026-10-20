@@ -1,0 +1,138 @@
+# Port of the class-body side of activesupport-8.1.3/lib/active_support/callbacks.rb (Sake only): the generator
+#
+# Ruby runs `define_callbacks`/`set_callback` in the class body, and its module_eval defines _run_NAME_callbacks.
+# Sake has no code in a class body and no send, so a generation step reads those lines and writes, per class:
+#
+#   def Post.__callbacks(t) = Post.__class_callbacks         the class attribute
+#   def Post.__callback(t, filter)                            target.send(filter)
+#     case filter
+#     in :normalize then normalize(t)
+#     ...
+#   def Post.__around_callback(t, filter)                     target.send(filter, &block)
+#     case filter
+#     in :wrap then wrap(t) { yield }
+#     ...
+#   def Post._run_save_callbacks(t, &b) = run_callbacks(t, :save, &b)
+#   def Post.__class_callbacks = once do                     the class body's lines, in order
+#     c = ActiveSupport::Callbacks::ClassMethods.new_callbacks    (a subclass: inherit(Parent.__class_callbacks))
+#     ActiveSupport::Callbacks::ClassMethods.set_callback(c, :save, :before, :normalize, {if: :title?})
+#     c
+#   end
+#   def Post._save_callbacks = ...get_callbacks(Post.__class_callbacks, :save)
+#
+# The input is the class bodies as Ruby writes them (class_body.sake parses them): define_callbacks,
+# set_callback, skip_callback, reset_callbacks, with Symbols, Arrays of Symbols, true/false, and
+# AbstractController's terminator lambda. `class_source` returns the Sake source of one class, with
+# `# sake-origin:` lines pointing at the input.
+# Other frameworks map their own class-body DSL onto `declaration` (ActiveModel's before_save, ...).
+# The app's class writes `include ActiveSupport::Callbacks` itself (as in Ruby): generated source is read before
+# the file that has the `generate`, so it may only add functions to a class, not declare it.
+
+require "class_body"
+
+module ActiveSupport
+  module Callbacks
+    module Generate
+      module_function
+
+      def CALLS = String["define_callbacks", "set_callback", "skip_callback", "reset_callbacks"]
+
+      # What a body's callback lines name: [kinds, methods, around methods, Sake calls with their lines].
+      def scan(body, path)
+        kinds = Symbol[]
+        methods = Symbol[]
+        arounds = Symbol[]
+        calls = Any[]
+        Array.each(ActiveSupport::Generate.declarations(body, Generate.CALLS)) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          call = ActiveSupport::Generate::Declaration.call(d)
+          pos = String[]
+          opts = String[]
+          Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+            o = ActiveSupport::Generate.option(a)
+            if o == nil
+              Array.push(pos, ActiveSupport::Generate.value(a, n, path))
+              next
+            end
+            key, v = o
+            if key == "terminator"
+              t = String.match(v, /\A->\((\w+), (\w+)\) \{ (\w+)\.call; (\w+)\.(\w+[?!]?) \}\z/)
+              raise ArgumentError, "#{path}:#{n}: a terminator must be `->(target, result_lambda) { result_lambda.call; target.method }`" if t == nil
+              Array.push(methods, String.to_sym(Kernel.to_s(t[5])))
+              Array.push(opts, "terminator: :#{t[5]}")
+              next
+            end
+            if key == "if" || key == "unless"
+              Array.each(String.scan(v, /:(\w+[?!]?)/)) { |s| Array.push(methods, String.to_sym(Kernel.to_s(s[0]))) }
+            end
+            Array.push(opts, "#{key}: #{ActiveSupport::Generate.value(v, n, path)}")
+          end
+          syms = Array.select(pos) { |a| ActiveSupport::Generate.symbol?(a) }.Array.map { |a| ActiveSupport::Generate.symbol(a) }
+          case call
+          in "define_callbacks"
+            Array.each(syms) { |k| Array.push(kinds, k) }
+          in "set_callback"
+            filters = Array.drop(syms, 1)
+            type = Array.first(filters)
+            filters = Array.drop(filters, 1) if type == :before || type == :after || type == :around
+            Array.each(filters) do |f|
+              Array.push(methods, f)
+              Array.push(arounds, f) if type == :around
+            end
+          else nil
+          end
+          Array.push(calls, [n, call, ActiveSupport::Generate.join_args(pos, opts)])
+        end
+        [kinds, methods, arounds, calls]
+      end
+
+      # An origin line for the first declaration in chain that names method m, so a missing method is reported there.
+      def origin(chain, m, path)
+        Array.each(chain) do |b|
+          Array.each(ActiveSupport::Generate.declarations(b, Generate.CALLS)) do |d|
+            text = Array.join(ActiveSupport::Generate::Declaration.args(d), ", ")
+            return "# sake-origin: #{path}:#{ActiveSupport::Generate::Declaration.line(d)}\n" if String.match?(text, Regexp.new(":#{Regexp.escape(Symbol.to_s(m))}(?![\\w?!])"))
+          end
+        end
+        ""
+      end
+
+      # The Sake source of one class's callbacks (nothing when neither it nor an ancestor has any).
+      def class_source(body, bodies, path)
+        k = ActiveSupport::Generate::ClassBody.name(body)
+        chain = ActiveSupport::Generate.lineage(body, bodies)
+        scans = Array.map(chain) { |b| scan(b, path) }
+        kinds = Array.flat_map(scans) { |x| x[0] }.Array.uniq
+        return "" if Array.empty?(kinds)
+        methods = Array.flat_map(scans) { |x| x[1] }.Array.uniq
+        arounds = Array.flat_map(scans) { |x| x[2] }.Array.uniq
+        calls = Array.last(scans)
+        calls = calls ? calls[3] : Any[]
+        parent = ActiveSupport::Generate.parent_name(body, bodies)
+        s = "# sake-origin: #{path}:#{ActiveSupport::Generate::ClassBody.line(body)}\n"
+        s += "def #{k}.__callbacks(t) = #{k}.__class_callbacks\n"
+        s += "def #{k}.__callback(t, filter)\n  case filter\n"
+        Array.each(methods) { |m| s += "#{origin(chain, m, path)}  in #{Kernel.inspect(m)} then #{m}(t)\n" if !Array.include?(arounds, m) }
+        s += "# sake-origin: none\n  else raise ArgumentError, \"undefined method '\#{filter}' for an instance of #{k}\"\n  end\nend\n"
+        if !Array.empty?(arounds)
+          s += "def #{k}.__around_callback(t, filter)\n  case filter\n"
+          Array.each(arounds) { |m| s += "#{origin(chain, m, path)}  in #{Kernel.inspect(m)} then #{m}(t) { yield }\n" }
+          s += "# sake-origin: none\n  else raise ArgumentError, \"undefined method '\#{filter}' for an instance of #{k}\"\n  end\nend\n"
+        end
+        Array.each(kinds) { |n| s += "def #{k}._run_#{n}_callbacks(t, &b) = run_callbacks(t, #{Kernel.inspect(n)}, &b)\n" }
+        s += "def #{k}.__class_callbacks = once do\n"
+        s += parent == nil ? "  c = ActiveSupport::Callbacks::ClassMethods.new_callbacks\n" : "  c = ActiveSupport::Callbacks::ClassMethods.inherit(#{parent}.__class_callbacks)\n"
+        Array.each(calls) do |c|
+          n, call, args = c
+          s += "# sake-origin: #{path}:#{n}\n"
+          s += "  ActiveSupport::Callbacks::ClassMethods.#{call}(c, #{args})\n"
+        end
+        s += "# sake-origin: none\n  c\nend\n"
+        Array.each(kinds) do |n|
+          s += "def #{k}._#{n}_callbacks = ActiveSupport::Callbacks::ClassMethods.get_callbacks(#{k}.__class_callbacks, #{Kernel.inspect(n)})\n"
+        end
+        s
+      end
+    end
+  end
+end

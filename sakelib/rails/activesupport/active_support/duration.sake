@@ -1,0 +1,269 @@
+# Port of activesupport-8.1.3/lib/active_support/duration.rb, duration/iso8601_parser.rb and duration/iso8601_serializer.rb (one file: a class's fields are declared where it is first opened, and every `require` is read before the file's own classes) (partial: no Scalar, no Date as the moved time; the parser is one regexp instead of the StringScanner state machine, with the same parts and messages)
+#
+# `Duration.hours(2)` is Ruby's class method (and `Integer.hours(2)` its `2.hours`). `value` is the length in
+# seconds; `parts` a Hash part => amount. A Duration moves a Time or an ActiveSupport::TimeWithZone.
+
+require "core_ext/array/conversions"
+require "core_ext/time/calculations"
+require "time_with_zone"
+require "as_json"
+
+module ActiveSupport
+  class Duration
+    attr_reader value, parts
+    include Arithmetic
+    include Comparable
+    include AsJson
+
+    # Ruby: Duration.new drops zero parts (unless the whole value is 0).
+    def initialize(d)
+      @parts = Hash.reject(@parts) { |_k, v| v == 0 } unless @value == 0
+    end
+
+    def part_names
+      once { Symbol[:years, :months, :weeks, :days, :hours, :minutes, :seconds] }
+    end
+
+    def seconds_per(part)
+      case part
+      in :seconds then 1
+      in :minutes then 60
+      in :hours then 3600
+      in :days then 86400
+      in :weeks then 604800
+      in :months then 2629746      # 1/12 of a gregorian year
+      in :years then 31556952      # a gregorian year (365.2425 days)
+      end
+    end
+
+    def seconds(n) = Duration.new(n, Hash.of(seconds: n))
+    def minutes(n) = Duration.new(n * 60, Hash.of(minutes: n))
+    def hours(n) = Duration.new(n * 3600, Hash.of(hours: n))
+    def days(n) = Duration.new(n * 86400, Hash.of(days: n))
+    def weeks(n) = Duration.new(n * 604800, Hash.of(weeks: n))
+    def fortnights(n) = weeks(n * 2)
+    def months(n) = Duration.new(n * 2629746, Hash.of(months: n))
+    def years(n) = Duration.new(n * 31556952, Hash.of(years: n))
+
+    # Ruby: Duration.build(seconds): the seconds split into the largest parts.
+    def build(n)
+      parts = Hash.new
+      sign = n <=> 0
+      remainder = Arithmetic.abs(Arithmetic.round(n, 9))
+      unless n == 0
+        Array.each(part_names) do |part|
+          next if part == :seconds
+          per = seconds_per(part)
+          parts[part] = Arithmetic.floor(remainder / per) * sign
+          remainder = remainder % per
+        end
+      end
+      parts[:seconds] = remainder * sign
+      Duration.new(n, parts)
+    end
+
+    def other_value(o) = (o in Duration) ? Duration.value(o) : o
+
+    def <=>(d, other) = @value <=> other_value(other)
+    def ==(d, other) = other_value(other) == @value
+
+    def +(d, other)
+      if other in Duration
+        merged = Hash.dup(@parts)
+        Hash.each(Duration.parts(other)) { |k, v| merged[k] = (merged[k] || 0) + v }
+        Duration.new(@value + Duration.value(other), merged)
+      else
+        merged = Hash.dup(@parts)
+        merged[:seconds] = (merged[:seconds] || 0) + other
+        Duration.new(@value + other, merged)
+      end
+    end
+
+    def -(d, other) = d + (-other)
+    def -@(d)
+      Duration.new(-@value, Hash.transform_values(@parts) { |v| -v })
+    end
+    def +@(d) = d
+
+    # Ruby: a Duration times a number; dividing by a Duration gives a number, by a number a Duration.
+    def *(d, n)
+      Duration.new(@value * n, Hash.transform_values(@parts) { |v| v * n })
+    end
+
+    def /(d, other)
+      if other in Duration
+        @value / Duration.value(other)
+      else
+        Duration.new(@value / other, Hash.transform_values(@parts) { |v| v / other })
+      end
+    end
+
+    def %(d, other) = build(@value % other_value(other))
+
+    def to_i(d) = Arithmetic.to_i(@value)
+    def to_f(d) = Arithmetic.to_f(@value)
+    def to_s(d) = Kernel.to_s(@value)
+    def abs(d) = Duration.new(Arithmetic.abs(@value), @parts)
+    def zero?(d) = @value == 0
+    def positive?(d) = @value > 0
+    def negative?(d) = @value < 0
+
+    def in_seconds(d) = @value
+    def in_minutes(d) = Arithmetic.to_f(@value) / 60
+    def in_hours(d) = Arithmetic.to_f(@value) / 3600
+    def in_days(d) = Arithmetic.to_f(@value) / 86400
+    def in_weeks(d) = Arithmetic.to_f(@value) / 604800
+    def in_months(d) = Arithmetic.to_f(@value) / 2629746
+    def in_years(d) = Arithmetic.to_f(@value) / 31556952
+
+    # Ruby: "1 hour and 30 minutes" (p d prints this)
+    def inspect(d)
+      return "#{@value} seconds" if Hash.empty?(@parts)
+      names = part_names
+      sorted = Hash.sort_by(@parts) { |unit, _v| Array.index(names, unit) || 0 }
+      Array.to_sentence(Array.map(sorted) { |unit, val| "#{val} #{val == 1 ? String.chop(Symbol.to_s(unit)) : Symbol.to_s(unit)}" })
+    end
+
+    # --- moving a Time ---
+
+    def since(d, time = Time.now) = sum(d, 1, time)
+    def from_now(d, time = Time.now) = sum(d, 1, time)
+    def after(d, time = Time.now) = sum(d, 1, time)
+    def ago(d, time = Time.now) = sum(d, -1, time)
+    def until(d, time = Time.now) = sum(d, -1, time)
+    def before(d, time = Time.now) = sum(d, -1, time)
+
+    def as_json(d, options = nil) = to_i(d)
+
+    # Ruby: variable? (a part whose length in seconds depends on the calendar)
+    def variable?(d) = Array.any?(Hash.keys(@parts)) { |k| k == :years || k == :months || k == :weeks || k == :days }
+
+    def iso8601(d, precision: nil) = ISO8601Serializer.serialize(ISO8601Serializer.new(d, precision))
+
+    def parse(iso8601duration)
+      parts = ISO8601Parser.parse!(ISO8601Parser.make(iso8601duration))
+      Duration.new(calculate_total_seconds(parts), parts)
+    end
+
+    def calculate_total_seconds(parts) = Hash.sum(parts) { |part, value| value * seconds_per(part) }
+
+    # private. Ruby's time.since / time.advance dispatch on the time; here a Time or a TimeWithZone.
+    def sum(d, sign, time)
+      return ActiveSupport::Duration.since_time(time, sign * @value) if Hash.empty?(@parts)
+      t = time
+      Hash.each(@parts) do |type, number|
+        t = case type
+            in :seconds then ActiveSupport::Duration.since_time(t, sign * number)
+            in :minutes then ActiveSupport::Duration.since_time(t, sign * number * 60)
+            in :hours then ActiveSupport::Duration.since_time(t, sign * number * 3600)
+            else ActiveSupport::Duration.advance_time(t, Hash.of(type => sign * number))
+            end
+      end
+      t
+    end
+
+    # (Sake only) Ruby's `t.since(n)` and `t.advance(h)` on a Time or an ActiveSupport::TimeWithZone.
+    def since_time(t, n)
+      case t
+      in Time then Time.since(t, n)
+      in ActiveSupport::TimeWithZone then ActiveSupport::TimeWithZone.since(t, n)
+      end
+    end
+
+    def advance_time(t, h)
+      case t
+      in Time then Time.advance(t, h)
+      in ActiveSupport::TimeWithZone then ActiveSupport::TimeWithZone.advance(t, h)
+      end
+    end
+
+    class ISO8601Parser
+      class ParsingError < ArgumentError
+      end
+
+      attr_reader string
+
+      def make(string) = ISO8601Parser.new(string)
+
+      def parse!(ps)
+        m = String.match(@string, /\A([-+]?)P((?:-?\d+(?:[.,]\d+)?[YMWD])*)(?:T((?:-?\d+(?:[.,]\d+)?[HMS])*))?\z/)
+        raise_parsing_error(ps, nil) unless m
+        sign = m[1] == "-" ? -1 : 1
+        parts = Hash.new
+        date = m[2] || ""
+        time = m[3]
+        Array.each(String.scan(date, /(-?\d+(?:[.,]\d+)?)([YMWD])/)) do |num, unit|
+          part = case unit
+                 in "Y" then :years
+                 in "M" then :months
+                 in "W" then :weeks
+                 else :days
+                 end
+          parts[part] = number(num || "") * sign
+        end
+        if time
+          Array.each(String.scan(time, /(-?\d+(?:[.,]\d+)?)([HMS])/)) do |num, unit|
+            part = case unit
+                   in "H" then :hours
+                   in "M" then :minutes
+                   else :seconds
+                   end
+            parts[part] = number(num || "") * sign
+          end
+        end
+        validate!(ps, parts, time)
+        parts
+      end
+
+      # private
+      def raise_parsing_error(ps, reason)
+        raise ParsingError, String.strip("Invalid ISO 8601 duration: #{Kernel.inspect(@string)} #{reason}")
+      end
+
+      def number(num) = String.match?(num, /[.,]/) ? String.to_f(String.tr(num, ",", ".")) : String.to_i(num)
+
+      def validate!(ps, parts, time)
+        raise_parsing_error(ps, "is empty duration") if Hash.empty?(parts)
+        if Hash.key?(parts, :weeks) && (Hash.key?(parts, :years) || Hash.key?(parts, :months) || Hash.key?(parts, :days))
+          raise_parsing_error(ps, "mixing weeks with other date parts not allowed")
+        end
+        if time && String.empty?(time)
+          raise_parsing_error(ps, "time part marker is present but time part is empty")
+        end
+        true
+      end
+    end
+
+    class ISO8601Serializer
+      attr_reader duration, precision
+
+      def serialize(s)
+        parts = normalize(s)
+        return "PT0S" if Hash.empty?(parts)
+        output = "P"
+        output += "#{parts[:years]}Y" if Hash.key?(parts, :years)
+        output += "#{parts[:months]}M" if Hash.key?(parts, :months)
+        output += "#{parts[:days]}D" if Hash.key?(parts, :days)
+        output += "#{parts[:weeks]}W" if Hash.key?(parts, :weeks)
+        time = ""
+        time += "#{parts[:hours]}H" if Hash.key?(parts, :hours)
+        time += "#{parts[:minutes]}M" if Hash.key?(parts, :minutes)
+        if Hash.key?(parts, :seconds)
+          secs = parts[:seconds]
+          time += @precision ? format("%0.0#{@precision}f", secs) + "S" : "#{secs}S"
+        end
+        output += "T#{time}" unless String.empty?(time)
+        output
+      end
+
+      # private: zero parts dropped; weeks become days when other date parts are present.
+      def normalize(s)
+        parts = Hash.reject(Duration.parts(@duration)) { |_k, v| v == 0 }
+        if Hash.key?(parts, :weeks) && (Hash.key?(parts, :years) || Hash.key?(parts, :months) || Hash.key?(parts, :days))
+          parts[:days] = (parts[:days] || 0) + (Hash.delete(parts, :weeks) || 0) * 7
+        end
+        parts
+      end
+    end
+  end
+end
