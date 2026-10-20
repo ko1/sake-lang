@@ -1,0 +1,30 @@
+require "rails/actionpack/action_dispatch/middleware/host_authorization"
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req) = [200, Hash.of("content-type" => "text/plain"), String["hi"]]
+end
+
+app = ActionDispatch::RackApp.new(ActionDispatch::HostAuthorization.build(Endpoint.new, Any["example.com", ".myapp.test", /\Aapi\d\.local\z/, IPAddr.new("10.0.0.0/8")]))
+open = ActionDispatch::RackApp.new(ActionDispatch::HostAuthorization.build(Endpoint.new, Any[]))
+
+def run(app, host, headers = Hash.new)
+  env = Rack::MockRequest.env_for("http://#{host}/", headers: headers)
+  env["HTTP_HOST"] = host                               # as a browser sends it
+  status, h, body = Rack::App.call(app, env)
+  p([host, status, h, body])
+end
+
+run(app, "example.com")
+run(app, "example.com:3000")
+run(app, "evil.com")
+run(app, "www.myapp.test")
+run(app, "myapp.test")
+run(app, "a.b.myapp.test")
+run(app, "api1.local")
+run(app, "api12.local")
+run(app, "10.1.2.3")
+run(app, "11.1.2.3")
+run(app, "example.com", Hash.of("HTTP_X_FORWARDED_HOST" => "evil.com"))
+run(app, "evil.com", Hash.of("HTTP_X_REQUESTED_WITH" => "XMLHttpRequest"))
+run(open, "anything.org")

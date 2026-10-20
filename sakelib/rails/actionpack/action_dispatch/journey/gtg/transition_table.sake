@@ -1,0 +1,74 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/gtg/transition_table.rb (partial: no as_json/to_svg/visualizer/states/transitions (the debugging views))
+#
+# States are Integers, as in Rails; the memos are the routes a state accepts. Rails' regexp_states is a Hash
+# keyed by Regexp; a Regexp cannot be a Hash key in Sake, so each state has a list of [regexp, state] pairs.
+
+module ActionDispatch
+  module Journey
+    module GTG
+      class TransitionTable
+        attr_reader memos
+        private attr_reader stdparam_states, regexp_states, string_states, accepting
+
+        def default_exp = /[^.\/?]+/
+        def make = TransitionTable.new(Hash.new, Hash.new, Hash.new, Hash.new, Hash.new)
+
+        def add_accepting(tt, state) = @accepting[state] = true
+        def accepting_states(tt) = Hash.keys(@accepting)
+        def accepting?(tt, state) = @accepting[state] == true
+        def add_memo(tt, idx, memo) = Array.push(@memos[idx] ||= Route[], memo)
+        def memo(tt, idx) = @memos[idx] || Route[]
+
+        # move(t, full_string, token, start_index, token_matches_default): t is pairs of a state and, for a state
+        # inside a regexp transition, where that transition's slice started (else nil)
+        def move(tt, t, full_string, token, start_index, token_matches_default)
+          next_states = Any[]
+          return next_states if Array.empty?(t)
+          i = 0
+          while i < Array.size(t)
+            s = t[i]
+            s => Integer
+            previous_start = t[i + 1]
+            if previous_start == nil
+              std_state = @stdparam_states[s]
+              Array.push(next_states, std_state, nil) if token_matches_default && std_state
+              states = @string_states[s]
+              if states
+                state = states[token]
+                Array.push(next_states, state, nil) if state != nil
+              end
+            end
+            rstates = @regexp_states[s]
+            if rstates
+              slice_start = previous_start == nil ? start_index : previous_start
+              slice_start => Integer
+              slice_length = start_index + String.bytesize(token) - slice_start
+              curr_slice = String.byteslice(full_string, slice_start, slice_length) || ""
+              Array.each(rstates) { |re, v| Array.push(next_states, v, nil) if Regexp.match?(re, curr_slice) }
+              Array.push(next_states, s, slice_start)
+            end
+            i += 2
+          end
+          next_states
+        end
+
+        # dtrans[from, to] = sym: a String (or Symbol) token, the default parameter regexp, or another regexp
+        def set(tt, from, to, sym)
+          case sym
+          in String | Symbol then (@string_states[from] ||= Hash.new)[Kernel.to_s(sym)] = to
+          in Regexp
+            if sym == default_exp
+              @stdparam_states[from] = to
+            else
+              re = Regexp.new("\\A#{sym}\\Z")
+              pairs = @regexp_states[from] ||= Any[]
+              Array.reject!(pairs) { |r, _to| r == re }
+              Array.push(pairs, [re, to])
+            end
+          end
+          nil
+        end
+      end
+    end
+  end
+end

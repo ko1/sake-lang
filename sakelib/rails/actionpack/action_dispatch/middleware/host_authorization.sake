@@ -1,0 +1,121 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/host_authorization.rb (partial: no exclude lambda, no
+# response_app (the default one only), no logging; the detailed body is blocked_host.text.erb's text, not the HTML
+# page (ActionView))
+#
+# Allowed hosts are Strings (".example.com" allows subdomains), Regexps, or IPAddrs (sakelib/ipaddr), as Rails'.
+
+require "ipaddr"
+require "../app"
+require "../http/request"
+require "cookies"
+
+module ActionDispatch
+  class Request
+    def blocked_hosts(req)
+      v = env_config(req)["action_dispatch.blocked_hosts"]
+      (v in Array) ? v : String[]
+    end
+  end
+
+  class HostAuthorization
+    attr_reader app, permissions, response_app
+    include App
+
+    def allowed_hosts_in_development = Any[".localhost", ".test", IPAddr.new("0.0.0.0/0"), IPAddr.new("::/0")]
+    def port_regex = "(?::\\d+)"
+    def subdomain_regex = "(?:[a-z0-9-]+\\.)"
+    def valid_ip_hostname = /\A(?<host>\d+\.\d+\.\d+\.\d+)(?::\d+)?\z|\A(?<host>[a-f0-9]*:[a-f0-9.:]+)\z|\A\[(?<host>[a-f0-9]*:[a-f0-9.:]+)\](?::\d+)\z/i
+
+    class Permissions
+      attr_reader hosts
+
+      def build(hosts) = Permissions.new(sanitize_hosts(hosts))
+      def empty?(pm) = Array.empty?(@hosts)
+
+      def allows?(pm, host)
+        Array.any?(@hosts) do |allowed|
+          case allowed
+          in IPAddr then (IPAddr.include?(allowed, IPAddr.new(extract_hostname(host))) rescue false)
+          in Regexp then Regexp.match?(allowed, host)
+          else false
+          end
+        end
+      end
+
+      def sanitize_hosts(hosts)
+        Array.map(hosts) do |host|
+          case host
+          in Regexp then Regexp.new("\\A#{Regexp.source(host)}#{HostAuthorization.port_regex}?\\z")
+          in String then sanitize_string(host)
+          in IPAddr then host
+          end
+        end
+      end
+
+      def sanitize_string(host)
+        if String.start_with?(host, ".")
+          Regexp.new("\\A#{HostAuthorization.subdomain_regex}?#{Regexp.escape(String.[](host, 1..) || "")}#{HostAuthorization.port_regex}?\\z", "i")
+        else
+          Regexp.new("\\A#{Regexp.escape(host)}#{HostAuthorization.port_regex}?\\z", "i")
+        end
+      end
+
+      def extract_hostname(host)
+        m = String.match(host, HostAuthorization.valid_ip_hostname)
+        (m ? m["host"] : nil) || host
+      end
+    end
+
+    class DefaultResponseApp
+      attr_reader status
+      include App
+
+      def response_status = 403
+
+      def call(ra, req)
+        format = Request.xhr?(req) ? "text/plain" : "text/html"
+        response(ra, format, response_body(ra, req))
+      end
+
+      def response_body(ra, req)
+        return "" unless Request.env_config(req)["action_dispatch.show_detailed_exceptions"] == true
+        hosts = Request.blocked_hosts(req)
+        "Blocked hosts: #{Array.join(hosts, ", ")}\n\n" +
+          "To allow requests to these hosts, make sure they are valid hostnames (containing only numbers, letters, dashes and dots), then add the following to your environment configuration:\n\n" +
+          Array.map(hosts) { |h| "  config.hosts << \"#{h}\"\n" }.Array.join +
+          "\nFor more details on host authorization view: https://guides.rubyonrails.org/configuring.html#actiondispatch-hostauthorization\n"
+      end
+
+      def response(ra, format, body)
+        [response_status, Hash.of("content-type" => "#{format}; charset=utf-8", "content-length" => Integer.to_s(String.bytesize(body))), String[body]]
+      end
+    end
+
+    # Rails: HostAuthorization.new(app, hosts)
+    def build(app, hosts) = HostAuthorization.new(app, Permissions.build(hosts), DefaultResponseApp.new(403))
+
+    def call(mw, req)
+      return App.call(@app, req) if Permissions.empty?(@permissions)
+      hosts = blocked_hosts(mw, req)
+      if Array.empty?(hosts)
+        Request.env_config(req)["action_dispatch.authorized_host"] = Request.host(req)
+        App.call(@app, req)
+      else
+        Request.env_config(req)["action_dispatch.blocked_hosts"] = hosts
+        DefaultResponseApp.call(@response_app, req)
+      end
+    end
+
+    def blocked_hosts(mw, req)
+      hosts = String[]
+      origin_host = Request.get_header(req, "HTTP_HOST") || ""
+      Array.push(hosts, origin_host) unless Permissions.allows?(@permissions, origin_host)
+      fh = Request.x_forwarded_host(req)
+      forwarded_host = fh ? Array.last(String.split(fh, /,\s?/)) : nil
+      if forwarded_host && String.strip(forwarded_host) != "" && !Permissions.allows?(@permissions, forwarded_host)
+        Array.push(hosts, forwarded_host)
+      end
+      hosts
+    end
+  end
+end

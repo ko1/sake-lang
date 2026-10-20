@@ -1,0 +1,58 @@
+gem "actionpack", "8.1.3"
+require "action_dispatch"
+
+def show(label, v) = puts("#{label}: #{v.inspect}")
+def names(list) = list.map(&:to_s)
+
+puts("-- lookup")
+show("Mime[:json]", Mime[:json].to_s)
+show("Mime[\"csv\"]", Mime["csv"].to_s)
+show("Mime[:nope]", Mime[:nope])
+show("lookup text/html", [Mime::Type.lookup("text/html").to_s, Mime::Type.lookup("text/html").to_sym])
+show("lookup xhtml synonym", Mime::Type.lookup("application/xhtml+xml").to_sym)
+show("lookup with params", Mime::Type.lookup("text/html; charset=utf-8").to_sym)
+show("lookup unknown", [Mime::Type.lookup("application/x-foo").to_s, Mime::Type.lookup("application/x-foo").to_sym])
+show("lookup_by_extension jpg", Mime::Type.lookup_by_extension("jpg").to_s)
+show("lookup_by_extension yml", Mime::Type.lookup_by_extension(:yml).to_s)
+show("ref", [Mime[:json].ref, Mime::Type.lookup("application/x-foo").ref])
+show("symbols include json", Mime::SET.symbols.include?(:json))
+show("symbols size", Mime::SET.symbols.size)
+show("valid_symbols?", [Mime.valid_symbols?([:json, :html]), Mime.valid_symbols?([:json, :nope])])
+
+puts("-- predicates and equality")
+show("html?", [Mime[:html].html?, Mime[:json].html?, Mime::ALL.html?, Mime::Type.lookup("application/xhtml+xml").html?])
+show("all?", [Mime::ALL.all?, Mime[:html].all?, Mime::ALL.to_s])
+show("== String", Mime[:json] == "application/json")
+show("== synonym", Mime[:json] == "text/x-json")
+show("== Symbol", Mime[:json] == :json)
+show("== other", Mime[:json] == Mime[:html])
+show("=== list", Mime[:html] === [Mime::Type.lookup("application/xhtml+xml")])
+show("match?", [Mime[:html].match?("html"), Mime[:json].match?("xml")])
+
+puts("-- parse")
+show("one", names(Mime::Type.parse("application/json")))
+show("one with q", names(Mime::Type.parse("application/json;q=0.5")))
+show("empty", names(Mime::Type.parse(" ")))
+show("browser", names(Mime::Type.parse("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")))
+show("q order", names(Mime::Type.parse("text/plain;q=0.2, application/json, text/html;q=0.9")))
+show("same q keeps order", names(Mime::Type.parse("text/csv, text/plain")))
+show("quoted q", names(Mime::Type.parse("text/plain;q=\"0.5\", application/json")))
+show("text/xml becomes xml", names(Mime::Type.parse("text/xml, text/html;q=0.5")))
+show("text/xml and application/xml", names(Mime::Type.parse("text/html;q=0.1, text/xml, application/xml;q=0.5")))
+show("+xml after xml", names(Mime::Type.parse("application/xml, application/rss+xml, text/html;q=0.4")))
+show("trailing star", names(Mime::Type.parse("text/*")).sort)
+show("unknown", names(Mime::Type.parse("application/vnd.api+json, text/html")))
+
+puts("-- register and errors")
+Mime::Type.register("application/vnd.api+json", :jsonapi, [], %w(jsonapi))
+show("registered", [Mime[:jsonapi].to_s, Mime::Type.lookup("application/vnd.api+json").to_sym, Mime::Type.lookup_by_extension("jsonapi").to_sym])
+show("parse registered", names(Mime::Type.parse("application/vnd.api+json, text/html")))
+Mime::Type.register_alias("text/html", :mobile)
+show("alias", [Mime[:mobile].to_s, Mime::Type.lookup("text/html").to_sym])
+Mime::Type.unregister(:jsonapi)
+show("unregistered", [Mime[:jsonapi], Mime::Type.lookup("application/vnd.api+json").to_sym])
+begin
+  Mime::Type.lookup("not a mime")
+rescue Mime::Type::InvalidMimeType => e
+  show("InvalidMimeType", e.message)
+end

@@ -1,0 +1,101 @@
+require "rails/actionpack/action_dispatch/http/response"
+require "rails/actionpack/action_dispatch/http/content_disposition"
+
+def show(label, v) = puts("#{label}: #{Kernel.inspect(v)}")
+# Sake's Rack body is the Array of the response's parts.
+def triple(res) = ActionDispatch::Response.to_a(res)
+
+puts("-- a new response")
+res = ActionDispatch::Response.create
+show("status", ActionDispatch::Response.status(res))
+show("headers", ActionDispatch::Response.headers(res))
+show("content_type", ActionDispatch::Response.content_type(res))
+show("charset", ActionDispatch::Response.charset(res))
+show("message", ActionDispatch::Response.message(res))
+show("committed?", ActionDispatch::Response.committed?(res))
+ActionDispatch::Response.set_body(res, "hello")
+show("body", ActionDispatch::Response.body(res))
+show("to_a", triple(res))
+show("committed? after to_a", ActionDispatch::Response.committed?(res))
+show("headers after", ActionDispatch::Response.headers(res))
+
+puts("-- content type and charset")
+res = ActionDispatch::Response.new
+ActionDispatch::Response.set_content_type(res, "text/plain")
+show("text/plain", [ActionDispatch::Response.content_type(res), ActionDispatch::Response.media_type(res), ActionDispatch::Response.charset(res)])
+ActionDispatch::Response.set_content_type(res, :json)
+show(":json", [ActionDispatch::Response.content_type(res), ActionDispatch::Response.media_type(res), ActionDispatch::Response.charset(res)])
+ActionDispatch::Response.set_charset(res, "ISO-8859-1")
+show("charset=", ActionDispatch::Response.content_type(res))
+ActionDispatch::Response.set_charset(res, false)
+show("charset=false", ActionDispatch::Response.content_type(res))
+ActionDispatch::Response.set_content_type(res, "text/csv; charset=Shift_JIS")
+show("with charset", [ActionDispatch::Response.content_type(res), ActionDispatch::Response.charset(res)])
+ActionDispatch::Response.set_content_type(res, "application/xml")
+show("keeps charset", ActionDispatch::Response.content_type(res))
+begin
+  ActionDispatch::Response.set_content_type(res, :nope)
+rescue ArgumentError => e
+  show("ArgumentError", Exception.message(e))
+end
+
+puts("-- status")
+res = ActionDispatch::Response.new(404)
+show("404", [ActionDispatch::Response.status(res), ActionDispatch::Response.code(res), ActionDispatch::Response.message(res), ActionDispatch::Response.status_message(res), ActionDispatch::Response.response_code(res), ActionDispatch::Response.not_found?(res), ActionDispatch::Response.client_error?(res)])
+ActionDispatch::Response.set_status(res, :created)
+show(":created", [ActionDispatch::Response.status(res), ActionDispatch::Response.message(res), ActionDispatch::Response.successful?(res), ActionDispatch::Response.created?(res)])
+ActionDispatch::Response.set_status(res, :unprocessable_entity)
+show(":unprocessable_entity", [ActionDispatch::Response.status(res), ActionDispatch::Response.message(res), ActionDispatch::Response.unprocessable?(res)])
+res = ActionDispatch::Response.new(204, Hash.of("Content-Type" => "text/plain"), String["x"])
+show("204 to_a", triple(res))
+res = ActionDispatch::Response.new(302, Hash.of("Location" => "/posts"))
+show("redirect", [ActionDispatch::Response.location(res), ActionDispatch::Response.redirect?(res), ActionDispatch::Response.redirection?(res), ActionDispatch::Response.redirect_url(res)])
+
+puts("-- headers")
+res = ActionDispatch::Response.new(200, Hash.of("X-Frame-Options" => "SAMEORIGIN"), String[])
+show("get_header", ActionDispatch::Response.get_header(res, "x-frame-options"))
+show("[]", res["X-Frame-Options"])
+res["X-Request-Id"] = "abc"
+show("has_header?", ActionDispatch::Response.has_header?(res, "x-request-id"))
+ActionDispatch::Response.delete_header(res, "X-Frame-Options")
+show("after delete", ActionDispatch::Response.headers(res))
+res = ActionDispatch::Response.create(200, Hash.new, String[], default_headers: Hash.of("x-content-type-options" => "nosniff"))
+show("default_headers", ActionDispatch::Response.headers(res))
+
+puts("-- body")
+res = ActionDispatch::Response.new
+ActionDispatch::Response.write(res, "a")
+ActionDispatch::Response.write(res, "b")
+show("written", [ActionDispatch::Response.body(res), ActionDispatch::Response.body_parts(res), ActionDispatch::Response.committed?(res)])
+ActionDispatch::Response.set_body(res, String["x", "y"])
+show("array body", [ActionDispatch::Response.body(res), ActionDispatch::Response.body_parts(res)])
+ActionDispatch::Response.reset_body!(res)
+show("reset", ActionDispatch::Response.body(res))
+
+puts("-- cookies")
+res = ActionDispatch::Response.new
+ActionDispatch::Response.set_cookie(res, "user", Hash.of(value: "ko1", path: "/", http_only: true))
+ActionDispatch::Response.set_cookie(res, "theme", "dark")
+show("set-cookie", ActionDispatch::Response.get_header(res, "set-cookie"))
+show("cookies", ActionDispatch::Response.cookies(res))
+ActionDispatch::Response.delete_cookie(res, "theme", Hash.of(path: "/"))
+show("deleted", ActionDispatch::Response.get_header(res, "set-cookie"))
+
+puts("-- caching")
+res = ActionDispatch::Response.new
+ActionDispatch::Response.set_etag(res, "abc")
+show("etag", [ActionDispatch::Response.etag(res), ActionDispatch::Response.weak_etag?(res), ActionDispatch::Response.strong_etag?(res)])
+ActionDispatch::Response.set_strong_etag(res, Any["post", 1])
+show("strong_etag", [ActionDispatch::Response.etag(res), ActionDispatch::Response.weak_etag?(res), ActionDispatch::Response.strong_etag?(res)])
+show("to_a", triple(res))
+res = ActionDispatch::Response.new
+ActionDispatch::Response.set_last_modified(res, Time.utc(2026, 10, 20, 12, 0, 0))
+show("last_modified", [ActionDispatch::Response.get_header(res, "last-modified"), ActionDispatch::Response.last_modified(res), ActionDispatch::Response.last_modified?(res)])
+res = ActionDispatch::Response.new(200, Hash.of("Cache-Control" => "public, max-age=60, foo=bar"))
+show("cache-control in", triple(res)[1]["cache-control"])
+res = ActionDispatch::Response.new(200, Hash.of("Cache-Control" => "no-cache"))
+show("no-cache", triple(res)[1]["cache-control"])
+
+puts("-- content disposition")
+show("attachment", ActionDispatch::Http::ContentDisposition.format(disposition: "attachment", filename: "résumé 2026.pdf"))
+show("inline", ActionDispatch::Http::ContentDisposition.format(disposition: "inline", filename: nil))

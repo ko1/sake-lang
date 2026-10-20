@@ -1,0 +1,176 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/session/abstract_store.rb, with what it stands on from
+# rack-session-2.1.2/lib/rack/session/abstract/id.rb (Rack::Session::SessionId, Abstract::Persisted and
+# PersistedSecure: rack-session is not ported on its own) (partial: no StaleSessionCheck (no Marshal), no defer
+# logging to rack.errors)
+#
+# Rails' stores are classes under AbstractStore < Rack::Session::Abstract::Persisted, whose subclasses define
+# find_session / write_session / delete_session. Here AbstractStore (with AbstractSecureStore, which only changes
+# the session id to a Rack::Session::SessionId) is a module a store includes: the store declares the fields
+# Persisted keeps (app, default_options, key, same_site, cookie_only) and defines the three functions:
+#
+#   Ruby                                            Sake
+#   class MyStore < ActionDispatch::Session::AbstractSecureStore
+#     def find_session(req, sid) ... end            class MyStore
+#     def write_session(req, sid, data, opts) ...     attr_reader app, default_options, key, same_site, cookie_only
+#     def delete_session(req, sid, opts) ...          include ActionDispatch::Session::AbstractStore
+#   end                                               def initialize(s) = ActionDispatch::Session::AbstractStore.setup(s)
+#   MyStore.new(app, key: "_app_session")             def find_session(s, req, sid) ... end   (and the other two)
+#                                                   MyStore.new(app, Hash.of(key: "_app_session"))
+
+require "securerandom"
+require "digest"
+require "../../app"
+require "../cookies"
+require "../../request/session"
+
+module Rack
+  module Session
+    class SessionId
+      attr_reader public_id
+      def id_version = 2
+      def private_id(s) = "#{id_version}::#{hash_sid(s, @public_id)}"
+      def cookie_value(s) = @public_id
+      def to_s(s) = @public_id
+      def empty?(s) = false
+      def inspect(s) = Kernel.inspect(@public_id)
+      def hash_sid(s, sid) = Digest::SHA256.hexdigest(sid)
+    end
+  end
+end
+
+module ActionDispatch
+  module Session
+    class SessionRestoreError < StandardError
+    end
+
+    module AbstractStore
+      def find_session(s, req, sid) = raise(NotImplementedError)
+      def write_session(s, req, sid, session, options) = raise(NotImplementedError)
+      def delete_session(s, req, sid, options) = raise(NotImplementedError)
+
+      # Persisted::DEFAULT_OPTIONS (sidbits and secure_random are dropped by Compatibility#initialize_sid)
+      def default_options_base
+        Hash.of(path: "/", domain: nil, expire_after: nil, secure: false, httponly: true, partitioned: false,
+                defer: false, renew: false)
+      end
+
+      # Persisted#initialize(app, options) with Compatibility's key "_session_id"; the store's initialize calls it.
+      # The options come in the default_options field and are replaced by the merged ones.
+      def setup(s)
+        options = @default_options || Hash.new
+        opts = Hash.merge(default_options_base, options)
+        k = Hash.delete(opts, :key)
+        @key = (k in String) ? k : "_session_id"
+        co = Hash.delete(opts, :cookie_only)
+        @cookie_only = co == nil ? true : co == true
+        ss = Hash.delete(opts, :same_site)
+        @same_site = (ss in Symbol) ? ss : nil
+        Hash.delete(opts, :assume_ssl)
+        @default_options = opts
+        nil
+      end
+
+      # Persisted#call / #context
+      def call(s, req)
+        prepare_session(s, req)
+        status, headers, body = App.call(@app, req)
+        commit_session(s, req, headers)
+        [status, headers, body]
+      end
+
+      # Compatibility#generate_sid with AbstractSecureStore's SessionId
+      def generate_sid(s) = Rack::Session::SessionId.new(SecureRandom.hex(16))
+
+      # SessionObject#prepare_session
+      def prepare_session(s, req)
+        ActionDispatch::Request::Session.create(s, req, @default_options)
+      end
+
+      def load_session(s, req)
+        sid = current_session_id(s, req)
+        sid2, session = find_session(s, req, sid)
+        [sid2, session || Hash.new]
+      end
+
+      # PersistedSecure#extract_session_id: the cookie (or, unless cookie_only, the param) as a SessionId
+      def extract_session_id(s, req)
+        sid = Request.cookies(req)[@key]
+        sid = Request.params(req)[@key] if sid == nil && !@cookie_only
+        (sid in String) ? Rack::Session::SessionId.new(sid) : nil
+      end
+
+      def current_session_id(s, req)
+        session = Request.rack_session(req)
+        session ? ActionDispatch::Request::Session.id(session) : nil
+      end
+
+      def session_exists?(s, req) = current_session_id(s, req) != nil
+
+      def loaded_session?(s, session) = ActionDispatch::Request::Session.loaded?(session)
+
+      def forced_session_update?(s, session, options)
+        force_options?(s, options) && !ActionDispatch::Request::Session.empty?(session)
+      end
+
+      def force_options?(s, options)
+        Array.any?(ActionDispatch::Request::Session::Options.values_at(options, :max_age, :renew, :drop, :defer, :expire_after)) { |v| v != nil && v != false }
+      end
+
+      def security_matches?(s, req, options)
+        return true unless ActionDispatch::Request::Session::Options.[](options, :secure)
+        Request.ssl?(req)
+      end
+
+      def commit_session?(s, req, session, options)
+        if ActionDispatch::Request::Session::Options.[](options, :skip)
+          false
+        else
+          has_session = loaded_session?(s, session) || forced_session_update?(s, session, options)
+          has_session && security_matches?(s, req, options)
+        end
+      end
+
+      # Persisted#commit_session (the response is only needed by Rack's set_cookie; Rails' writes to the cookie jar)
+      def commit_session(s, req, headers)
+        session = Request.session(req)
+        options = ActionDispatch::Request::Session.options(session)
+        return nil unless options
+        session_id = nil
+        if options[:drop] || options[:renew]
+          session_id = delete_session(s, req, ActionDispatch::Request::Session.id(session) || generate_sid(s), options)
+          return nil unless session_id
+        end
+        return nil unless commit_session?(s, req, session, options)
+        ActionDispatch::Request::Session.load!(session) unless loaded_session?(s, session)
+        session_id ||= ActionDispatch::Request::Session.id(session)
+        session_id ||= generate_sid(s)
+        session_data = ActionDispatch::Request::Session.to_hash(session)
+        data = write_session(s, req, session_id, session_data, options)
+        if data == nil
+          warn("Warning! ActionDispatch::Session failed to save session. Content dropped.")
+        elsif options[:defer] && !options[:renew]
+          nil
+        else
+          cookie = Hash.new
+          cookie[:value] = cookie_value(s, data)
+          ea = options[:expire_after]
+          cookie[:expires] = Time.now + ea if ea in Integer
+          ma = options[:max_age]
+          cookie[:expires] = Time.now + ma if ma in Integer
+          cookie[:same_site] = same_site_for(s, req)
+          Hash.merge!(cookie, ActionDispatch::Request::Session::Options.to_hash(options))
+          set_cookie(s, req, cookie)
+        end
+        nil
+      end
+
+      def same_site_for(s, req) = @same_site
+      def cookie_value(s, data) = (data in Rack::Session::SessionId) ? Rack::Session::SessionId.public_id(data) : data
+
+      # AbstractStore#set_cookie: request.cookie_jar[key] = cookie
+      def set_cookie(s, req, cookie)
+        ActionDispatch::Cookies::CookieJar.[]=(Request.cookie_jar(req), @key, cookie)
+      end
+    end
+  end
+end

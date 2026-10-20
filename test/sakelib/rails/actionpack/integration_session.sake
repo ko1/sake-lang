@@ -1,0 +1,134 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+require "rails/actionpack/action_dispatch/routing"
+require "rails/actionpack/action_dispatch/testing/integration"
+require "json"
+
+# The blog's controllers (stand-ins for ActionController::Metal.dispatch; Sake: a Routing::Controllers type)
+class PostsController
+  attr_reader x
+  include ActionDispatch::Routing::Controllers
+  def dispatch(c, controller, action, req)
+    session = ActionDispatch::Request.session(req)
+    flash = ActionDispatch::Request.flash(req)
+    visits = session[:visits]
+    session[:visits] = ((visits in Integer) ? visits : 0) + 1
+    result = case action
+    in "index" then [200, Hash.of("content-type" => "text/plain"), Any["index notice=#{Kernel.inspect(flash[:notice])} visits=#{session[:visits]} page=#{Kernel.inspect(ActionDispatch::Request.query_parameters(req)["page"])} host=#{ActionDispatch::Request.host(req)} ssl=#{ActionDispatch::Request.ssl?(req)}"]]
+    in "create"
+      post = ActionDispatch::Request.request_parameters(req)["post"] || Hash.new
+      post => Hash
+      if Kernel.to_s(post["title"]) == ""
+        [422, Hash.of("content-type" => "text/plain"), Any["invalid #{Kernel.inspect(post)}"]]
+      else
+        flash[:notice] = "Post was successfully created."
+        [302, Hash.of("location" => "http://#{ActionDispatch::Request.host(req)}/posts/1"), Any[]]
+      end
+    in "show" then [200, Hash.of("content-type" => "text/plain"), Any["show #{ActionDispatch::Request.path_parameters(req)[:id]} notice=#{Kernel.inspect(flash[:notice])} visits=#{session[:visits]} referer=#{Kernel.inspect(ActionDispatch::Request.referer(req))}"]]
+    in "destroy" then raise ActionController::BadRequest, "no"
+    in "prefs" then [200, Hash.of("content-type" => "text/plain"), Any["theme=#{Kernel.inspect(ActionDispatch::Request.cookies(req)["theme"])}"]]
+    in "status"
+      body = Hash.of("method" => ActionDispatch::Request.request_method(req), "xhr" => ActionDispatch::Request.xhr?(req), "accept" => ActionDispatch::Request.get_header(req, "HTTP_ACCEPT"), "params" => Hash.merge(ActionDispatch::Request.request_parameters(req), ActionDispatch::Request.query_parameters(req)))
+      [200, Hash.of("content-type" => "application/json; charset=utf-8"), Any[JSON.generate(body)]]
+    else raise ActionController::RoutingError.new("uninitialized constant #{controller}", Any[])
+    end
+    ActionDispatch::Request.commit_flash(req)
+    result
+  end
+end
+
+class ActionDispatch::Routing::Mapper
+  def session_routes(map)
+    resources map, :posts, only: Any[:index, :create, :show, :destroy]
+    get map, "prefs", to: "posts#prefs"
+    match map, "api/status", to: "posts#status", via: Any[:get, :post]
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.session_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = PostsController.new(nil)
+
+# Rails.application.env_config, which Rails::Engine#call merges into the env before the stack
+def configure(req)
+  c = ActionDispatch::Request.env_config(req)
+  c["action_dispatch.key_generator"] = ActiveSupport::CachingKeyGenerator.new(ActiveSupport::KeyGenerator.new("b" * 64, iterations: 2))
+  c["action_dispatch.signed_cookie_salt"] = "signed cookie"
+  c["action_dispatch.cookies_serializer"] = :json
+  c["action_dispatch.use_cookies_with_metadata"] = true
+  c["action_dispatch.show_exceptions"] = :all
+  c["action_dispatch.show_detailed_exceptions"] = false
+end
+class Config
+  attr_reader app
+  include ActionDispatch::App
+  def call(c, req)
+    configure(req)
+    ActionDispatch::App.call(@app, req)
+  end
+end
+
+stack = ActionDispatch::MiddlewareStack.new
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::ShowExceptions", ActionDispatch::PublicExceptions.new("fixtures/public"))
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::DebugExceptions")
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Cookies")
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Session::CookieStore", Hash.of(key: "_blog_session"))
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Flash")
+inner = ActionDispatch::MiddlewareStack.build(stack, set)
+app = Config.new(inner)
+
+# Rails' Runner makes the session class with the app's url helpers
+S = ActionDispatch::Integration::Session
+session = S.make(app, set)
+def show(s)
+  req = S.request(s)
+  req => ActionDispatch::Request
+  puts("#{ActionDispatch::Request.request_method(req)} #{S.path(s)} -> #{S.status(s)} #{Kernel.inspect(ActionDispatch::Response.location(S.response!(s)))} #{Kernel.inspect(String.strip(Array.first(String.lines(S.body(s))) || ""))}")
+end
+
+puts("-- get, params")
+S.get(session, "/posts")
+show(session)
+S.get(session, "/posts", params: Hash.of(page: 2))
+show(session)
+puts("-- post, redirect, follow_redirect!, flash over the session cookie")
+S.post(session, "/posts", params: Hash.of(post: Hash.of(title: "")))
+show(session)
+S.post(session, "/posts", params: Hash.of(post: Hash.of(title: "Hello")))
+show(session)
+p(S.redirect?(session))
+p(S.follow_redirect!(session))
+show(session)
+S.get(session, "/posts/1")
+show(session)
+puts("-- cookies kept by the session, and set by the test")
+p(Array.sort(Hash.keys(Rack::Test::CookieJar.to_hash(S.cookies(session)))))
+S.cookies(session)["theme"] = "dark"
+S.get(session, "/prefs")
+show(session)
+p(S.cookies(session)["theme"])
+puts("-- as: :json, xhr")
+S.post(session, "/api/status", params: Hash.of(title: "x", tags: Any["a", "b"]), as: :json)
+show(session)
+p([ActionDispatch::Response.media_type(S.response!(session)), ActionDispatch::TestResponse.parsed_body(S.response!(session))])
+S.get(session, "/api/status", params: Hash.of(q: "1"), as: :json)
+p(ActionDispatch::TestResponse.parsed_body(S.response!(session)))
+S.get(session, "/api/status", params: Hash.of(q: "2"), xhr: true)
+p(ActionDispatch::TestResponse.parsed_body(S.response!(session)))
+S.get(session, "/api/status", headers: Hash.of("Accept" => "text/plain", "X-Custom" => "1"))
+pb = ActionDispatch::TestResponse.parsed_body(S.response!(session))
+pb => Hash
+p(pb["accept"])
+puts("-- host!, https!, url_for")
+S.host!(session, "blog.example.org")
+S.get(session, "/posts")
+show(session)
+p(ActionDispatch::Routing::UrlFor.url_for(session, Hash.of(controller: "posts", action: "show", id: 3)))
+S.https!(session)
+S.get(session, "http://www.example.com/posts?page=9")
+show(session)
+p([S.host(session), S.https?(session)])
+puts("-- errors")
+S.delete(session, "/posts/1")
+show(session)
+S.get(session, "/nothing")
+show(session)
+p(S.request_count(session))

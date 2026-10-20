@@ -1,0 +1,188 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/flash.rb (partial: no Rails 3 FlashHash session values)
+#
+# Rails 8's Flash middleware is no middleware (`def self.new(app) app; end`): ActionController's dispatch and the
+# redirect endpoints call request.commit_flash. MiddlewareStack.build returns the app for it, as that `new` does.
+# Keys are Strings (Rails' k.to_s); a key may be given as a Symbol.
+#
+#   Ruby                                            Sake
+#   flash[:notice] = "Saved"                        ActionDispatch::Flash::FlashHash.[]=(Request.flash(req), :notice, "Saved")
+#   flash.now[:alert] = "Oops"                      FlashNow.[]=(FlashHash.now(flash), :alert, "Oops")
+
+require "../request/session"
+
+module ActionDispatch
+  class Request
+    def flash(req)
+      f = @_flash
+      return f if f
+      f = Flash::FlashHash.from_session_value(Session.[](session(req), "flash"))
+      @_flash = f
+      f
+    end
+    def set_flash(req, flash) = @_flash = flash
+    def flash_hash(req) = @_flash
+
+    def commit_flash(req)
+      session = session(req)
+      return nil unless Session.enabled?(session)
+      fh = @_flash
+      if fh && (!Flash::FlashHash.empty?(fh) || Session.key?(session, "flash"))
+        Session.[]=(session, "flash", Flash::FlashHash.to_session_value(fh))
+        @_flash = Flash::FlashHash.dup(fh)
+      end
+      if Session.loaded?(session) && Session.key?(session, "flash") && Session.[](session, "flash") == nil
+        Session.delete(session, "flash")
+      end
+      nil
+    end
+  end
+
+  class Flash
+    def key = "action_dispatch.request.flash_hash"
+
+    class FlashNow
+      attr_accessor flash
+      include Indexable
+
+      def []=(n, k, v)
+        key = Kernel.to_s(k)
+        FlashHash.[]=(@flash, key, v)
+        FlashHash.discard(@flash, key)
+        v
+      end
+      def [](n, k) = FlashHash.[](@flash, Kernel.to_s(k))
+      def set_alert(n, message) = FlashNow.[]=(n, :alert, message)
+      def set_notice(n, message) = FlashNow.[]=(n, :notice, message)
+    end
+
+    class FlashHash
+      attr_reader flashes, discards
+      include Indexable
+      private attr_accessor _now
+      include Enum
+
+      def initialize(f)
+        @_now = nil
+      end
+
+      # Rails: FlashHash.from_session_value(session["flash"]): {"discard" => [...], "flashes" => {...}}
+      def from_session_value(value)
+        if value in Hash
+          flashes = value["flashes"]
+          return build(Hash.new, String[]) unless flashes in Hash
+          flashes = Hash.dup(flashes)
+          discard = value["discard"]
+          Array.each(discard) { |k| Hash.delete(flashes, k) } if discard in Array
+          build(flashes, Array.map(Hash.keys(flashes)) { Kernel.to_s(it) })
+        else
+          build(Hash.new, String[])
+        end
+      end
+
+      # Rails: FlashHash.new(flashes = {}, discard = [])
+      def build(flashes, discard)
+        fl = Hash.new
+        Hash.each(flashes) { |k, v| fl[Kernel.to_s(k)] = v }
+        FlashHash.new(fl, Set.new(Array.map(discard) { Kernel.to_s(it) }))
+      end
+
+      def to_session_value(f)
+        flashes_to_keep = Hash.reject(@flashes) { |k, _| Set.include?(@discards, k) }
+        return nil if Hash.empty?(flashes_to_keep)
+        Hash.of("discard" => Any[], "flashes" => flashes_to_keep)
+      end
+
+      # Rails' initialize_copy: the copy has its own flashes and discard set (and its own FlashNow)
+      def dup(f)
+        c = FlashHash.new(Hash.dup(@flashes), Set.new(Set.to_a(@discards)))
+        FlashHash.now(c) if @_now
+        c
+      end
+
+      def []=(f, k, v)
+        key = Kernel.to_s(k)
+        Set.delete(@discards, key)
+        @flashes[key] = v
+      end
+      def [](f, k) = @flashes[Kernel.to_s(k)]
+
+      def update(f, h)
+        Hash.each(h) do |k, v|
+          Set.delete(@discards, Kernel.to_s(k))
+          @flashes[Kernel.to_s(k)] = v
+        end
+        f
+      end
+      def merge!(f, h) = update(f, h)
+
+      def keys(f) = Hash.keys(@flashes)
+      def key?(f, name) = Hash.key?(@flashes, Kernel.to_s(name))
+
+      def delete(f, key)
+        k = Kernel.to_s(key)
+        Set.delete(@discards, k)
+        Hash.delete(@flashes, k)
+        f
+      end
+
+      def to_hash(f) = Hash.dup(@flashes)
+      def empty?(f) = Hash.empty?(@flashes)
+
+      def clear(f)
+        Set.clear(@discards)
+        Hash.clear(@flashes)
+        nil
+      end
+
+      def each(f)
+        Hash.each(@flashes) { |k, v| yield([k, v]) }
+        f
+      end
+
+      def replace(f, h)
+        Set.clear(@discards)
+        Hash.clear(@flashes)
+        Hash.each(h) { |k, v| @flashes[Kernel.to_s(k)] = v }
+        f
+      end
+
+      def now(f) = @_now ||= FlashNow.new(f)
+
+      # Rails: keep(k = nil) returns self[k] for a key, else self; here the value, or nil for all keys
+      def keep(f, k = nil)
+        if k == nil
+          Array.each(Hash.keys(@flashes)) { |x| Set.delete(@discards, x) }
+          nil
+        else
+          key = Kernel.to_s(k)
+          Set.delete(@discards, key)
+          @flashes[key]
+        end
+      end
+
+      def discard(f, k = nil)
+        if k == nil
+          Array.each(Hash.keys(@flashes)) { |x| Set.add(@discards, x) }
+          nil
+        else
+          key = Kernel.to_s(k)
+          Set.add(@discards, key)
+          @flashes[key]
+        end
+      end
+
+      def sweep(f)
+        Set.each(@discards) { |k| Hash.delete(@flashes, k) }
+        Set.replace(@discards, Set.new(Hash.keys(@flashes)))
+        nil
+      end
+
+      def alert(f) = @flashes["alert"]
+      def set_alert(f, message) = FlashHash.[]=(f, :alert, message)
+      def notice(f) = @flashes["notice"]
+      def set_notice(f, message) = FlashHash.[]=(f, :notice, message)
+
+      def inspect(f) = "#<ActionDispatch::Flash::FlashHash #{Kernel.inspect(@flashes)} discard=#{Kernel.inspect(Set.to_a(@discards))}>"
+    end
+  end
+end

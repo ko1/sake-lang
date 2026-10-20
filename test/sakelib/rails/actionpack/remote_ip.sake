@@ -1,0 +1,30 @@
+require "rails/actionpack/action_dispatch/middleware/remote_ip"
+
+# RemoteIp in front of an endpoint that answers the request's remote_ip
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req) = [200, Hash.of("content-type" => "text/plain"), String[ActionDispatch::Request.remote_ip(req)]]
+end
+app = ActionDispatch::RemoteIp.make(Endpoint.new)
+custom = ActionDispatch::RemoteIp.make(Endpoint.new, true, Any[IPAddr.new("203.0.113.0/24")])
+unchecked = ActionDispatch::RemoteIp.make(Endpoint.new, false)
+
+def remote_ip(app, headers)
+  env = Rack::MockRequest.env_for("/", headers: Hash.merge(headers, Hash.of("REMOTE_ADDR" => Hash.fetch(headers, "REMOTE_ADDR", "10.0.0.1"))))
+  _, _, body = ActionDispatch::App.call(app, ActionDispatch::Request.new(env))
+  Array.first(body)
+rescue ActionDispatch::RemoteIp::IpSpoofAttackError => e
+  "IpSpoofAttackError: #{Exception.message(e)}"
+end
+
+p(remote_ip(app, Hash.of("REMOTE_ADDR" => "198.51.100.7")))
+p(remote_ip(app, Hash.of("HTTP_X_FORWARDED_FOR" => "198.51.100.7")))
+p(remote_ip(app, Hash.of("HTTP_X_FORWARDED_FOR" => "198.51.100.7, 10.0.0.2, 192.168.1.9")))
+p(remote_ip(app, Hash.of("HTTP_X_FORWARDED_FOR" => "unknown, 198.51.100.7")))
+p(remote_ip(app, Hash.of("HTTP_X_FORWARDED_FOR" => "10.0.0.2, 127.0.0.1")))
+p(remote_ip(app, Hash.of("HTTP_CLIENT_IP" => "198.51.100.8")))
+p(remote_ip(app, Hash.of("HTTP_CLIENT_IP" => "198.51.100.8", "HTTP_X_FORWARDED_FOR" => "198.51.100.7")))
+p(remote_ip(unchecked, Hash.of("HTTP_CLIENT_IP" => "198.51.100.8", "HTTP_X_FORWARDED_FOR" => "198.51.100.7")))
+p(remote_ip(app, Hash.of("HTTP_X_FORWARDED_FOR" => "2001:db8::1, fe80::1")))
+p(remote_ip(custom, Hash.of("REMOTE_ADDR" => "203.0.113.5", "HTTP_X_FORWARDED_FOR" => "10.0.0.9")))
+p(remote_ip(custom, Hash.of("REMOTE_ADDR" => "198.51.100.1", "HTTP_X_FORWARDED_FOR" => "10.0.0.9")))

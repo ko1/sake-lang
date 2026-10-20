@@ -1,0 +1,60 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+
+# The endpoint raises by path; x-cascade "pass" stands for "no route" (Sake: a case over the path).
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    case ActionDispatch::Request.path_info(req)
+    in "/ok" then [200, Hash.of("content-type" => "text/plain"), String["fine"]]
+    in "/missing" then [404, Hash.of("x-cascade" => "pass"), String[]]
+    in "/boom" then raise "boom"
+    in "/bad" then raise ActionController::BadRequest, "bad"
+    in "/parse" then raise ActionDispatch::Http::Parameters::ParseError, "parse"
+    in "/method" then raise ActionController::UnknownHttpMethod, "FOO"
+    else raise ArgumentError, "other"
+    end
+  end
+end
+
+# The app's config.action_dispatch.show_exceptions, from a header here (Rails puts it in the env).
+class Config
+  attr_reader app
+  include ActionDispatch::App
+  def call(c, req)
+    show = ActionDispatch::Request.get_header(req, "HTTP_X_SHOW")
+    ActionDispatch::Request.set_show_exceptions(req, String.to_sym(show)) if show
+    ActionDispatch::App.call(@app, req)
+  end
+end
+
+app = ActionDispatch::RackApp.new(Config.new(ActionDispatch::ShowExceptions.new(ActionDispatch::DebugExceptions.new(Endpoint.new), ActionDispatch::PublicExceptions.new("fixtures/public"))))
+
+def run(app, path, headers = Hash.new)
+  env = Rack::MockRequest.env_for(path, headers: headers)
+  status, h, body = Rack::App.call(app, env)
+  p([path, status, h, body])
+rescue => e
+  puts("#{path}: raised #{ActionDispatch::ExceptionWrapper.class_name_of(e)}: #{Exception.message(e)}")
+end
+
+run(app, "/ok")
+run(app, "/missing")
+run(app, "/boom")
+run(app, "/bad")
+run(app, "/parse")
+run(app, "/method")
+run(app, "/boom", Hash.of("HTTP_ACCEPT" => "application/json"))
+run(app, "/missing", Hash.of("HTTP_ACCEPT" => "application/json"))
+run(app, "/missing.json")
+run(app, "/boom", Hash.of("REQUEST_METHOD" => "HEAD"))
+run(app, "/boom", Hash.of("HTTP_X_SHOW" => "none"))
+run(app, "/boom", Hash.of("HTTP_X_SHOW" => "rescuable"))
+run(app, "/bad", Hash.of("HTTP_X_SHOW" => "rescuable"))
+
+puts("-- ExceptionWrapper")
+w = ActionDispatch::ExceptionWrapper.build(nil, ActionController::RoutingError.new("No route", Any[]))
+p([ActionDispatch::ExceptionWrapper.status_code(w), ActionDispatch::ExceptionWrapper.exception_class_name(w), ActionDispatch::ExceptionWrapper.rescue_template(w), ActionDispatch::ExceptionWrapper.rescue_response?(w), ActionDispatch::ExceptionWrapper.routing_error?(w)])
+w = ActionDispatch::ExceptionWrapper.build(nil, RuntimeError.new("x"))
+p([ActionDispatch::ExceptionWrapper.status_code(w), ActionDispatch::ExceptionWrapper.exception_class_name(w), ActionDispatch::ExceptionWrapper.rescue_template(w), ActionDispatch::ExceptionWrapper.rescue_response?(w), ActionDispatch::ExceptionWrapper.message(w)])
+p(ActionDispatch::ExceptionWrapper.status_code_for_exception("ActionController::UnknownFormat"))
+p(ActionDispatch::ExceptionWrapper.status_code_for_exception("ActionController::InvalidAuthenticityToken"))

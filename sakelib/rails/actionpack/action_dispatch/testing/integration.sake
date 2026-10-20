@@ -1,0 +1,245 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/testing/integration.rb (partial: no open_session, no assigns, no
+# file uploads (multipart), no html_document; the Rack::Test::Session it drives is written into `process`)
+# and of test_process.rb (session, flash, cookies of the last request)
+#
+# Rails' Session is driven through rack-test (Rack::Test::Session over a Rack::MockSession, whose CookieJar keeps
+# the cookies between requests) and calls the app with `app.call(env)`; afterwards `ActionDispatch::Request.new(env)`
+# sees what the app left in the env (the flash, the session). Sake's env holds only Strings and that state lives
+# in the Request the stack was given, so the Session calls an ActionDispatch::App (the middleware stack) with a
+# Request it makes, and keeps that Request: `Session.make(app, routes)`, where Rails gets the routes from
+# `app.routes`.
+#
+# Rails' IntegrationTest is a test case class whose methods (`get "/posts"`, `assert_response :success`) go to
+# the integration session (Runner's module_eval'd delegators and method_missing). Here IntegrationTest is a value
+# made in each Minitest.test block, holding the block's Minitest::Test and the Session:
+#
+#   Rails                                        Sake
+#   class PostsTest < ActionDispatch::IntegrationTest   Minitest.test(suite, "index") do |t|
+#     test "index" do                                 it = ActionDispatch::IntegrationTest.make(t, app, routes)
+#       get "/posts", params: { page: 2 }               IT.get(it, "/posts", params: Hash.of(page: 2))
+#       assert_response :success                       IT.assert_response(it, :success)
+
+require "../http/request"
+require "../http/headers"
+require "../routing"
+require "../middleware/cookies"
+require "../middleware/flash"
+require "../request/session"
+require "rack_test_cookie_jar"
+require "test_response"
+require "assertions"
+
+module ActionDispatch
+  module Integration
+    class Session
+      attr_reader app, request, response, routes
+      attr_accessor remote_addr, accept, request_count
+      private attr_accessor _host, https, _url_options, mock_cookie_jar
+      include Routing::UrlFor
+
+      def default_host = "www.example.com"
+
+      # Session.new(app): here the stack (an ActionDispatch::App) and the RouteSet (Rails: app.routes)
+      def make(app, routes)
+        s = Session.new(app, nil, nil, routes, "127.0.0.1", "", 0, default_host, false, nil, nil)
+        reset!(s)
+        s
+      end
+
+      def host(s) = @_host || default_host
+      def set_host(s, host) = @_host = host
+      def host!(s, host) = @_host = host
+
+      def reset!(s)
+        @https = false
+        @request = nil
+        @response = nil
+        @mock_cookie_jar = nil
+        @request_count = 0
+        @_url_options = nil
+        @_host = default_host
+        @remote_addr = "127.0.0.1"
+        @accept = "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5"
+        nil
+      end
+
+      def https!(s, flag = true) = @https = flag
+      def https?(s) = @https == true
+
+      # Rack::MockSession's cookie_jar
+      def cookies(s) = @mock_cookie_jar ||= Rack::Test::CookieJar.make(host(s))
+
+      def _routes(s) = @routes
+      def url_options(s)
+        o = @_url_options
+        return o if o
+        o = Hash.merge(Hash.of(host: host(s), protocol: https?(s) ? "https" : "http"), Routing::RouteSet.default_url_options(@routes))
+        @_url_options = o
+        o
+      end
+
+      # status, status_message, headers, body, redirect? (delegated to the response), path (to the request)
+      def response!(s)
+        r = @response
+        raise ArgumentError, "no response yet: make a request first" unless r
+        r
+      end
+      def status(s) = Response.status(response!(s))
+      def status_message(s) = Response.status_message(response!(s))
+      def headers(s) = Response.headers(response!(s))
+      def body(s) = Response.body(response!(s))
+      def redirect?(s) = Response.redirect?(response!(s))
+      def path(s)
+        r = @request
+        r ? Request.path(r) : nil
+      end
+
+      # --- RequestHelpers ---
+      def get(s, path, **args) = process(s, :get, path, **args)
+      def post(s, path, **args) = process(s, :post, path, **args)
+      def patch(s, path, **args) = process(s, :patch, path, **args)
+      def put(s, path, **args) = process(s, :put, path, **args)
+      def delete(s, path, **args) = process(s, :delete, path, **args)
+      def head(s, path, **args) = process(s, :head, path, **args)
+      def options(s, path, **args) = process(s, :options, path, **args)
+
+      def follow_redirect!(s, headers: Hash.new)
+        raise "not a redirect! #{status(s)} #{status_message(s)}" unless redirect?(s)
+        req = @request
+        req => Request
+        method = Array.include?(Integer[307, 308], Response.status(response!(s))) ? String.to_sym(String.downcase(Request.method(req))) : :get
+        headers["HTTP_REFERER"] = Request.url(req) unless Hash.key?(headers, "HTTP_REFERER") || Hash.key?(headers, :HTTP_REFERER)
+        location = Kernel.to_s(Response.location(response!(s)))
+        case method
+        in :post then post(s, location, headers: headers)
+        in :put then put(s, location, headers: headers)
+        in :patch then patch(s, location, headers: headers)
+        in :delete then delete(s, location, headers: headers)
+        else get(s, location, headers: headers)
+        end
+        status(s)
+      end
+
+      # process(method, path, params:, headers:, env:, xhr:, as:) => the status
+      def process(s, method, path, params: nil, headers: nil, env: nil, xhr: false, as: nil)
+        request_encoder = RequestEncoder.encoder(as)
+        headers ||= Hash.new
+        if method == :get && as == :json && params
+          headers["X-Http-Method-Override"] = "GET"
+          method = :post
+        end
+        if String.include?(path, "://")
+          location = URI.parse(path)
+          sch = URI.scheme(location)
+          https!(s, sch == "https") if sch
+          url_host = URI.host(location)
+          if url_host
+            default = sch == "https" ? 443 : 80
+            prt = URI.port(location)
+            url_host += ":#{prt}" if prt != nil && prt != default
+            host!(s, url_host)
+          end
+          lp = URI.path(location) || ""
+          q = URI.query(location)
+          path = q ? "#{lp}?#{q}" : lp
+        end
+        hostname, port = String.split(host(s), ":")
+        request_env = Hash.of(
+          "SERVER_NAME" => hostname || "",
+          "SERVER_PORT" => port || (https?(s) ? "443" : "80"),
+          "HTTPS" => https?(s) ? "on" : "off",
+          "rack.url_scheme" => https?(s) ? "https" : "http",
+          "REQUEST_URI" => path,
+          "HTTP_HOST" => host(s),
+          "REMOTE_ADDR" => @remote_addr,
+          "HTTP_ACCEPT" => RequestEncoder.accept_header(request_encoder) || @accept)
+        ct = RequestEncoder.content_type(request_encoder)
+        request_env["CONTENT_TYPE"] = ct if ct
+        wrapped_headers = Http::Headers.from_hash(Hash.new)
+        Http::Headers.merge!(wrapped_headers, headers)
+        if xhr
+          Http::Headers.[]=(wrapped_headers, "HTTP_X_REQUESTED_WITH", "XMLHttpRequest")
+          if Http::Headers.[](wrapped_headers, "HTTP_ACCEPT") == nil
+            Http::Headers.[]=(wrapped_headers, "HTTP_ACCEPT", "text/javascript, text/html, application/xml, text/xml, */*")
+          end
+        end
+        Hash.each(Http::Headers.env(wrapped_headers)) { |k, v| request_env[k] = v }
+        Hash.each(env) { |k, v| request_env[Kernel.to_s(k)] = v } if env != nil
+
+        # Rack::Test::Session#request(uri, env) with env_for: the query or the body, the cookies of the jar
+        encoded = RequestEncoder.encode_params(request_encoder, params)
+        uri = "#{request_env["rack.url_scheme"]}://#{request_env["SERVER_NAME"]}:#{request_env["SERVER_PORT"]}#{path}"
+        verb = String.upcase(Symbol.to_s(method))
+        input = nil
+        if verb == "GET"
+          query = (encoded in Hash) ? Rack::Utils.build_nested_query(encoded) : Kernel.to_s(encoded)
+          uri += (String.include?(uri, "?") ? "&" : "?") + query if encoded != nil && query != ""
+        else
+          request_env["CONTENT_TYPE"] ||= "application/x-www-form-urlencoded"
+          input = (encoded in Hash) ? Rack::Utils.build_nested_query(encoded) : (encoded == nil ? "" : Kernel.to_s(encoded))
+        end
+        cookie_uri = URI.parse(uri)
+        request_env["HTTP_COOKIE"] ||= Rack::Test::CookieJar.for(cookies(s), cookie_uri)
+        rack_env = Rack::MockRequest.env_for(uri, method: verb, input: input, headers: request_env)
+        req = Request.new(rack_env)
+        sent_path_info = Kernel.to_s(rack_env["PATH_INFO"])
+        status, response_headers, body = App.call(@app, req)
+        # Rails' ShowExceptions renders the error page with a copy of the request (Request#dup copies the env);
+        # middleware/show_exceptions.sake changes the request itself, so put back what the client sent
+        Request.set_path_info(req, sent_path_info)
+        Request.set_request_method(req, verb)
+        Rack::Test::CookieJar.merge(cookies(s), response_headers["set-cookie"], cookie_uri)
+
+        @request_count += 1
+        @request = req
+        @response = TestResponse.from_response(status, response_headers, Array.map(body) { |b| Kernel.to_s(b) })
+        Response.set_request(response!(s), req)
+        @_url_options = nil
+        status
+      end
+    end
+  end
+
+  # (Sake only) IntegrationTest's state: the Minitest::Test of the running block and its integration session
+  class IntegrationTest
+    attr_reader minitest, integration_session
+    include Assertions::ResponseAssertions
+    include Assertions::RoutingAssertions
+    include Routing::UrlFor
+
+    def make(t, app, routes) = IntegrationTest.new(t, Integration::Session.make(app, routes))
+
+    def response(it) = Integration::Session.response(@integration_session)
+    def request(it) = Integration::Session.request(@integration_session)
+    def routes(it) = Integration::Session.routes(@integration_session)
+    def _routes(it) = routes(it)
+    def url_options(it) = Integration::Session.url_options(@integration_session)
+
+    # Runner's delegators
+    def get(it, path, **args) = Integration::Session.get(@integration_session, path, **args)
+    def post(it, path, **args) = Integration::Session.post(@integration_session, path, **args)
+    def patch(it, path, **args) = Integration::Session.patch(@integration_session, path, **args)
+    def put(it, path, **args) = Integration::Session.put(@integration_session, path, **args)
+    def delete(it, path, **args) = Integration::Session.delete(@integration_session, path, **args)
+    def head(it, path, **args) = Integration::Session.head(@integration_session, path, **args)
+    def follow_redirect!(it) = Integration::Session.follow_redirect!(@integration_session)
+    def cookies(it) = Integration::Session.cookies(@integration_session)
+    def host!(it, host) = Integration::Session.host!(@integration_session, host)
+    def https!(it, flag = true) = Integration::Session.https!(@integration_session, flag)
+    def reset!(it) = Integration::Session.reset!(@integration_session)
+    def status(it) = Integration::Session.status(@integration_session)
+    def path(it) = Integration::Session.path(@integration_session)
+    def body(it) = Integration::Session.body(@integration_session)
+    def headers(it) = Integration::Session.headers(@integration_session)
+
+    # TestProcess: the last request's session and flash
+    def request!(it)
+      r = request(it)
+      raise ArgumentError, "no request yet: make a request first" unless r
+      r
+    end
+    def session(it) = Request.session(request!(it))
+    def flash(it) = Request.flash(request!(it))
+    def redirect_to_url(it) = Response.redirect_url(response!(it))
+  end
+end

@@ -1,0 +1,54 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/cookies.rb, the encrypted jar (ChainedCookieJars#encrypted,
+# EncryptedKeyRotatingCookieJar) (partial: no rotations, no legacy AES-CBC upgrade)
+#
+# NOT TESTED, NOT REQUIRED: it needs ActiveSupport::MessageEncryptor (an AES-256-GCM cipher), which is not in
+# sakelib/rails/activesupport/ (nor a cipher built-in). Written against Rails' names:
+#   ActiveSupport::MessageEncryptor.new(secret, cipher:), .key_len(cipher), .encrypt_and_sign(e, value, expires_at:,
+#     purpose:), .decrypt_and_verify(e, message, purpose:) (raises MessageEncryptor::InvalidMessage)
+# Requiring it makes CookieJar.signed_or_encrypted choose this jar when secret_key_base is set, as Rails does.
+
+require "cookies_signed"
+require "rails/activesupport/active_support/message_encryptor"
+
+module ActionDispatch
+  class Cookies
+    class CookieJar
+      def encrypted(jar) = @_encrypted ||= EncryptedKeyRotatingCookieJar.new(jar)
+      def signed_or_encrypted(jar)
+        sk = Request.secret_key_base(@request)
+        sk && sk != "" ? encrypted(jar) : signed(jar)
+      end
+    end
+
+    class EncryptedKeyRotatingCookieJar
+      attr_reader parent_jar
+      private attr_accessor encryptor
+      include AbstractCookieJar
+      include SerializedCookieJars
+
+      def initialize(j)
+        req = request(j)
+        cipher = Request.encrypted_cookie_cipher(req) || "aes-256-gcm"
+        key_len = ActiveSupport::MessageEncryptor.key_len(cipher)
+        salt = Request.authenticated_encrypted_cookie_salt(req) || "authenticated encrypted cookie"
+        secret = ActiveSupport::KeyGenerator.generate_key(Request.key_generator(req), salt, key_len)
+        @encryptor = ActiveSupport::MessageEncryptor.new(secret, cipher: cipher)
+      end
+
+      def request(j) = CookieJar.request(@parent_jar)
+
+      def parse(j, name, encrypted_message, purpose)
+        data = ActiveSupport::MessageEncryptor.decrypt_and_verify(@encryptor, encrypted_message, purpose: purpose)
+        data ? deserialize(j, data) : nil
+      rescue ActiveSupport::MessageEncryptor::InvalidMessage
+        nil
+      end
+
+      def commit(j, name, options)
+        md = cookie_metadata(j, name, options)
+        options[:value] = ActiveSupport::MessageEncryptor.encrypt_and_sign(@encryptor, serialize(j, options[:value]), expires_at: md[:expires_at], purpose: md[:purpose])
+        check_for_overflow!(j, name, options)
+      end
+    end
+  end
+end

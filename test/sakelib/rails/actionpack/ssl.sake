@@ -1,0 +1,22 @@
+require "rails/actionpack/action_dispatch/middleware/ssl"
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req) = [200, Hash.of("content-type" => "text/plain", "set-cookie" => String["a=1; path=/", "b=2; secure"]), String["ok"]]
+end
+app = ActionDispatch::RackApp.new(ActionDispatch::SSL.build(Endpoint.new))
+custom = ActionDispatch::RackApp.new(ActionDispatch::SSL.build(Endpoint.new, redirect: Hash.of(host: "secure.example.com", port: 8443, status: 308), hsts: Hash.of(preload: true, expires: 3600)))
+off = ActionDispatch::RackApp.new(ActionDispatch::SSL.build(Endpoint.new, redirect: false, hsts: false, ssl_default_redirect_status: 302))
+
+def run(app, url, headers = Hash.new)
+  status, h, body = Rack::App.call(app, Rack::MockRequest.env_for(url, headers: headers))
+  p([url, status, h, body])
+end
+
+run(app, "http://example.com/a?b=1")
+run(app, "http://example.com:8080/a", Hash.of("REQUEST_METHOD" => "POST"))
+run(app, "https://example.com/a")
+run(custom, "http://example.com/x")
+run(custom, "https://example.com/x")
+run(off, "http://example.com/y", Hash.of("REQUEST_METHOD" => "POST"))
+run(off, "https://example.com/y")

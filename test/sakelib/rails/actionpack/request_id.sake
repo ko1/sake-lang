@@ -1,0 +1,24 @@
+require "rails/actionpack/action_dispatch/middleware/request_id"
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    [200, Hash.of("content-type" => "text/plain"), String[Kernel.to_s(ActionDispatch::Request.request_id(req))]]
+  end
+end
+app = ActionDispatch::RackApp.new(ActionDispatch::RequestId.new(Endpoint.new, header: "X-Request-Id"))
+custom = ActionDispatch::RackApp.new(ActionDispatch::RequestId.new(Endpoint.new, header: "X-Trace"))
+
+def run(app, headers)
+  _, h, body = Rack::App.call(app, Rack::MockRequest.env_for("/", headers: headers))
+  id = Array.first(body) || ""
+  shape = String.match?(id, /\A\h{8}-\h{4}-4\h{3}-[89ab]\h{3}-\h{12}\z/) ? "<uuid>" : id
+  p([String.size(shape) > 40 ? "#{String.[](shape, 0, 20)}... (#{String.size(shape)})" : shape, Hash.transform_values(h) { |v| v == id ? "=body" : v }])
+end
+
+run(app, Hash.new)
+run(app, Hash.of("HTTP_X_REQUEST_ID" => "req-42"))
+run(app, Hash.of("HTTP_X_REQUEST_ID" => "a b;c<d>@e_f"))
+run(app, Hash.of("HTTP_X_REQUEST_ID" => "x" * 300))
+run(app, Hash.of("HTTP_X_REQUEST_ID" => ""))
+run(custom, Hash.of("HTTP_X_TRACE" => "t-1"))

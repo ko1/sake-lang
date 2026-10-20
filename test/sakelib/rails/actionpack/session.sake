@@ -1,0 +1,106 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+
+Session = ActionDispatch::Request::Session
+
+# A store kept in memory, with ids counted instead of random (Rails' tests write such stores too).
+class TestStore
+  attr_reader app
+  attr_accessor default_options, key, same_site, cookie_only
+  attr_accessor sessions, n
+  include ActionDispatch::App
+  include ActionDispatch::Session::AbstractStore
+  def initialize(s)
+    ActionDispatch::Session::AbstractStore.setup(s)
+    @sessions = Hash.new
+    @n = 0
+  end
+
+  def generate_sid(s)
+    @n += 1
+    Rack::Session::SessionId.new("sid#{@n}")
+  end
+
+  def find_session(s, req, sid)
+    session = sid ? @sessions[Rack::Session::SessionId.private_id(sid)] : nil
+    session ? [sid, session] : [generate_sid(s), Hash.new]
+  end
+
+  def write_session(s, req, sid, session, options)
+    @sessions[Rack::Session::SessionId.private_id(sid)] = session
+    sid
+  end
+
+  def delete_session(s, req, sid, options)
+    Hash.delete(@sessions, Rack::Session::SessionId.private_id(sid)) if sid
+    Session::Options.[](options, :drop) ? nil : generate_sid(s)
+  end
+
+  def stored(s) = Hash.transform_keys(@sessions) { |k| String.[](k, 0, 9) || "" }
+end
+
+def sid_of(session)
+  i = Session.id(session)
+  i ? Rack::Session::SessionId.public_id(i) : nil
+end
+
+def step(name, req)
+  session = ActionDispatch::Request.session(req)
+  case name
+  in "write"
+    Session.[]=(session, :user_id, 42)
+    Session.[]=(session, "cart", Any[1, 2])
+    p([Session.[](session, :user_id), Session.loaded?(session), Session.keys(session)])
+  in "read"
+    p([Session.[](session, :user_id), Session.[](session, "cart"), Session.key?(session, :user_id), Session.fetch(session, :zz, 0), Session.loaded?(session)])
+    p([Session.to_hash(session), Session.empty?(session), sid_of(session), Session.[](session, "session_id")])
+  in "untouched"
+    p(Session.loaded?(session))
+  in "delete"
+    p(Session.delete(session, :cart))
+    p(Session.keys(session))
+  in "reset"
+    ActionDispatch::Request.reset_session(req)
+    p([Session.to_hash(session), sid_of(session)])
+    Session.[]=(session, :fresh, true)
+  in "renew"
+    Session::Options.[]=(Session.options(session) || Session::Options.new(nil, Hash.new), :renew, true)
+    Session.[]=(session, :user_id, 7)
+  in "skip"
+    Session.[]=(session, :user_id, 8)
+    Session::Options.[]=(Session.options(session) || Session::Options.new(nil, Hash.new), :skip, true)
+  else
+  end
+end
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    step(String.delete_prefix(ActionDispatch::Request.path_info(req), "/"), req)
+    [200, Hash.of("content-type" => "text/plain"), String["ok"]]
+  end
+end
+store = TestStore.new(Endpoint.new, Hash.of(key: "_s", httponly: true))
+app = ActionDispatch::RackApp.new(ActionDispatch::Cookies.new(store))
+
+def run(app, path, cookie)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}")
+  env["HTTP_COOKIE"] = cookie if cookie
+  status, headers, _body = Rack::App.call(app, env)
+  sc = headers["set-cookie"]
+  puts("#{path} -> #{status} #{Kernel.inspect(sc)}")
+  sc ? String.[](Kernel.to_s(sc), /\A(_s=[^;]*)/, 1) : cookie
+end
+
+c = run(app, "/untouched", nil)
+c = run(app, "/write", c)
+c = run(app, "/read", c)
+c = run(app, "/delete", c)
+c = run(app, "/read", c)
+c = run(app, "/renew", c)
+c = run(app, "/read", c)
+c = run(app, "/skip", c)
+c = run(app, "/read", c)
+c = run(app, "/reset", c)
+c = run(app, "/read", c)
+c = run(app, "/read", "_s=unknown")
+p(TestStore.stored(store))

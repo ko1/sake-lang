@@ -1,0 +1,105 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+require "rails/actionpack/action_dispatch/routing"
+require "rails/actionpack/action_dispatch/testing/integration"
+
+# The app under test: routes and a controller stand-in, with ShowExceptions so errors become pages
+class PostsController
+  attr_reader x
+  include ActionDispatch::Routing::Controllers
+  def dispatch(c, controller, action, req)
+    case action
+    in "index" then [200, Hash.of("content-type" => "text/plain"), Any["all posts"]]
+    in "create" then [302, Hash.of("location" => "http://www.example.com/posts/1"), Any[]]
+    in "update" then [303, Hash.of("location" => "http://www.example.com/posts"), Any[]]
+    in "destroy" then raise "boom"
+    else [200, Hash.of("content-type" => "text/plain"), Any["post #{ActionDispatch::Request.path_parameters(req)[:id]}"]]
+    end
+  end
+end
+# recognize_path checks that the controller class exists (Sake: the generated controllers decide)
+class ActionDispatch::Routing::Mapper
+  def assertion_routes(map)
+    resources map, :posts
+    namespace map, :admin do
+      resources map, :users, only: Any[:index, :show]
+    end
+    get map, "about", to: "pages#about"
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.assertion_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = PostsController.new(nil)
+stack = ActionDispatch::MiddlewareStack.new
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::ShowExceptions", ActionDispatch::PublicExceptions.new("fixtures/public"))
+inner = ActionDispatch::MiddlewareStack.build(stack, set)
+class Config
+  attr_reader app
+  include ActionDispatch::App
+  def call(c, req)
+    ActionDispatch::Request.env_config(req)["action_dispatch.show_exceptions"] = :all
+    ActionDispatch::App.call(@app, req)
+  end
+end
+app = Config.new(inner)
+
+# Rails' IntegrationTest: Minitest's assertions with ActionDispatch's, on the session's @response, @request, @routes
+IT = ActionDispatch::IntegrationTest
+suite = Minitest.suite("assertions")
+
+def check(label)
+  yield
+  puts("#{label}: ok")
+rescue Minitest::Assertion => e
+  puts("#{label}: #{Array.map(String.lines(Exception.message(e))) { |l| String.chomp(l) }.Array.reject { |l| String.start_with?(l, "    ") }.join(" | ")}")   # without a backtrace
+end
+
+Minitest.test(suite, "assertions") do |t|
+  it = IT.make(t, app, set)
+  puts("-- assert_response")
+  IT.get(it, "/posts")
+  check("success") { IT.assert_response(it, :success) }
+  check("200") { IT.assert_response(it, 200) }
+  check(":ok") { IT.assert_response(it, :ok) }
+  check("missing") { IT.assert_response(it, :missing) }
+  check("redirect") { IT.assert_response(it, :redirect) }
+  check("404 with a message") { IT.assert_response(it, 404, "not here") }
+  IT.get(it, "/nothing")
+  check("missing") { IT.assert_response(it, :missing) }
+  check(":not_found") { IT.assert_response(it, :not_found) }
+  check("success") { IT.assert_response(it, :success) }
+  IT.delete(it, "/posts/1")
+  check("error") { IT.assert_response(it, :error) }
+  check("success") { IT.assert_response(it, :success) }
+  IT.post(it, "/posts")
+  check("success after a redirect") { IT.assert_response(it, :success) }
+
+  puts("-- assert_redirected_to")
+  check("full url") { IT.assert_redirected_to(it, "http://www.example.com/posts/1") }
+  check("path") { IT.assert_redirected_to(it, "/posts/1") }
+  check("wrong path") { IT.assert_redirected_to(it, "/posts/2") }
+  check("status") { IT.assert_redirected_to(it, "/posts/1", Hash.of(status: :found)) }
+  check("wrong status") { IT.assert_redirected_to(it, "/posts/1", Hash.of(status: :see_other)) }
+  IT.patch(it, "/posts/1")
+  check("see_other") { IT.assert_redirected_to(it, "/posts", Hash.of(status: :see_other)) }
+  IT.get(it, "/posts")
+  check("not a redirect") { IT.assert_redirected_to(it, "/posts") }
+
+  puts("-- assert_recognizes, assert_generates, assert_routing")
+  check("recognizes") { IT.assert_recognizes(it, Hash.of(controller: "posts", action: "show", id: "1"), "/posts/1") }
+  check("recognizes a verb") { IT.assert_recognizes(it, Hash.of(controller: "posts", action: "update", id: "1"), Hash.of(path: "/posts/1", method: :patch)) }
+  check("recognizes extras") { IT.assert_recognizes(it, Hash.of(controller: "posts", action: "index", page: "2"), "/posts", Hash.of(page: "2")) }
+  check("recognizes wrong") { IT.assert_recognizes(it, Hash.of(controller: "posts", action: "index"), "/posts/1") }
+  check("recognizes nothing") { IT.assert_recognizes(it, Hash.of(controller: "posts", action: "index"), "/nope") }
+  check("recognizes with a message") { IT.assert_recognizes(it, Hash.of(controller: "posts", action: "index"), "/posts/1", Hash.new, "routes changed") }
+  check("generates") { IT.assert_generates(it, "/posts/1", Hash.of(controller: "posts", action: "show", id: "1")) }
+  check("generates no slash") { IT.assert_generates(it, "admin/users", Hash.of(controller: "admin/users", action: "index")) }
+  check("generates a url") { IT.assert_generates(it, "http://example.com/about", Hash.of(controller: "pages", action: "about")) }
+  check("generates extras") { IT.assert_generates(it, "/posts", Hash.of(controller: "posts", action: "index", page: "2"), Hash.new, Hash.of(page: "2")) }
+  check("generates wrong") { IT.assert_generates(it, "/posts/2", Hash.of(controller: "posts", action: "show", id: "1")) }
+  check("generates missing extras") { IT.assert_generates(it, "/posts", Hash.of(controller: "posts", action: "index", page: "2")) }
+  check("routing") { IT.assert_routing(it, "/admin/users/5", Hash.of(controller: "admin/users", action: "show", id: "5")) }
+  check("routing a verb") { IT.assert_routing(it, Hash.of(path: "/posts", method: :post), Hash.of(controller: "posts", action: "create")) }
+  check("routing wrong") { IT.assert_routing(it, "/about", Hash.of(controller: "pages", action: "contact")) }
+  Minitest.assert(t, Minitest::TestSuite.assertions(suite) > 0)
+end
+p(Minitest::TestSuite.assertions(suite))

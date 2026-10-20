@@ -1,0 +1,176 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/stack.rb (partial: no InstrumentationProxy, no blocks)
+#
+# Rails' stack holds classes (`use ActionDispatch::Cookies`) and builds `klass.new(app, *args, &block)`. Sake has
+# no class values and no `new` on a value, so a middleware is named by its class name (a String) and
+# Middleware.build is a `case` over the middleware this port knows (the classes in middleware/); an app's own
+# middleware would be another branch, which railties' generated code can add. The args are an Array (of Any):
+# each branch takes them apart with the types its class wants.
+#
+#   Ruby                                            Sake
+#   stack.use ActionDispatch::RequestId, header: "X-Request-Id"
+#                                                   MiddlewareStack.use(stack, "ActionDispatch::RequestId", Hash.of(header: "X-Request-Id"))
+#   stack.insert_before ActionDispatch::Flash, ActionDispatch::Cookies
+#                                                   MiddlewareStack.insert_before(stack, "ActionDispatch::Flash", "ActionDispatch::Cookies")
+#   app = stack.build(endpoint)                     app = MiddlewareStack.build(stack, endpoint)
+
+require "../app"
+require "request_id"
+require "remote_ip"
+require "../http/content_security_policy"
+require "../http/permissions_policy"
+require "cookies"
+require "flash"
+require "session/cookie_store"
+require "show_exceptions"
+require "public_exceptions"
+require "debug_exceptions"
+require "static"
+require "host_authorization"
+require "ssl"
+
+module ActionDispatch
+  class MiddlewareStack
+    attr_accessor middlewares
+    include Enum
+
+    class Middleware
+      attr_reader klass, args
+
+      def name(m) = @klass
+      def ==(a, b) = (b in Middleware) ? @klass == Middleware.klass(b) : @klass == b
+      def inspect(m) = @klass
+      def to_s(m) = @klass
+
+      # Rails: klass.new(app, *args, &block)
+      def build(m, app)
+        case @klass
+        in "ActionDispatch::RequestId"
+          RequestId.new(app, header: _opt(m, :header) || "X-Request-Id")
+        in "ActionDispatch::RemoteIp"
+          check = @args[0]
+          proxies = @args[1]
+          RemoteIp.make(app, check != false, (proxies in Array) ? proxies : nil)
+        in "ActionDispatch::ContentSecurityPolicy::Middleware" then ContentSecurityPolicy::Middleware.new(app)
+        in "ActionDispatch::PermissionsPolicy::Middleware" then PermissionsPolicy::Middleware.new(app)
+        in "ActionDispatch::Cookies" then Cookies.new(app)
+        in "ActionDispatch::Flash" then app            # Rails 8: Flash.new(app) is the app
+        in "ActionDispatch::ShowExceptions"
+          ea = @args[0]
+          ea => PublicExceptions
+          ShowExceptions.new(app, ea)
+        in "ActionDispatch::Session::CookieStore" then Session::CookieStore.new(app, _options(m))
+        in "ActionDispatch::DebugExceptions" then DebugExceptions.new(app)
+        in "ActionDispatch::Static"
+          path = @args[0]
+          path => String
+          Static.new_static(app, path, index: _opt(m, :index) || "index")
+        in "ActionDispatch::HostAuthorization"
+          hosts = @args[0]
+          hosts => Array
+          HostAuthorization.build(app, hosts)
+        in "ActionDispatch::SSL"
+          o = _options(m)
+          redirect = Hash.key?(o, :redirect) ? o[:redirect] : Hash.new
+          h = o[:hsts]
+          SSL.build(app, redirect: (redirect in Hash) ? redirect : nil, hsts: (h in Hash) ? h : (h == false ? false : nil))
+        else raise ArgumentError, "unknown middleware #{@klass} (this port builds only ActionDispatch's own)"
+        end
+      end
+
+      # the trailing options Hash of the args (Ruby's keywords), or an empty one
+      def _options(m)
+        last = Array.last(@args)
+        (last in Hash) ? last : Hash.new
+      end
+      def _opt(m, key)
+        v = _options(m)[key]
+        (v in String) ? v : nil
+      end
+    end
+
+    def initialize(s)
+      @middlewares = Middleware[]
+    end
+
+    def each(s)
+      Array.each(@middlewares) { |m| yield(m) }
+      s
+    end
+    def size(s) = Array.size(@middlewares)
+    def last(s) = Array.last(@middlewares)
+    def [](s, i) = @middlewares[i]
+
+    def unshift(s, klass, *args)
+      Array.unshift(@middlewares, build_middleware(s, klass, args))
+    end
+
+    def insert(s, index, klass, *args)
+      i = assert_index(s, index, :before)
+      Array.insert(@middlewares, i, build_middleware(s, klass, args))
+    end
+    def insert_before(s, index, klass, *args)
+      i = assert_index(s, index, :before)
+      Array.insert(@middlewares, i, build_middleware(s, klass, args))
+    end
+
+    def insert_after(s, index, klass, *args)
+      i = assert_index(s, index, :after)
+      Array.insert(@middlewares, i + 1, build_middleware(s, klass, args))
+    end
+
+    def swap(s, target, klass, *args)
+      i = assert_index(s, target, :before)
+      Array.insert(@middlewares, i, build_middleware(s, klass, args))
+      Array.delete_at(@middlewares, i + 1)
+    end
+
+    # Rails: the Array after reject!, or nil when nothing was removed
+    def delete(s, target)
+      before = Array.size(@middlewares)
+      Array.reject!(@middlewares) { |m| Middleware.name(m) == target }
+      Array.size(@middlewares) == before ? nil : @middlewares
+    end
+
+    def delete!(s, target)
+      delete(s, target) || raise("No such middleware to remove: #{target}")  # a class name prints as itself
+    end
+
+    def move(s, target, source)
+      source_index = assert_index(s, source, :before)
+      source_middleware = Array.delete_at(@middlewares, source_index)
+      source_middleware => Middleware
+      target_index = assert_index(s, target, :before)
+      Array.insert(@middlewares, target_index, source_middleware)
+    end
+    def move_before(s, target, source) = move(s, target, source)
+
+    def move_after(s, target, source)
+      source_index = assert_index(s, source, :after)
+      source_middleware = Array.delete_at(@middlewares, source_index)
+      source_middleware => Middleware
+      target_index = assert_index(s, target, :after)
+      Array.insert(@middlewares, target_index + 1, source_middleware)
+    end
+
+    def use(s, klass, *args)
+      Array.push(@middlewares, build_middleware(s, klass, args))
+    end
+
+    # Rails: middlewares.freeze.reverse.inject(app) { |a, e| e.build(a) }
+    def build(s, app)
+      Array.reverse(@middlewares).Array.inject(app) { |a, e| Middleware.build(e, a) }
+    end
+
+    def assert_index(s, index, where)
+      i = (index in Integer) ? index : index_of(s, index)
+      raise "No such middleware to insert #{where}: #{index}" unless i
+      i
+    end
+
+    def build_middleware(s, klass, args) = Middleware.new(klass, args)
+
+    def index_of(s, klass)
+      Array.index(Array.map(@middlewares) { |m| Middleware.name(m) }, klass)
+    end
+  end
+end

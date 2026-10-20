@@ -1,0 +1,48 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+
+# --- an endpoint (Sake: a type including ActionDispatch::App) ---
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    [200, Hash.of("content-type" => "text/plain"), String["id=#{ActionDispatch::Request.request_id(req)}"]]
+  end
+end
+
+def names(stack) = Array.map(ActionDispatch::MiddlewareStack.middlewares(stack)) { |m| ActionDispatch::MiddlewareStack::Middleware.inspect(m) }
+
+puts("-- building the list")
+stack = ActionDispatch::MiddlewareStack.new
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Cookies")
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Flash")
+ActionDispatch::MiddlewareStack.unshift(stack, "ActionDispatch::RequestId", Hash.of(header: "X-Request-Id"))
+p(names(stack))
+ActionDispatch::MiddlewareStack.insert_before(stack, "ActionDispatch::Cookies", "ActionDispatch::DebugExceptions")
+ActionDispatch::MiddlewareStack.insert_after(stack, "ActionDispatch::RequestId", "ActionDispatch::ShowExceptions", ActionDispatch::PublicExceptions.new("public"))
+p(names(stack))
+p(ActionDispatch::MiddlewareStack.size(stack))
+p(ActionDispatch::MiddlewareStack.[](stack, 0).ActionDispatch::MiddlewareStack::Middleware.inspect)
+p(ActionDispatch::MiddlewareStack.last(stack).ActionDispatch::MiddlewareStack::Middleware.inspect)
+ActionDispatch::MiddlewareStack.move_before(stack, "ActionDispatch::RequestId", "ActionDispatch::Flash")
+p(names(stack))
+ActionDispatch::MiddlewareStack.move_after(stack, "ActionDispatch::Cookies", "ActionDispatch::Flash")
+p(names(stack))
+ActionDispatch::MiddlewareStack.swap(stack, "ActionDispatch::DebugExceptions", "ActionDispatch::Static", "fixtures/public")
+p(names(stack))
+p(ActionDispatch::MiddlewareStack.delete(stack, "ActionDispatch::Static") != nil)
+p(ActionDispatch::MiddlewareStack.delete(stack, "ActionDispatch::Static"))
+begin
+  ActionDispatch::MiddlewareStack.delete!(stack, "ActionDispatch::Static")
+rescue RuntimeError => e
+  puts("RuntimeError: #{Exception.message(e)}")
+end
+begin
+  ActionDispatch::MiddlewareStack.insert_before(stack, "ActionDispatch::Static", "ActionDispatch::Cookies")
+rescue RuntimeError => e
+  puts("RuntimeError: #{Exception.message(e)}")
+end
+p(names(stack))
+
+puts("-- building the app")
+app = ActionDispatch::RackApp.new(ActionDispatch::MiddlewareStack.build(stack, Endpoint.new))
+status, headers, body = Rack::App.call(app, Rack::MockRequest.env_for("/", headers: Hash.of("HTTP_X_REQUEST_ID" => "abc-123 <x>")))
+p([status, headers, body])

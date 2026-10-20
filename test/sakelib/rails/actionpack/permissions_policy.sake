@@ -1,0 +1,35 @@
+require "rails/actionpack/action_dispatch/http/permissions_policy"
+PP = ActionDispatch::PermissionsPolicy
+
+# config/initializers/permissions_policy.rb's block (Sake: a function that receives the policy)
+def configure(policy)
+  PP.camera      policy, :none
+  PP.gyroscope   policy, :none
+  PP.microphone  policy, :none
+  PP.usb         policy, :none
+  PP.fullscreen  policy, :self
+  PP.payment     policy, :self, "https://secure.example.com"
+end
+policy = PP.make
+configure(policy)
+p(PP.build(policy))
+copy = PP.initialize_copy(policy)
+PP.camera(copy, nil)
+PP.web_share(copy, :self)
+p([PP.build(copy), Hash.size(PP.directives(policy))])
+begin
+  PP.usb(copy, :everyone)
+rescue ArgumentError => e
+  p(Exception.message(e))
+end
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req) = [200, Hash.of("content-type" => "text/html"), String["ok"]]
+end
+Array.each(Any[policy, PP.make, nil]) do |pol|
+  req = ActionDispatch::Request.new(Rack::MockRequest.env_for("/"))
+  ActionDispatch::Request.set_permissions_policy(req, pol)
+  _, headers, _ = ActionDispatch::App.call(PP::Middleware.new(Endpoint.new), req)
+  p(Hash.slice(headers, "feature-policy"))
+end

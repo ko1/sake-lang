@@ -1,0 +1,80 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/testing/assertions/routing.rb (partial: no with_routing (it swaps the app's routes and redefines `call` at run time), no method_missing to the controller's helpers, no method: :all)
+#
+# assert_recognizes(expected_options, path, extras, msg): `path` is a String or a Hash {path:, method:}.
+
+module ActionDispatch
+  module Assertions
+    module RoutingAssertions
+      def minitest(x) = raise(NotImplementedError)
+      def routes(x) = raise(NotImplementedError)
+
+      def stringify(h)
+        out = Hash.new
+        Hash.each(h) { |k, v| out[Kernel.to_s(k)] = v }
+        out
+      end
+
+      def assert_recognizes(x, expected_options, path, extras = Hash.new, msg = nil)
+        request = recognized_request_for(x, path, extras, msg)
+        expected = stringify(expected_options)
+        actual = stringify(Request.path_parameters(request))
+        text = format("The recognized options <%s> did not match <%s>, difference:", Kernel.inspect(actual), Kernel.inspect(expected))
+        m = msg == nil || msg == "" ? text : "#{msg}.\n#{text}"
+        Assertions.assert_equal(minitest(x), expected, actual, m)
+      end
+
+      def assert_generates(x, expected_path, options, defaults = Hash.new, extras = Hash.new, message = nil)
+        if String.include?(expected_path, "://")
+          u = begin
+            URI.parse(expected_path)
+          rescue URI::InvalidURIError => e
+            Assertions.flunk(minitest(x), message || Exception.message(e))
+            raise
+          end
+          up = URI.path(u) || ""
+          expected_path = up == "" ? "/" : up
+        else
+          expected_path = "/#{expected_path}" unless String.start_with?(expected_path, "/")
+        end
+        options = Hash.dup(options)
+        generated_path, query_string_keys = Routing::RouteSet.generate_extras(routes(x), options, defaults)
+        found_extras = Hash.select(options) { |k, _v| Array.include?(query_string_keys, k) }
+        msg = message || format("found extras <%s>, not <%s>", Kernel.inspect(found_extras), Kernel.inspect(extras))
+        Assertions.assert_equal(minitest(x), extras, found_extras, Assertions.message(msg, "", Assertions.diff(extras, found_extras)))
+        msg = message || format("The generated path <%s> did not match <%s>", generated_path, expected_path)
+        Assertions.assert_equal(minitest(x), expected_path, generated_path, Assertions.message(msg, "", Assertions.diff(expected_path, generated_path)))
+      end
+
+      def assert_routing(x, path, options, defaults = Hash.new, extras = Hash.new, message = nil)
+        assert_recognizes(x, options, path, extras, message)
+        controller = options[:controller]
+        default_controller = defaults[:controller]
+        if controller && String.include?(Kernel.to_s(controller), "/") && default_controller && String.include?(Kernel.to_s(default_controller), "/")
+          options[:controller] = "/#{controller}"
+        end
+        generate_options = Hash.reject(options) { |k, _v| Hash.key?(defaults, k) }
+        p = (path in Hash) ? Kernel.to_s(path[:path]) : path
+        assert_generates(x, p, generate_options, defaults, extras, message)
+      end
+
+      def recognized_request_for(x, path, extras, msg)
+        method = :get
+        if path in Hash
+          method = path[:method] || :get
+          path = Kernel.to_s(path[:path])
+        end
+        path => String
+        path = "/#{path}" unless String.include?(path, "://") || String.start_with?(path, "/")
+        request = Request.new(Rack::MockRequest.env_for(path, method: Kernel.to_s(method)))
+        params = begin
+          Routing::RouteSet.recognize_path(routes(x), path, method: method, extras: extras)
+        rescue ActionController::RoutingError => e
+          Assertions.flunk(minitest(x), msg || Exception.message(e))
+          raise
+        end
+        Request.set_path_parameters(request, params || Hash.new)
+        request
+      end
+    end
+  end
+end

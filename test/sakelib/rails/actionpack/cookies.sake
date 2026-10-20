@@ -1,0 +1,67 @@
+require "rails/actionpack/action_dispatch/middleware/cookies"
+
+Jar = ActionDispatch::Cookies::CookieJar
+
+# Each request runs the endpoint's step on the request's cookie jar (Sake: a case over the step's name).
+def step(name, jar)
+  case name
+  in "read"
+    p([Jar.[](jar, :a), Jar.[](jar, "b"), Jar.[](jar, :missing), Jar.key?(jar, :a), Jar.has_key?(jar, "zz"), Jar.fetch(jar, :b), Jar.fetch(jar, :zz, "dflt")])
+    p(Jar.to_hash(jar))
+    puts(Jar.to_header(jar))
+  in "write"
+    Jar.[]=(jar, :user, "ko1")
+    Jar.[]=(jar, "theme", Hash.of(value: "dark", path: "/app", httponly: true, secure: false, same_site: :lax))
+    Jar.[]=(jar, :a, "1")                             # unchanged: no set-cookie
+    Jar.[]=(jar, :wide, Hash.of(value: "w", domain: :all))
+    Jar.[]=(jar, :wide3, Hash.of(value: "w", domain: :all, tld_length: 3))
+    Jar.[]=(jar, :listed, Hash.of(value: "l", domain: Any[".example.com", "other.org"]))
+    ActionDispatch::Cookies::PermanentCookieJar.[]=(Jar.permanent(jar), :remember, "yes")
+    p(Jar.[](jar, :user))
+  in "delete"
+    p(Jar.delete(jar, :a))
+    p(Jar.delete(jar, :nothing))
+    p(Jar.deleted?(jar, :a))
+    p(Jar.deleted?(jar, :b))
+  in "clear"
+    Jar.clear(jar, Hash.of(path: "/x"))
+    p(Jar.to_hash(jar))
+  in "secure"
+    Jar.[]=(jar, :s, Hash.of(value: "1", secure: true))
+  else
+  end
+end
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    step(String.delete_prefix(ActionDispatch::Request.path_info(req), "/"), ActionDispatch::Request.cookie_jar(req))
+    [200, Hash.of("content-type" => "text/plain"), String["ok"]]
+  end
+end
+app = ActionDispatch::RackApp.new(ActionDispatch::Cookies.new(Endpoint.new))
+
+def show(response)
+  status, headers, body = response
+  sc = headers["set-cookie"]
+  sc = sc == nil ? String[] : String[sc] unless sc in Array
+  p(status)
+  Array.each(sc) { |c| puts(String.sub(c, /expires=\w{3}, \d\d \w{3} \d{4} [\d:]{8} GMT/) { |m| String.start_with?(m, "expires=Thu, 01 Jan 1970") ? m : "expires=<20 years>" }) }
+end
+
+cookie = "a=1; b=x%20y; a=2"
+puts("-- read")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://www.example.com/read", headers: Hash.of("HTTP_COOKIE" => cookie))))
+puts("-- write")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://www.example.com/write", headers: Hash.of("HTTP_COOKIE" => cookie))))
+puts("-- write on a .co.uk host")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://shop.example.co.uk/write", headers: Hash.of("HTTP_COOKIE" => cookie))))
+puts("-- write on an IP")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://127.0.0.1/write", headers: Hash.of("HTTP_COOKIE" => cookie))))
+puts("-- delete")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://www.example.com/delete", headers: Hash.of("HTTP_COOKIE" => cookie))))
+puts("-- clear")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://www.example.com/clear", headers: Hash.of("HTTP_COOKIE" => cookie))))
+puts("-- secure over http, then https")
+show(Rack::App.call(app, Rack::MockRequest.env_for("http://www.example.com/secure")))
+show(Rack::App.call(app, Rack::MockRequest.env_for("https://www.example.com/secure")))

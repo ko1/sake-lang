@@ -1,0 +1,77 @@
+require "rails/actionpack/action_dispatch/http/content_security_policy"
+CSP = ActionDispatch::ContentSecurityPolicy
+
+# config/initializers/content_security_policy.rb's block (Sake: a function that receives the policy)
+def configure(policy)
+  CSP.default_src policy, :self, :https
+  CSP.font_src    policy, :self, :https, :data
+  CSP.img_src     policy, :self, :https, :data
+  CSP.object_src  policy, :none
+  CSP.script_src  policy, :self, :https, "sha256-abc="
+  CSP.style_src   policy, :self, :https, :unsafe_inline
+  CSP.report_uri  policy, "/csp-violation-report-endpoint"
+end
+policy = CSP.make
+configure(policy)
+p(CSP.build(policy))
+p(CSP.build(policy, nil, "n0nce"))
+p(CSP.build(policy, nil, "n0nce", String["script-src"]))
+
+copy = CSP.initialize_copy(policy)
+CSP.upgrade_insecure_requests(copy)
+CSP.block_all_mixed_content(copy)
+CSP.sandbox(copy)
+CSP.plugin_types(copy, "application/pdf")
+CSP.script_src(copy, nil)
+CSP.img_src(copy, "https://cdn.example.com", :blob)
+p(CSP.build(copy))
+p(Hash.keys(CSP.directives(policy)))
+CSP.sandbox(copy, "allow-scripts", "allow-forms")
+CSP.upgrade_insecure_requests(copy, false)
+p(CSP.build(copy))
+
+# errors
+Array.each(Integer[1, 2, 3]) do |i|
+  case i
+  in 1 then CSP.script_src(CSP.initialize_copy(policy), :bogus)
+  in 2 then CSP.script_src(CSP.initialize_copy(policy), 1)
+  else
+    c = CSP.initialize_copy(policy)
+    CSP.script_src(c, "a b")
+    CSP.build(c)
+  end
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+rescue CSP::InvalidDirectiveError => e
+  puts("ActionDispatch::ContentSecurityPolicy::InvalidDirectiveError: #{Exception.message(e)}")
+end
+
+# the middleware adds the header from the request's policy (the nonce from the session id: none here, so "")
+class Endpoint
+  attr_reader status
+  include ActionDispatch::App
+  def call(e, req)
+    case @status
+    in 304 then [304, Hash.new, String[]]
+    in 201 then [200, Hash.of("content-security-policy" => "default-src 'none'"), String["ok"]]
+    else [200, Hash.of("content-type" => "text/html"), String["ok"]]
+    end
+  end
+end
+endpoint = Endpoint.new(200)
+already = Endpoint.new(201)
+not_modified = Endpoint.new(304)
+def run(app, policy, report_only: false, generator: nil)
+  req = ActionDispatch::Request.new(Rack::MockRequest.env_for("/"))
+  ActionDispatch::Request.set_content_security_policy(req, policy)
+  ActionDispatch::Request.set_content_security_policy_report_only(req, report_only)
+  ActionDispatch::Request.set_content_security_policy_nonce_generator(req, generator)
+  status, headers, _ = ActionDispatch::App.call(CSP::Middleware.new(app), req)
+  p([status, Hash.select(headers) { |k, _| String.start_with?(k, "content-security-policy") }])
+end
+run(endpoint, policy)
+run(endpoint, policy, generator: :session_id)
+run(endpoint, policy, report_only: true)
+run(already, policy)
+run(not_modified, policy)
+run(endpoint, nil)

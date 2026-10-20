@@ -1,0 +1,44 @@
+require "rails/actionpack/action_dispatch/middleware/cookies_signed"
+
+Jar = ActionDispatch::Cookies::CookieJar
+Signed = ActionDispatch::Cookies::SignedKeyRotatingCookieJar
+
+# The app's env_config (Rails::Application#env_config) for signed cookies.
+def configure(req)
+  c = ActionDispatch::Request.env_config(req)
+  c["action_dispatch.key_generator"] = ActiveSupport::CachingKeyGenerator.new(ActiveSupport::KeyGenerator.new("b" * 64, iterations: 2))   # Rails apps use 1000: see the notes for the time it takes here
+  c["action_dispatch.signed_cookie_salt"] = "signed cookie"
+  c["action_dispatch.cookies_serializer"] = :json
+  c["action_dispatch.use_cookies_with_metadata"] = true
+end
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    configure(req)
+    jar = ActionDispatch::Request.cookie_jar(req)
+    case ActionDispatch::Request.path_info(req)
+    in "/write"
+      Jar.signed(jar)[:user] = "ko1"
+      Jar.signed(jar)[:cart] = Hash.of(value: Any[1, Hash.of("id" => 2)], httponly: true)
+      ActionDispatch::Cookies::PermanentCookieJar.signed(Jar.permanent(jar))[:remember] = 42
+    in "/read"
+      p([Jar.signed(jar)[:user], Jar.signed(jar)[:cart], Jar.signed(jar)[:remember], jar[:user] != nil, Jar.signed(jar)[:forged], Jar.signed(jar)[:missing]])
+    else
+    end
+    [200, Hash.of("content-type" => "text/plain"), String["ok"]]
+  end
+end
+app = ActionDispatch::RackApp.new(ActionDispatch::Cookies.new(Endpoint.new))
+
+env = Rack::MockRequest.env_for("http://www.example.com/write")
+_, headers, _ = Rack::App.call(app, env)
+sc = headers["set-cookie"]
+sc => Array
+set = Array.map(sc) { |c| String.sub(Kernel.to_s(c), /expires=[^;]*/, "expires=<20 years>") }
+Array.each(set) { |c| puts(c) }
+first = Array.first(set) || ""
+cookie = Array.map(set) { |c| String.[](c, /\A[^;]*/) || "" }.Array.join("; ") + "; forged=" + String.sub(String.[](first, /=([^;]*)/, 1) || "", /\h\z/) { |d| d == "0" ? "1" : "0" }
+
+env = Rack::MockRequest.env_for("http://www.example.com/read", headers: Hash.of("HTTP_COOKIE" => cookie))
+Rack::App.call(app, env)

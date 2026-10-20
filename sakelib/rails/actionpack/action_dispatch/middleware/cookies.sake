@@ -1,0 +1,307 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/cookies.rb (partial: the signed and encrypted jars are in
+# cookies_signed.sake, which needs ActiveSupport::MessageVerifier/MessageEncryptor/KeyGenerator; no rotations;
+# no domain given as a lambda)
+#
+# Rails' RequestCookieMethods read the app's configuration from env keys ("action_dispatch.secret_key_base", ...).
+# Sake's env holds only Strings, so the configuration is a Hash on the Request (Request.env_config, keyed by
+# the same names), which the app fills as Rails::Engine#build_request merges env_config into the env.
+#
+# A cookie's options are a Hash of Symbol keys, as Rails' (value, path, domain, expires, httponly, secure,
+# same_site, tld_length); the jar's values are Strings.
+#
+#   Ruby                                            Sake
+#   cookies[:user] = "ko1"                          ActionDispatch::Cookies::CookieJar.[]=(jar, :user, "ko1")
+#   cookies[:user] = { value: "ko1", httponly: true }
+#                                                   ...[]=(jar, :user, Hash.of(value: "ko1", httponly: true))
+#   cookies.permanent[:remember] = "1"              PermanentCookieJar.[]=(CookieJar.permanent(jar), :remember, "1")
+
+require "../app"
+require "../http/request"
+
+module ActionDispatch
+  class Request
+    def cookie_jar(req) = @_cookie_jar ||= Cookies::CookieJar.build(req, cookies(req))
+    def have_cookie_jar?(req) = @_cookie_jar != nil
+    def set_cookie_jar(req, jar) = @_cookie_jar = jar
+    def commit_cookie_jar!(req)
+      jar = @_cookie_jar
+      Cookies::CookieJar.commit!(jar) if jar
+      nil
+    end
+
+    def _config_string(req, key)
+      v = env_config(req)[key]
+      (v in String) ? v : nil
+    end
+    def signed_cookie_salt(req) = _config_string(req, Cookies.signed_cookie_salt_key)
+    def encrypted_cookie_salt(req) = _config_string(req, Cookies.encrypted_cookie_salt_key)
+    def encrypted_signed_cookie_salt(req) = _config_string(req, Cookies.encrypted_signed_cookie_salt_key)
+    def authenticated_encrypted_cookie_salt(req)
+      _config_string(req, Cookies.authenticated_encrypted_cookie_salt_key)
+    end
+    def use_authenticated_cookie_encryption(req)
+      env_config(req)[Cookies.use_authenticated_cookie_encryption_key] == true
+    end
+    def encrypted_cookie_cipher(req) = _config_string(req, Cookies.encrypted_cookie_cipher_key)
+    def signed_cookie_digest(req) = _config_string(req, Cookies.signed_cookie_digest_key)
+    def secret_key_base(req) = _config_string(req, Cookies.secret_key_base_key)
+    def cookies_serializer(req)
+      v = env_config(req)[Cookies.cookies_serializer_key]
+      (v in Symbol) ? v : nil
+    end
+    # Rails: a lambda of the request; here the value itself (a Symbol, a String or nil)
+    def cookies_same_site_protection(req)
+      v = env_config(req)[Cookies.cookies_same_site_protection_key]
+      (v in Symbol) ? v : nil
+    end
+    def cookies_digest(req) = _config_string(req, Cookies.cookies_digest_key)
+    def use_cookies_with_metadata(req)
+      env_config(req)[Cookies.use_cookies_with_metadata_key] == true
+    end
+  end
+
+  class Cookies
+    attr_reader app
+    include App
+
+    def http_header = "Set-Cookie"
+    def generator_key = "action_dispatch.key_generator"
+    def signed_cookie_salt_key = "action_dispatch.signed_cookie_salt"
+    def encrypted_cookie_salt_key = "action_dispatch.encrypted_cookie_salt"
+    def encrypted_signed_cookie_salt_key = "action_dispatch.encrypted_signed_cookie_salt"
+    def authenticated_encrypted_cookie_salt_key = "action_dispatch.authenticated_encrypted_cookie_salt"
+    def use_authenticated_cookie_encryption_key = "action_dispatch.use_authenticated_cookie_encryption"
+    def encrypted_cookie_cipher_key = "action_dispatch.encrypted_cookie_cipher"
+    def signed_cookie_digest_key = "action_dispatch.signed_cookie_digest"
+    def secret_key_base_key = "action_dispatch.secret_key_base"
+    def cookies_serializer_key = "action_dispatch.cookies_serializer"
+    def cookies_digest_key = "action_dispatch.cookies_digest"
+    def cookies_rotations_key = "action_dispatch.cookies_rotations"
+    def cookies_same_site_protection_key = "action_dispatch.cookies_same_site_protection"
+    def use_cookies_with_metadata_key = "action_dispatch.use_cookies_with_metadata"
+    def max_cookie_size = 4096
+
+    class CookieOverflow < StandardError
+    end
+
+    # Rails' ChainedCookieJars: CookieJar.permanent / PermanentCookieJar.permanent (signed and encrypted are
+    # added by cookies_signed.sake)
+    module ChainedCookieJars
+      def permanent(jar) = raise(NotImplementedError)
+      def encrypted_cookie_cipher(jar) = Request.encrypted_cookie_cipher(request(jar)) || "aes-256-gcm"
+      def signed_cookie_digest(jar) = Request.signed_cookie_digest(request(jar)) || "SHA1"
+      def request(jar) = raise(NotImplementedError)
+    end
+
+    class CookieJar
+      attr_reader request
+      include Indexable
+      private attr_accessor set_cookies, delete_cookies, cookies, committed
+      private attr_accessor _permanent, _signed, _encrypted, _signed_or_encrypted
+      include Enum
+      include ChainedCookieJars
+
+      def build(req, cookies)
+        jar = CookieJar.new(req)
+        update(jar, cookies)
+        jar
+      end
+
+      def initialize(jar)
+        @set_cookies = Hash.new
+        @delete_cookies = Hash.new
+        @cookies = Hash.new
+        @committed = false
+      end
+
+      def permanent(jar) = @_permanent ||= PermanentCookieJar.new(jar)
+
+      def committed?(jar) = @committed
+      def commit!(jar)
+        @committed = true
+        nil
+      end
+
+      def each(jar)
+        Hash.each(@cookies) { |k, v| yield([k, v]) }
+        jar
+      end
+
+      def [](jar, name) = @cookies[Kernel.to_s(name)]
+      def fetch(jar, name, default = nil)
+        return Hash.fetch(@cookies, Kernel.to_s(name)) if default == nil
+        Hash.fetch(@cookies, Kernel.to_s(name), default)
+      end
+      def key?(jar, name) = Hash.key?(@cookies, Kernel.to_s(name))
+      def has_key?(jar, name) = key?(jar, name)
+      def to_hash(jar) = Hash.dup(@cookies)
+      def to_h(jar) = Hash.dup(@cookies)
+
+      def update(jar, other_hash)
+        Hash.each(other_hash) { |k, v| @cookies[Kernel.to_s(k)] = v if v != nil }
+        jar
+      end
+
+      def to_header(jar)
+        Hash.map(@cookies) { |k, v| "#{escape(jar, k)}=#{escape(jar, v)}" }.Array.join("; ")
+      end
+
+      # Rails: cookies[name] = "value" or = { value: ..., options }
+      def []=(jar, name, options)
+        if options in Hash
+          opts = Hash.new
+          Hash.each(options) { |k, v| opts[(k in String) ? String.to_sym(k) : k] = v }
+        else
+          opts = Hash.of(value: options)
+        end
+        value = opts[:value]
+        handle_options(jar, opts)
+        key = Kernel.to_s(name)
+        if @cookies[key] != value || opts[:expires]
+          @cookies[key] = value == nil ? "" : Kernel.to_s(value)
+          @set_cookies[key] = opts
+          Hash.delete(@delete_cookies, key)
+        end
+        value
+      end
+
+      def delete(jar, name, options = Hash.new)
+        key = Kernel.to_s(name)
+        return nil unless Hash.key?(@cookies, key)
+        handle_options(jar, options)
+        value = Hash.delete(@cookies, key)
+        @delete_cookies[key] = options
+        value
+      end
+
+      def deleted?(jar, name, options = Hash.new)
+        handle_options(jar, options)
+        @delete_cookies[Kernel.to_s(name)] == options
+      end
+
+      def clear(jar, options = Hash.new)
+        Array.each(Hash.keys(@cookies)) { |k| delete(jar, k, Hash.dup(options)) }
+        nil
+      end
+
+      # Rails: write(response) with Rack::Response#set_cookie / #delete_cookie; here on the headers Hash
+      def write(jar, headers)
+        Hash.each(@set_cookies) do |name, value|
+          Rack::Utils.set_cookie_header!(headers, name, value) if write_cookie?(jar, value)
+        end
+        Hash.each(@delete_cookies) do |name, value|
+          headers["set-cookie"] = Rack::Utils.delete_set_cookie_header!(headers["set-cookie"], name, value)
+        end
+        nil
+      end
+
+      def always_write_cookie = false
+
+      def escape(jar, string) = Rack::Utils.escape(string)
+
+      def write_cookie?(jar, cookie)
+        Request.ssl?(@request) || !cookie[:secure] || always_write_cookie || String.end_with?(Request.host(@request) || "", ".onion")
+      end
+
+      def handle_options(jar, options)
+        options[:path] ||= "/"
+        options[:same_site] = Request.cookies_same_site_protection(@request) unless Hash.key?(options, :same_site)
+        domain = options[:domain]
+        host = Request.host(@request) || ""
+        if domain == :all || domain == "all"
+          cookie_domain = ""
+          dot_splitted_host = String.split(host, ".", -1)
+          if String.match?(host, /^[\d.]+$/) || Array.include?(dot_splitted_host, "") || Array.size(dot_splitted_host) == 1
+            options[:domain] = nil
+            return nil
+          end
+          tld_length = options[:tld_length]
+          if tld_length in Integer
+            if Array.size(dot_splitted_host) >= tld_length
+              cookie_domain = Array.last(dot_splitted_host, tld_length).Array.join(".")
+            end
+          elsif !String.match?(host, /\.[^.]{2,3}\.[^.]{2}\z/)
+            cookie_domain = Array.last(dot_splitted_host, 2).Array.join(".")
+          else
+            cookie_domain = Array.last(dot_splitted_host, 3).Array.join(".")
+          end
+          options[:domain] = cookie_domain == "" ? nil : cookie_domain
+        elsif domain in Array
+          options[:domain] = Array.find(domain) do |d|
+            d = String.delete_prefix(Kernel.to_s(d), ".")
+            host == d || String.end_with?(host, ".#{d}")
+          end
+        end
+        nil
+      end
+    end
+
+    # Rails' AbstractCookieJar: [] parses what the parent jar holds, []= commits the options then stores them there.
+    module AbstractCookieJar
+      def parent_jar(j) = raise(NotImplementedError)
+      def parse(j, name, data, purpose) = raise(NotImplementedError)
+      def commit(j, name, options) = raise(NotImplementedError)
+
+      def [](j, name)
+        data = (CookieJar|PermanentCookieJar).[](parent_jar(j), Kernel.to_s(name))
+        return nil unless data
+        result = parse(j, name, data, "cookie.#{name}")
+        result == nil ? parse(j, name, data, nil) : result
+      end
+
+      def []=(j, name, options)
+        opts = Hash.new
+        if options in Hash
+          Hash.each(options) { |k, v| opts[(k in String) ? String.to_sym(k) : k] = v }
+        else
+          opts[:value] = options
+        end
+        commit(j, name, opts)
+        (CookieJar|PermanentCookieJar).[]=(parent_jar(j), name, opts)
+      end
+
+      def expiry_options(j, options)
+        ex = options[:expires]
+        Hash.of(expires_at: ex)
+      end
+
+      def cookie_metadata(j, name, options)
+        metadata = expiry_options(j, options)
+        metadata[:purpose] = "cookie.#{name}" if Request.use_cookies_with_metadata(request(j))
+        metadata
+      end
+    end
+
+    class PermanentCookieJar
+      attr_reader parent_jar
+      private attr_accessor _permanent, _signed, _encrypted, _signed_or_encrypted
+      include AbstractCookieJar
+      include ChainedCookieJars
+
+      def initialize(j)
+        @_permanent = nil
+      end
+
+      def request(j) = CookieJar.request(@parent_jar)
+      def permanent(j) = @_permanent ||= PermanentCookieJar.new(@parent_jar)
+      def parse(j, name, data, purpose) = data
+
+      # Rails: options[:expires] = 20.years.from_now (a calendar advance, as Duration's)
+      def commit(j, name, options)
+        t = Time.now
+        options[:expires] = Time.new(Time.year(t) + 20, Time.month(t), Time.day(t), Time.hour(t), Time.min(t), Time.sec(t))
+        nil
+      end
+    end
+
+    # Rails: response = @app.call(env); cookie_jar.write(response) unless committed
+    def call(mw, req)
+      status, headers, body = App.call(@app, req)
+      if Request.have_cookie_jar?(req)
+        jar = Request.cookie_jar(req)
+        CookieJar.write(jar, headers) unless CookieJar.committed?(jar)
+      end
+      [status, headers, body]
+    end
+  end
+end

@@ -1,0 +1,84 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+require "rails/actionpack/action_dispatch/routing"
+
+# A request through the stack an app has (ShowExceptions, DebugExceptions, Cookies, the cookie session, Flash) into
+# the routes and a controller stand-in (Rails: ActionController::Metal.dispatch; Sake: a Routing::Controllers type).
+class PostsController
+  attr_reader x
+  include ActionDispatch::Routing::Controllers
+  def dispatch(c, controller, action, req)
+    session = ActionDispatch::Request.session(req)
+    flash = ActionDispatch::Request.flash(req)
+    visits = session[:visits]
+    session[:visits] = ((visits in Integer) ? visits : 0) + 1
+    result = case action
+    in "index" then [200, Hash.of("content-type" => "text/plain"), Any["index notice=#{Kernel.inspect(flash[:notice])} visits=#{session[:visits]}"]]
+    in "create"
+      flash[:notice] = "Post was successfully created."
+      [302, Hash.of("location" => "http://www.example.com/posts/1"), Any[]]
+    in "show" then [200, Hash.of("content-type" => "text/plain"), Any["show #{ActionDispatch::Request.path_parameters(req)[:id]} notice=#{Kernel.inspect(flash[:notice])} visits=#{session[:visits]}"]]
+    in "destroy" then raise ActionController::BadRequest, "no"
+    else raise ActionController::RoutingError.new("uninitialized constant #{controller}", Any[])
+    end
+    ActionDispatch::Request.commit_flash(req)
+    result
+  end
+end
+
+class ActionDispatch::Routing::Mapper
+  def integration_routes(map)
+    resources map, :posts, only: Any[:index, :create, :show, :destroy]
+    root map, "posts#index"
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.integration_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = PostsController.new(nil)
+
+# Rails.application.env_config, which Rails::Engine#call merges into the env before the stack
+def configure(req)
+  c = ActionDispatch::Request.env_config(req)
+  c["action_dispatch.key_generator"] = ActiveSupport::CachingKeyGenerator.new(ActiveSupport::KeyGenerator.new("b" * 64, iterations: 2))
+  c["action_dispatch.signed_cookie_salt"] = "signed cookie"
+  c["action_dispatch.cookies_serializer"] = :json
+  c["action_dispatch.use_cookies_with_metadata"] = true
+  c["action_dispatch.show_exceptions"] = :all
+  c["action_dispatch.show_detailed_exceptions"] = false
+end
+class Config
+  attr_reader app
+  include ActionDispatch::App
+  def call(c, req)
+    configure(req)
+    ActionDispatch::App.call(@app, req)
+  end
+end
+
+stack = ActionDispatch::MiddlewareStack.new
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::ShowExceptions", ActionDispatch::PublicExceptions.new("fixtures/public"))
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::DebugExceptions")
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Cookies")
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Session::CookieStore", Hash.of(key: "_blog_session"))
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Flash")
+app = ActionDispatch::RackApp.new(Config.new(ActionDispatch::MiddlewareStack.build(stack, set)))
+
+def send_request(app, method, path, cookie)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}", method: method)
+  env["HTTP_COOKIE"] = cookie if cookie
+  status, headers, body = Rack::App.call(app, env)
+  out = ""
+  Array.each(body) { |s| out += s }
+  h = headers["set-cookie"]
+  sc = (h in Array) ? Array.first(h) : h
+  puts("#{method} #{path} -> #{status} #{Kernel.inspect(headers["location"])} #{Kernel.inspect(String.strip(Array.first(String.lines(out)) || ""))} cookie=#{sc != nil}")
+  sc ? String.[](Kernel.to_s(sc), /\A[^;]*/) : cookie
+end
+
+c = send_request(app, "GET", "/posts", nil)
+c = send_request(app, "POST", "/posts", c)
+c = send_request(app, "GET", "/posts/1", c)
+c = send_request(app, "GET", "/posts/1", c)
+c = send_request(app, "GET", "/", c)
+c = send_request(app, "DELETE", "/posts/1", c)
+c = send_request(app, "GET", "/nothing", c)
+c = send_request(app, "PATCH", "/posts/1", c)

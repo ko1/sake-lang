@@ -1,0 +1,377 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/request.rb (partial: no controller_class/controller_class_for (no constantize: controllers are found by generated code), no ContentSecurityPolicy/FilterParameters, no CacheControlDirectives, no early hints, body is the raw String)
+#
+# Rails' Request includes Rack::Request::Helpers and keeps its state in the Rack env under "action_dispatch.*" keys,
+# so that every middleware's `Request.new(env)` sees the same state. Sake's Rack env is a Hash of String => String
+# (sakelib/rack.sake), so the state is fields of the Request, and the one Request is passed down the middleware
+# stack (ActionDispatch::App.call(app, req), see middleware/stack.sake). `class Request < Rack::Request` pastes Rack's
+# Request (its fields and functions), which is what Rails' `include Rack::Request::Helpers` gives.
+#
+# Each private field below stands for one env key of Rails (the key is in the comment).
+#
+# Rails' `ENV_METHODS.each { |env| class_eval "def #{env.delete_prefix("HTTP_").downcase} ..." }` is written out
+# (accept, user_agent, x_forwarded_for, ...): Sake defines no functions at run time, and 25 one-line readers
+# do not need a generator. Writers (Rails' `path_parameters=`, `request_method=`) are `set_path_parameters` and
+# `set_request_method`, Sake's names for writers.
+#
+# Files that add functions to Request (cookies, session, flash) must require this file and must not be required by
+# it (the first `class ActionDispatch::Request` read declares the fields and `< Rack::Request`).
+
+require "rack"
+require "../../action_controller/metal/exceptions"
+require "headers"
+require "mime_negotiation"
+require "parameters"
+require "param_builder"
+require "url"
+require "response"
+
+module ActionDispatch
+  class Request < Rack::Request
+    attr_accessor route                                  # "action_dispatch.route" (a Journey::Route)
+    attr_accessor routes                                 # "action_dispatch.routes" (a Routing::RouteSet)
+    private attr_accessor _path_parameters               # "action_dispatch.request.path_parameters"
+    private attr_accessor _parameters                    # "action_dispatch.request.parameters"
+    private attr_accessor _request_parameters            # "action_dispatch.request.request_parameters"
+    private attr_accessor _query_parameters              # "action_dispatch.request.query_parameters"
+    private attr_accessor _raw_post                      # "RAW_POST_DATA"
+    private attr_accessor _request_method, _method, _remote_ip, _ip, _original_fullpath, _fullpath
+    private attr_accessor _content_mime_type             # "action_dispatch.request.content_type"
+    private attr_accessor _formats                       # "action_dispatch.request.formats"
+    private attr_accessor _variant                       # "action_dispatch.request.variant"
+    private attr_accessor _accepts                       # "action_dispatch.request.accepts"
+    private attr_accessor _cookie_jar                    # "action_dispatch.cookies"
+    private attr_accessor _session                       # "rack.session"
+    private attr_accessor _session_options               # "rack.session.options"
+    private attr_accessor _flash                         # "action_dispatch.request.flash_hash"
+    private attr_accessor _request_id                    # "action_dispatch.request_id"
+    private attr_accessor _exception                     # "action_dispatch.exception"
+    private attr_accessor _original_path                 # "action_dispatch.original_path"
+    private attr_accessor _original_request_method       # "action_dispatch.original_request_method"
+    private attr_accessor _show_exceptions               # "action_dispatch.show_exceptions"
+    private attr_accessor _headers                       # Request#headers' cache
+    private attr_accessor _controller_instance           # "action_controller.instance"
+    private attr_accessor _config                        # the app's env_config: "action_dispatch.secret_key_base", ...
+    private attr_accessor _route_uri_pattern             # "action_dispatch.route_uri_pattern"
+    private attr_accessor _filtered_parameters, _filtered_env, _filtered_path, _parameter_filter  # FilterParameters' memos
+    private attr_accessor _content_security_policy, _content_security_policy_report_only    # "action_dispatch.content_security_policy*"
+    private attr_accessor _content_security_policy_nonce_generator, _content_security_policy_nonce
+    private attr_accessor _content_security_policy_nonce_directives
+    private attr_accessor _permissions_policy                                               # "action_dispatch.permissions_policy"
+
+    private attr_accessor _port, _protocol            # Http::URL's @port, @protocol (unused: computed each time)
+    private attr_accessor _cache_control_directives
+
+    include Http::MimeNegotiation
+    include Http::Parameters
+
+    def initialize(req)
+      @env => Hash
+    end
+
+    def empty = Request.new(Hash.new)
+
+    # The app's env_config (Rails.application.env_config, merged into the env before the stack): Rails' key names
+    # ("action_dispatch.secret_key_base", "action_dispatch.parameter_filter", ...) => their values
+    def env_config(req) = @_config ||= Hash.new
+
+    # --- Rack's env access (Rack::Request::Env) with setters Rails' routing uses ---
+    def set_script_name(req, s) = @env["SCRIPT_NAME"] = s
+    def set_path_info(req, s) = @env["PATH_INFO"] = s
+    def key?(req, key) = has_header?(req, key)
+    def each_header(req)
+      Hash.each(@env) { |k, v| yield([k, v]) }
+      req
+    end
+    def add_header(req, key, v)
+      cur = @env[key]
+      @env[key] = cur ? "#{cur},#{v}" : v
+    end
+
+    # --- ENV_METHODS ---
+    def auth_type(req) = get_header(req, "AUTH_TYPE")
+    def gateway_interface(req) = get_header(req, "GATEWAY_INTERFACE")
+    def path_translated(req) = get_header(req, "PATH_TRANSLATED")
+    def remote_host(req) = get_header(req, "REMOTE_HOST")
+    def remote_ident(req) = get_header(req, "REMOTE_IDENT")
+    def remote_user(req) = get_header(req, "REMOTE_USER")
+    def remote_addr(req) = get_header(req, "REMOTE_ADDR")
+    def server_name(req) = get_header(req, "SERVER_NAME")
+    def server_protocol(req) = get_header(req, "SERVER_PROTOCOL")
+    def original_script_name(req) = get_header(req, "ORIGINAL_SCRIPT_NAME")
+    def accept(req) = get_header(req, "HTTP_ACCEPT")
+    def accept_charset(req) = get_header(req, "HTTP_ACCEPT_CHARSET")
+    def accept_encoding(req) = get_header(req, "HTTP_ACCEPT_ENCODING")
+    def accept_language(req) = get_header(req, "HTTP_ACCEPT_LANGUAGE")
+    def cache_control(req) = get_header(req, "HTTP_CACHE_CONTROL")
+    def from(req) = get_header(req, "HTTP_FROM")
+    def negotiate(req) = get_header(req, "HTTP_NEGOTIATE")
+    def pragma(req) = get_header(req, "HTTP_PRAGMA")
+    def client_ip(req) = get_header(req, "HTTP_CLIENT_IP")
+    def x_forwarded_for(req) = get_header(req, "HTTP_X_FORWARDED_FOR")
+    def origin(req) = get_header(req, "HTTP_ORIGIN")
+    def version(req) = get_header(req, "HTTP_VERSION")
+    def x_csrf_token(req) = get_header(req, "HTTP_X_CSRF_TOKEN")
+    def x_request_id(req) = get_header(req, "HTTP_X_REQUEST_ID")
+    def x_forwarded_host(req) = get_header(req, "HTTP_X_FORWARDED_HOST")
+
+    def localhost = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$|^::1$|^0:0:0:0:0:0:0:1(%.*)?$/
+    def transfer_encoding = "HTTP_TRANSFER_ENCODING"
+
+    # --- HTTP methods ---
+    def http_methods = once do
+      String["OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE", "TRACE", "CONNECT",                     # RFC2616
+        "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK",                                # RFC2518
+        "VERSION-CONTROL", "REPORT", "CHECKOUT", "CHECKIN", "UNCHECKOUT", "MKWORKSPACE", "UPDATE", "LABEL", "MERGE",
+        "BASELINE-CONTROL", "MKACTIVITY",                                                                  # RFC3253
+        "ORDERPATCH", "ACL", "SEARCH", "MKCALENDAR", "PATCH"]                                              # RFC3648 3744 5323 4791 5789
+    end
+    def http_method_lookup = once do
+      h = Hash.new
+      Array.each(http_methods) { |m| h[m] = String.to_sym(String.tr(String.downcase(m), "-", "_")) }
+      h
+    end
+
+    def raw_request_method(req) = @env["REQUEST_METHOD"]
+
+    # Returns the HTTP method that the application should see; after Rack::MethodOverride, the overridden one.
+    def request_method(req) = @_request_method ||= check_method(req, @env["REQUEST_METHOD"] || "GET")
+
+    def set_request_method(req, request_method)
+      if check_method(req, request_method)
+        @env["REQUEST_METHOD"] = request_method
+        @_request_method = request_method
+      end
+    end
+
+    # Returns a symbol form of the #request_method.
+    def request_method_symbol(req) = http_method_lookup[request_method(req)]
+
+    # Returns the original value of the environment's REQUEST_METHOD, even if it was overridden by middleware.
+    def method(req)
+      @_method ||= check_method(req, @env["rack.methodoverride.original_method"] || @env["REQUEST_METHOD"] || "GET")
+    end
+    def method_symbol(req) = http_method_lookup[method(req)]
+
+    def check_method(req, name)
+      unless http_method_lookup[name]
+        raise ActionController::UnknownHttpMethod, "#{name}, accepted HTTP methods are #{_to_sentence(http_methods)}"
+      end
+      name
+    end
+
+    def _to_sentence(words)
+      return Array.join(words, "") if Array.size(words) < 2
+      return "#{words[0]} and #{words[1]}" if Array.size(words) == 2
+      "#{Array.join(Array.[](words, 0..-2) || String[], ", ")}, and #{Array.last(words)}"
+    end
+
+    # Rack's predicates use #request_method, as Rails' (Rack::Request::Helpers calls request_method)
+    def get?(req) = request_method(req) == "GET"
+    def post?(req) = request_method(req) == "POST"
+    def put?(req) = request_method(req) == "PUT"
+    def patch?(req) = request_method(req) == "PATCH"
+    def delete?(req) = request_method(req) == "DELETE"
+    def head?(req) = request_method(req) == "HEAD"
+    def options?(req) = request_method(req) == "OPTIONS"
+
+    # Provides access to the request's HTTP headers: request.headers["Content-Type"]
+    def headers(req) = @_headers ||= Http::Headers.new(req)
+
+    def original_fullpath(req) = @_original_fullpath ||= @env["ORIGINAL_FULLPATH"] || fullpath(req)
+    def fullpath(req)
+      @_fullpath ||= begin
+        qs = query_string(req)
+        qs == "" ? path(req) : "#{path(req)}?#{qs}"
+      end
+    end
+    def original_url(req) = base_url(req) + original_fullpath(req)
+    def base_url(req) = protocol(req) + host_with_port(req)
+
+    # The String MIME type of the request: "text/html" (Rails: content_mime_type&.to_s)
+    def media_type(req)
+      ct = content_mime_type(req)
+      ct ? Mime::Type.to_s(ct) : nil
+    end
+
+    # Returns the content length of the request as an integer.
+    def content_length(req)
+      return String.bytesize(raw_post(req) || "") if Hash.key?(@env, transfer_encoding)
+      String.to_i(@env["CONTENT_LENGTH"] || "")
+    end
+
+    # Returns true if the "X-Requested-With" header contains "XMLHttpRequest" (case-insensitive).
+    def xml_http_request?(req) = String.match?(@env["HTTP_X_REQUESTED_WITH"] || "", /XMLHttpRequest/i)
+    def xhr?(req) = xml_http_request?(req)
+
+    # Returns the IP address of client as a String (REMOTE_ADDR, as Rack's; Rack's trusted-proxy walk of
+    # X-Forwarded-For is not ported).
+    def ip(req) = @_ip ||= @env["REMOTE_ADDR"]
+
+    # The IP address after the RemoteIp middleware, else #ip.
+    def remote_ip(req) = @_remote_ip ||= Kernel.to_s(ip(req))
+    def set_remote_ip(req, remote_ip) = @_remote_ip = remote_ip
+
+    # The unique request id ("X-Request-Id", set by ActionDispatch::RequestId)
+    def request_id(req) = @_request_id
+    def set_request_id(req, id) = @_request_id = id
+    def uuid(req) = request_id(req)
+
+    def server_software(req)
+      m = String.match(@env["SERVER_SOFTWARE"] || "", /^([a-zA-Z]+)/)
+      m ? String.downcase(m[1] || "") : nil
+    end
+
+    # Read the request body (rack.input, a String in Sake's Rack). This is useful for web services that need to
+    # work with raw requests directly.
+    def raw_post(req)
+      @_raw_post = @env["rack.input"] || "" if @_raw_post == nil
+      @_raw_post
+    end
+
+    # The request body (Rails: an IO; here the String).
+    def body(req) = raw_post(req)
+
+    def form_data_media_types = String["application/x-www-form-urlencoded", "multipart/form-data"]
+
+    # Determine whether the request body contains form-data by checking the request Content-Type.
+    def form_data?(req) = Array.include?(form_data_media_types, media_type(req))
+
+    def body_stream(req) = @env["rack.input"]
+
+    # Override Rack's GET method to support indifferent access.
+    def GET(req)
+      cached = @_query_parameters
+      return cached if cached
+      v = begin
+        ParamBuilder.from_query_string(query_string(req))
+      rescue ActionDispatch::ParamError => e
+        raise ActionController::BadRequest, "Invalid query parameters: #{Exception.message(e)}"
+      end
+      @_query_parameters = v
+      v
+    end
+    def query_parameters(req) = GET(req)
+
+    # Override Rack's POST method to support indifferent access.
+    def POST(req)
+      cached = @_request_parameters
+      return cached if cached
+      pr = begin
+        parse_formatted_parameters(req) || ParamBuilder.from_pairs(request_parameters_list(req))
+      rescue ActionDispatch::ParamError => e
+        raise ActionController::BadRequest, "Invalid request parameters: #{Exception.message(e)}"
+      end
+      pr = ParamBuilder.from_hash(pr)
+      pr => Hash
+      set_request_parameters(req, pr)
+      pr
+    end
+    def request_parameters(req) = POST(req)
+
+    # Rack's form pairs (an urlencoded body; multipart bodies are not parsed by Sake's Rack)
+    def request_parameters_list(req)
+      input = @env["rack.input"]
+      return Any[] unless input
+      t = media_type(req)
+      meth = @env["rack.methodoverride.original_method"] || @env["REQUEST_METHOD"]
+      return Any[] unless (meth == "POST" && t == nil) || t == "application/x-www-form-urlencoded"
+      QueryParser.pairs(input, "&")
+    end
+
+    def set_request_parameters(req, params)
+      @_parameters = nil
+      @_request_parameters = params
+    end
+
+    # Returns the authorization header regardless of whether it was specified directly or through one of the
+    # proxy alternatives.
+    def authorization(req)
+      @env["HTTP_AUTHORIZATION"] || @env["X-HTTP_AUTHORIZATION"] || @env["X_HTTP_AUTHORIZATION"] || @env["REDIRECT_X_HTTP_AUTHORIZATION"]
+    end
+
+    # True if the request came from localhost, 127.0.0.1, or ::1.
+    def local?(req)
+      Regexp.match?(localhost, remote_addr(req) || "") && Regexp.match?(localhost, remote_ip(req))
+    end
+
+  # --- Http::URL's instance methods (see url.sake) ---
+    def url(req) = protocol(req) + host_with_port(req) + fullpath(req)
+
+    def protocol(req) = ssl?(req) ? "https://" : "http://"
+
+    def raw_host_with_port(req)
+      forwarded = @env["HTTP_X_FORWARDED_HOST"]
+      if forwarded && !String.empty?(String.strip(forwarded))
+        Array.last(String.split(forwarded, /,\s?/)) || ""
+      else
+        @env["HTTP_HOST"] || "#{@env["SERVER_NAME"]}:#{@env["SERVER_PORT"]}"
+      end
+    end
+
+    def host(req) = String.sub(raw_host_with_port(req), /:\d+$/, "")
+    def host_with_port(req) = "#{host(req)}#{port_string(req)}"
+
+    def port(req)
+      m = String.match(raw_host_with_port(req), /:(\d+)$/)
+      m ? String.to_i(m[1] || "") : standard_port(req)
+    end
+
+    def standard_port(req) = protocol(req) == "https://" ? 443 : 80
+    def standard_port?(req) = port(req) == standard_port(req)
+    def optional_port(req) = standard_port?(req) ? nil : port(req)
+    def port_string(req) = standard_port?(req) ? "" : ":#{port(req)}"
+    def server_port(req) = String.to_i(@env["SERVER_PORT"] || "")
+
+    def domain(req, tld_length = Http::URL.tld_length) = Http::URL.extract_domain(host(req), tld_length)
+    def subdomains(req, tld_length = Http::URL.tld_length) = Http::URL.extract_subdomains(host(req), tld_length)
+    def subdomain(req, tld_length = Http::URL.tld_length) = Http::URL.extract_subdomain(host(req), tld_length)
+
+    def params(req) = parameters(req)
+
+    # --- Http::Cache::Request (http/cache.rb) ---
+    def strict_freshness = false                         # mattr_accessor :strict_freshness, default: false
+
+    def if_modified_since(req)
+      since = @env["HTTP_IF_MODIFIED_SINCE"]
+      since ? (Time.rfc2822(since) rescue nil) : nil
+    end
+    def if_none_match(req) = @env["HTTP_IF_NONE_MATCH"]
+    def if_none_match_etags(req)
+      inm = if_none_match(req)
+      inm ? Array.map(String.split(inm, ",")) { |e| String.strip(e) } : String[]
+    end
+    def not_modified?(req, modified_at)
+      since = if_modified_since(req)
+      since != nil && modified_at != nil && since >= modified_at
+    end
+    def etag_matches?(req, etag)
+      return false unless etag
+      validators = if_none_match_etags(req)
+      Array.include?(validators, etag) || Array.include?(validators, "*")
+    end
+
+    # Check response freshness (`Last-Modified` and `ETag`) against request `If-Modified-Since` and
+    # `If-None-Match` conditions. If both headers are supplied, both must match, or the request is not considered
+    # fresh.
+    def fresh?(req, response)
+      last_modified = if_modified_since(req)
+      etag = if_none_match(req)
+      return false unless last_modified || etag
+      success = true
+      success = success && not_modified?(req, Response.last_modified(response)) if last_modified      # Rails: success &&= ...
+      success = success && etag_matches?(req, Response.etag(response)) if etag
+      success
+    end
+
+    def inspect(req) = "#<ActionDispatch::Request #{method(req)} #{String.dump(original_url(req))} for #{remote_ip(req)}>"
+    def to_s(req) = inspect(req)
+
+    # --- path parameters (http/parameters.rb) ---
+    def path_parameters(req) = @_path_parameters ||= Hash.new
+    def set_path_parameters(req, parameters)
+      @_parameters = nil
+      Request::Utils.check_param_encoding(parameters)
+      @_path_parameters = parameters
+    end
+  end
+end

@@ -1,0 +1,77 @@
+require "fixtures/shop_routes"
+generate "routing_helpers_source", "ShopUrlHelpers"
+
+# --- the shop's routes (Sake: fixtures/shop_routes.sake) ---
+set = shop_route_set
+# recognize_path checks that the controller class exists
+
+# A record: its to_param is the URL parameter (Sake: a type that includes Routing::ToParam)
+class Product
+  attr_reader id
+  include ActionDispatch::Routing::ToParam
+  def to_param(pr) = "#{@id}-widget"
+end
+
+# --- named route helpers (Rails defines them with define_method; Sake generates them) ---
+class Ctx
+  attr_reader routes
+  include ActionDispatch::Routing::UrlFor
+  include ShopUrlHelpers
+  def _routes(c) = @routes
+  def url_options(c) = Hash.of(host: "shop.test", protocol: "https")
+end
+helpers = ShopUrlHelpers::Proxy.new(set)
+ctx = Ctx.new(set)
+H = ShopUrlHelpers
+p([H.root_path(helpers), H.products_path(helpers), H.product_path(helpers, 1), H.product_path(helpers, Product.new(7))])
+p([H.product_reviews_path(helpers, 3), H.product_review_path(helpers, 3, 4), H.search_products_path(helpers, q: "red shoes")])
+p([H.cart_path(helpers), H.admin_orders_path(helpers), H.admin_order_path(helpers, "A-100"), H.edit_admin_order_path(helpers, number: 5)])
+p([H.page_path(helpers, "terms-of-use"), H.file_path(helpers, "docs/a b.pdf"), H.about_path(helpers), H.about_path(helpers, "ja")])
+p([H.product_path(helpers, 1, format: :json), H.products_path(helpers, page: 2, sort: "name"), H.product_path(helpers, id: 9, anchor: "top")])
+p([H.product_url(helpers, 1, host: "example.com"), H.products_url(helpers, host: "example.com", port: 8080, protocol: "https")])
+p([H.product_url(ctx, 5), H.product_path(ctx, 5), H.root_url(ctx), H.product_review_url(ctx, Product.new(2), 8, only_path: true)])
+p(H.route_for(ctx, :product, 6))
+p([H.homepage_url(helpers), H.homepage_path(helpers), H.product_search_path(ctx, "shoes"), H.product_search_url(ctx, "hat", sort: "price")])
+begin
+  H.product_path(helpers)
+rescue ActionController::UrlGenerationError => e
+  p(Exception.message(e))
+end
+begin
+  H.page_path(helpers, "Not Valid")
+rescue ActionController::UrlGenerationError => e
+  p(Exception.message(e))
+end
+
+# --- url_for and path_for with controller/action options ---
+RS = ActionDispatch::Routing::RouteSet
+p(RS.path_for(set, Hash.of(controller: "products", action: "show", id: 3)))
+p(RS.path_for(set, Hash.of(controller: "products", action: "index", page: 2)))
+p(RS.path_for(set, Hash.of(controller: "admin/orders", action: "edit", number: "B7")))
+p(RS.url_for(set, Hash.of(controller: "pages", action: "about", locale: "en", host: "example.org")))
+p(RS.path_for(set, Hash.of(controller: "products", action: "show", id: 3, _recall: Hash.of(controller: "products", action: "index"))))
+p(RS.extra_keys(set, Hash.of(controller: "products", action: "index", page: 2, sort: "x")))
+begin
+  RS.path_for(set, Hash.of(controller: "nothing", action: "here"))
+rescue ActionController::UrlGenerationError => e
+  p(Exception.message(e))
+end
+
+# --- recognize_path ---
+p(RS.recognize_path(set, "/products/12"))
+p(RS.recognize_path(set, "/products/12", method: :patch))
+p(RS.recognize_path(set, "/products/12/reviews/3.json"))
+p(RS.recognize_path(set, "/admin/orders/A-100/edit"))
+p(RS.recognize_path(set, "/files/docs/a%20b.pdf"))
+p(RS.recognize_path(set, "/ja/about"))
+p(RS.recognize_path(set, "/products/"))
+begin
+  RS.recognize_path(set, "/products/12", method: :post)
+rescue ActionController::RoutingError => e
+  p(Exception.message(e))
+end
+begin
+  RS.recognize_path(set, "/pages/Bad_Slug")
+rescue ActionController::RoutingError => e
+  p(Exception.message(e))
+end

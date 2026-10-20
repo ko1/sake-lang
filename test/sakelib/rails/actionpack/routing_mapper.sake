@@ -1,0 +1,126 @@
+require "rails/actionpack/action_dispatch/routing"
+
+# A Rack app to mount (Sake: a type that includes Rack::App)
+class HelloApp
+  include Rack::App
+  def call(app, env) = [200, Hash.of("content-type" => "text/plain"), String["hello"]]
+  def inspect(app) = "HelloApp"
+end
+
+# --- the routes of a blog with most of the mapper DSL ---
+# (Rails' draw block is `blog_routes`, a function of the reopened Mapper, so its calls are bare as in the block;
+# the routes are a Routing::Draw type because they have a concern, whose block is `blog_concern`)
+class ActionDispatch::Routing::Mapper
+  def blog_concern(map, name, options)
+    case name
+    in :commentable then resources map, :comments, only: Any[:index, :create]
+    else raise ArgumentError, "No concern named #{name} was found!"
+    end
+  end
+
+  def blog_routes(map)
+    concern map, :commentable
+    root map, "posts#index"
+    resources map, :posts, concerns: :commentable do
+      member map do
+        get map, :preview
+        post map, :publish
+      end
+      collection(map) { get map, :search }
+      get map, :stats, on: :collection
+      resources map, :likes, shallow: true
+      resource map, :cover, except: Any[:edit]
+    end
+    resources map, :photos, path: "images", controller: "pictures", as: "images", param: :slug, only: Any[:index, :show]
+    resources map, :tags, path_names: Hash.of(new: "make", edit: "change"), except: Any[:destroy]
+    resource map, :session, only: Any[:new, :create, :destroy]
+    namespace map, :admin do
+      root map, to: "dashboard#show"
+      resources map, :users, constraints: Hash.of(id: /\d+/)
+    end
+    scope map, module: "api", path: "api/v1", as: "api", defaults: Hash.of(format: "json") do
+      resources map, :articles, only: :index
+    end
+    scope map, "(:locale)", locale: /en|ja/ do
+      get map, "hello", to: "pages#hello"
+    end
+    constraints map, Hash.of(subdomain: "beta") do
+      get map, "beta", to: "pages#beta"
+    end
+    get map, "about", to: "pages#about", as: :about
+    get map, "pages/contact"
+    match map, "search", to: "search#query", via: Any[:get, :post]
+    get map, "files/*path", to: "files#show", format: false
+    get map, "old", to: redirect(map, "/new")
+    get map, "legacy/:id", to: redirect(map, "/posts/%{id}", status: 302)
+    put map, "settings", controller: "settings", action: "update"
+    mount map, HelloApp.new, at: "/hello_app"
+  end
+end
+
+class BlogRoutes
+  include ActionDispatch::Routing::Draw
+  def draw(r, map) = ActionDispatch::Routing::Mapper.blog_routes(map)
+  def concern_for(r, map, name, options) = ActionDispatch::Routing::Mapper.blog_concern(map, name, options)
+end
+
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw_with(set, BlogRoutes.new)
+puts(ActionDispatch::Routing::RoutesInspector.make(ActionDispatch::Routing::RouteSet.routes(set)).ActionDispatch::Routing::RoutesInspector.format(ActionDispatch::Routing::ConsoleFormatter::Sheet.make))
+
+# --- filters: `rails routes -c posts`, `rails routes -g admin` ---
+inspector = ActionDispatch::Routing::RoutesInspector.make(ActionDispatch::Routing::RouteSet.routes(set))
+puts(ActionDispatch::Routing::RoutesInspector.format(inspector, ActionDispatch::Routing::ConsoleFormatter::Sheet.make, Hash.of(controller: "comments")))
+puts(ActionDispatch::Routing::RoutesInspector.format(inspector, ActionDispatch::Routing::ConsoleFormatter::Sheet.make, Hash.of(grep: "admin")))
+puts(ActionDispatch::Routing::RoutesInspector.format(inspector, ActionDispatch::Routing::ConsoleFormatter::Sheet.make, Hash.of(grep: "nothing_like_this")))
+
+# --- named routes and route details ---
+named = ActionDispatch::Routing::RouteSet.named_routes(set)
+p(Array.size(ActionDispatch::Routing::RouteSet::NamedRouteCollection.names(named)))
+route = ActionDispatch::Routing::RouteSet::NamedRouteCollection.get(named, :post_comments)
+route => ActionDispatch::Journey::Route
+p([ActionDispatch::Journey::Route.name(route), ActionDispatch::Journey::Route.verb(route), ActionDispatch::Journey::Nodes::Node.to_s(ActionDispatch::Journey::Route.path(route).ActionDispatch::Journey::Path::Pattern.spec), ActionDispatch::Journey::Route.defaults(route), ActionDispatch::Journey::Route.required_parts(route), ActionDispatch::Journey::Route.segment_keys(route), ActionDispatch::Journey::Route.requirements(route)])
+route = ActionDispatch::Routing::RouteSet::NamedRouteCollection.get(named, :admin_user)
+route => ActionDispatch::Journey::Route
+p([ActionDispatch::Journey::Route.requirements(route), ActionDispatch::Journey::Route.path(route).ActionDispatch::Journey::Path::Pattern.source])
+
+# --- errors from the DSL ---
+def error_of
+  yield
+  "no error"
+rescue ArgumentError => e
+  String.chomp(Array.first(String.lines(Exception.message(e))) || "")
+end
+class ActionDispatch::Routing::Mapper
+  def bad_only(map) = resources map, :posts, only: Any[:index, :bogus]
+  def bad_match(map) = match map, "x", to: "a#b"
+  def bad_dup(map)
+    get map, "x", to: "a#b", as: :dup
+    get map, "y", to: "a#b", as: :dup
+  end
+  def bad_controller(map) = get map, "x", to: "BadName#b"
+  def bad_member(map) = member(map) { get map, :x }
+  def bad_anchor(map) = get map, "x/:id", to: "a#b", id: /\A\d+/
+  def bad_concern(map) = resources map, :posts, concerns: :nope
+end
+M = ActionDispatch::Routing::Mapper
+RS = ActionDispatch::Routing::RouteSet
+p(error_of { RS.draw(RS.make) { |map| M.bad_only(map) } })
+p(error_of { RS.draw(RS.make) { |map| M.bad_match(map) } })
+p(error_of { RS.draw(RS.make) { |map| M.bad_dup(map) } })
+p(error_of { RS.draw(RS.make) { |map| M.bad_controller(map) } })
+p(error_of { RS.draw(RS.make) { |map| M.bad_member(map) } })
+p(error_of { RS.draw(RS.make) { |map| M.bad_anchor(map) } })
+p(error_of { RS.draw(RS.make) { |map| M.bad_concern(map) } })
+
+# --- recognition: every route the router finds for a path (the GTG simulator, then each route's regexp) ---
+Array.each(Any[["GET", "/"], ["GET", "/posts/1/preview"], ["POST", "/posts/1/likes"], ["GET", "/likes/3/edit"],
+ ["DELETE", "/posts/2/cover"], ["GET", "/images/sunset"], ["GET", "/tags/make"], ["GET", "/admin"],
+ ["GET", "/admin/users/12"], ["GET", "/admin/users/abc"], ["GET", "/api/v1/articles.xml"], ["GET", "/ja/hello"],
+ ["GET", "/hello"], ["GET", "/fr/hello"], ["GET", "/files/a/b/c.txt"], ["POST", "/search"], ["GET", "/legacy/9"],
+ ["GET", "/hello_app/x/y"], ["PATCH", "/posts/5.json"], ["GET", "/posts/new"], ["GET", "/nowhere"]]) do |verb, path|
+  req = ActionDispatch::Request.new(Rack::MockRequest.env_for(path, method: verb))
+  found = Any[]
+  ActionDispatch::Journey::Router.recognize(ActionDispatch::Routing::RouteSet.router(set), req) { |route, params| Array.push(found, [ActionDispatch::Journey::Route.name(route), params]) }
+  puts("#{verb} #{path} #{Kernel.inspect(found)}")
+end

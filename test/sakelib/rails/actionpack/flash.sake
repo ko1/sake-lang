@@ -1,0 +1,111 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+
+Session = ActionDispatch::Request::Session
+
+# A store kept in memory, with ids counted instead of random (Rails' tests write such stores too).
+class TestStore
+  attr_reader app
+  attr_accessor default_options, key, same_site, cookie_only
+  attr_accessor sessions, n
+  include ActionDispatch::App
+  include ActionDispatch::Session::AbstractStore
+  def initialize(s)
+    ActionDispatch::Session::AbstractStore.setup(s)
+    @sessions = Hash.new
+    @n = 0
+  end
+
+  def generate_sid(s)
+    @n += 1
+    Rack::Session::SessionId.new("sid#{@n}")
+  end
+
+  def find_session(s, req, sid)
+    session = sid ? @sessions[Rack::Session::SessionId.private_id(sid)] : nil
+    session ? [sid, session] : [generate_sid(s), Hash.new]
+  end
+
+  def write_session(s, req, sid, session, options)
+    @sessions[Rack::Session::SessionId.private_id(sid)] = session
+    sid
+  end
+
+  def delete_session(s, req, sid, options)
+    Hash.delete(@sessions, Rack::Session::SessionId.private_id(sid)) if sid
+    Session::Options.[](options, :drop) ? nil : generate_sid(s)
+  end
+
+  def stored(s) = Hash.transform_keys(@sessions) { |k| String.[](k, 0, 9) || "" }
+end
+
+FlashHash = ActionDispatch::Flash::FlashHash
+
+# Each step runs as an action would: the flash is committed to the session at the end (ActionController's dispatch).
+def step(name, flash)
+  case name
+  in "set"
+    flash[:notice] = "Saved"
+    flash["alert"] = "Careful"
+    FlashHash.now(flash)[:info] = "only now"
+    p([flash[:notice], FlashHash.notice(flash), FlashHash.alert(flash), flash[:info], FlashHash.keys(flash)])
+  in "show"
+    p([FlashHash.to_hash(flash), FlashHash.key?(flash, :notice), FlashHash.empty?(flash)])
+  in "keep"
+    p(FlashHash.keep(flash, :notice))
+  in "discard"
+    FlashHash.discard(flash)
+    p(FlashHash.to_hash(flash))
+  in "update"
+    FlashHash.update(flash, Hash.of(:a => 1, "b" => Any[2]))
+    FlashHash.delete(flash, :a)
+    FlashHash.set_alert(flash, "replaced")
+    p(FlashHash.to_session_value(flash))
+  in "sweep"
+    flash[:x] = "y"
+    FlashHash.sweep(flash)
+    p(FlashHash.to_hash(flash))
+    FlashHash.sweep(flash)
+    p(FlashHash.to_hash(flash))
+  else
+  end
+end
+
+class Endpoint
+  include ActionDispatch::App
+  def call(e, req)
+    step(String.delete_prefix(ActionDispatch::Request.path_info(req), "/"), ActionDispatch::Request.flash(req))
+    ActionDispatch::Request.commit_flash(req)
+    p(ActionDispatch::Request.session(req)["flash"])
+    [200, Hash.of("content-type" => "text/plain"), String["ok"]]
+  end
+end
+store = TestStore.new(Endpoint.new, Hash.of(key: "_s"))     # Rails 8's Flash.new(app) is the app itself
+app = ActionDispatch::RackApp.new(ActionDispatch::Cookies.new(store))
+
+def run(app, path, cookie)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}")
+  env["HTTP_COOKIE"] = cookie if cookie
+  status, headers, _body = Rack::App.call(app, env)
+  sc = headers["set-cookie"]
+  puts("#{path} -> #{status}")
+  sc ? String.[](Kernel.to_s(sc), /\A(_s=[^;]*)/, 1) : cookie
+end
+
+c = run(app, "/show", nil)
+c = run(app, "/set", c)
+c = run(app, "/show", c)
+c = run(app, "/show", c)
+c = run(app, "/set", c)
+c = run(app, "/keep", c)
+c = run(app, "/show", c)
+c = run(app, "/show", c)
+c = run(app, "/set", c)
+c = run(app, "/discard", c)
+c = run(app, "/show", c)
+c = run(app, "/update", c)
+c = run(app, "/sweep", c)
+
+puts("-- FlashHash.from_session_value")
+f = FlashHash.from_session_value(Hash.of("discard" => Any["a"], "flashes" => Hash.of("a" => 1, "b" => 2)))
+p(FlashHash.to_hash(f))
+p(FlashHash.from_session_value(nil).FlashHash.to_hash)

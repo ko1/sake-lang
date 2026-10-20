@@ -1,0 +1,41 @@
+require "rails/actionpack/action_dispatch/journey"
+
+# --- the path parser, the String visitor and Journey::Format (Ruby's journey test, side by side with journey.sake) ---
+paths = String["/posts/:id(.:format)", "/files/*path", "(/:locale)/hello(.:format)", "/a|/b", "/x\\:y", "/:controller(/:action(/:id))"]
+Array.each(paths) do |s|
+  tree = ActionDispatch::Journey::Parser.parse_string(s)
+  puts("#{s} -> #{tree} #{ActionDispatch::Journey::Nodes::Node.type(tree)}")
+  kinds = Symbol[]
+  ActionDispatch::Journey::Nodes::Node.each(tree) { |n| Array.push(kinds, ActionDispatch::Journey::Nodes::Node.type(n)) }
+  p(kinds)
+  ast = ActionDispatch::Journey::Ast.make(tree, true)
+  p([ActionDispatch::Journey::Ast.names(ast), ActionDispatch::Journey::Ast.path_params(ast), ActionDispatch::Journey::Ast.glob?(ast)])
+  pattern = ActionDispatch::Journey::Path::Pattern.make(ast, Hash.new, "/.?", true)
+  p([ActionDispatch::Journey::Path::Pattern.source(pattern), ActionDispatch::Journey::Path::Pattern.required_names(pattern), ActionDispatch::Journey::Path::Pattern.optional_names(pattern)])
+  p(ActionDispatch::Journey::Format.evaluate(ActionDispatch::Journey::Path::Pattern.build_formatter(pattern), Hash.of(id: "1 2", format: "json", path: "a/b c", locale: "en", controller: "admin/users", action: "show")))
+end
+
+# --- requirements: a symbol's regexp, and the offsets of groups inside requirements ---
+tree = ActionDispatch::Journey::Parser.parse_string("/posts/:year/:id(.:format)")
+ast = ActionDispatch::Journey::Ast.make(tree, true)
+reqs = Hash.of(year: /(19|20)\d\d/, id: /\d+/)
+ActionDispatch::Journey::Ast.set_requirements(ast, reqs)
+pattern = ActionDispatch::Journey::Path::Pattern.make(ast, reqs, "/.?", true)
+p(ActionDispatch::Journey::Path::Pattern.source(pattern))
+md = ActionDispatch::Journey::Path::Pattern.match(pattern, "/posts/2024/15.json")
+md => ActionDispatch::Journey::Path::Pattern::MatchData
+p([ActionDispatch::Journey::Path::Pattern::MatchData.names(md), ActionDispatch::Journey::Path::Pattern::MatchData.captures(md), ActionDispatch::Journey::Path::Pattern::MatchData.named_captures(md), ActionDispatch::Journey::Path::Pattern::MatchData.to_s(md)])
+p(ActionDispatch::Journey::Path::Pattern.match(pattern, "/posts/1899/15"))
+p(ActionDispatch::Journey::Path::Pattern.requirements_anchored?(pattern))
+
+# --- an unanchored pattern (mount) leaves the rest of the path ---
+tree = ActionDispatch::Journey::Parser.parse_string("/admin")
+pattern = ActionDispatch::Journey::Path::Pattern.make(ActionDispatch::Journey::Ast.make(tree, false), Hash.new, "/.?", false)
+md = ActionDispatch::Journey::Path::Pattern.match(pattern, "/admin/users/1")
+md => ActionDispatch::Journey::Path::Pattern::MatchData
+p([ActionDispatch::Journey::Path::Pattern.source(pattern), ActionDispatch::Journey::Path::Pattern::MatchData.to_s(md), ActionDispatch::Journey::Path::Pattern::MatchData.post_match(md)])
+
+# --- Router::Utils ---
+U = ActionDispatch::Journey::Router::Utils
+p([U.normalize_path("/foo/"), U.normalize_path(""), U.normalize_path("foo"), U.normalize_path("/%ab//c/"), U.normalize_path(nil)])
+p([U.escape_path("a b/c?d"), U.escape_segment("a b/c?d"), U.escape_fragment("a b/c?d#e"), U.escape_segment("日本")])

@@ -1,0 +1,65 @@
+require "rails/actionpack/action_dispatch/routing"
+require "rails/actionpack/action_dispatch/routing/polymorphic_routes"
+
+# Records: ActiveModel gives model_name (route_key, singular_route_key), to_model, to_param and persisted?
+# (Sake: a type that includes PolymorphicRoutes::Model and ToParam)
+class Post
+  attr_reader id
+  include ActionDispatch::Routing::PolymorphicRoutes::Model
+  include ActionDispatch::Routing::ToParam
+  def route_key(r) = "posts"
+  def singular_route_key(r) = "post"
+  def persisted?(r) = @id != nil
+  def to_param(r) = persisted?(r) ? Kernel.to_s(@id) : nil
+end
+class Comment
+  attr_reader id
+  include ActionDispatch::Routing::PolymorphicRoutes::Model
+  include ActionDispatch::Routing::ToParam
+  def route_key(r) = "comments"
+  def singular_route_key(r) = "comment"
+  def persisted?(r) = @id != nil
+  def to_param(r) = persisted?(r) ? Kernel.to_s(@id) : nil
+end
+
+class ActionDispatch::Routing::Mapper
+  def polymorphic_routes(map)
+    resources map, :posts do
+      resources map, :comments
+    end
+    namespace map, :admin do
+      resources map, :posts
+    end
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.polymorphic_routes(map) }
+helpers = ActionDispatch::Routing::RouteSet.url_helpers(set)
+post = Post.new(1)
+comment = Comment.new(5)
+U = ActionDispatch::Routing::UrlFor
+
+p(U.polymorphic_path(helpers, post))
+p(U.polymorphic_path(helpers, Post.new(nil)))
+p(U.polymorphic_path(helpers, Any[post, comment]))
+p(U.polymorphic_path(helpers, Any[post, Comment.new(nil)]))
+p(U.polymorphic_path(helpers, Any[:admin, post]))
+p(U.polymorphic_path(helpers, Any[:admin, :posts]))
+p(U.polymorphic_path(helpers, :posts))
+p(U.polymorphic_path(helpers, post, Hash.of(format: :json, anchor: "c")))
+p(U.edit_polymorphic_path(helpers, post))
+p(U.new_polymorphic_path(helpers, Post.new(nil)))
+p(U.new_polymorphic_path(helpers, Any[post, Comment.new(nil)]))
+p(U.polymorphic_url(helpers, post, Hash.of(host: "example.com")))
+p(U.polymorphic_url(helpers, Any[post, comment], Hash.of(host: "example.com", only_path: true)))
+p(U.polymorphic_path(helpers, Hash.of(id: post, format: :xml)))
+Array.each(Any[nil, Any[nil], Any[post, "comments"]]) do |bad|
+  U.polymorphic_path(helpers, bad)
+rescue ArgumentError => e
+  p(Exception.message(e))
+end
+begin
+  U.polymorphic_path(helpers, Any[:nothing, post])
+rescue ActionDispatch::Routing::PolymorphicRoutes::NoMethodError => e
+  p(String.split(Exception.message(e), " for ")[0])
+end

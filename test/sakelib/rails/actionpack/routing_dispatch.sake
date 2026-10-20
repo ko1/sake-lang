@@ -1,0 +1,82 @@
+require "rails/actionpack/action_dispatch/routing"
+
+# The controllers (Rails: ActionController::Metal.dispatch; here the smallest stand-in: railties generates the `case`)
+class ShowsParams
+  attr_reader x
+  include ActionDispatch::Routing::Controllers
+  def dispatch(c, controller, action, req)
+    case controller
+    in "posts" | "pages" | "api"
+      params = Hash.except(ActionDispatch::Request.path_parameters(req), :controller, :action)
+      [200, Hash.of("content-type" => "text/plain"), Any["#{controller}##{action} #{Kernel.inspect(params)}"]]
+    else raise ActionController::RoutingError.new("uninitialized constant #{controller}", Any[])
+    end
+  end
+end
+
+# A mounted Rack app sees the rest of the path
+class Echo
+  include Rack::App
+  def call(app, env) = [200, Hash.of("content-type" => "text/plain"), String["echo #{env["SCRIPT_NAME"]} #{env["PATH_INFO"]}"]]
+  def inspect(app) = "Echo"
+end
+
+# A constraint object and a lambda (Sake: names that the routes' constraint_matches? answers)
+class DispatchRoutes
+  include ActionDispatch::Routing::Draw
+  def draw(r, map) = ActionDispatch::Routing::Mapper.dispatch_routes(map)
+  def constraint_matches?(r, name, req)
+    case name
+    in :admin_only then ActionDispatch::Request.query_parameters(req)["admin"] == "1"
+    in :beta_host then String.start_with?(ActionDispatch::Request.host(req) || "", "beta")
+    else raise ArgumentError, "Invalid constraint: #{name}"
+    end
+  end
+end
+
+class ActionDispatch::Routing::Mapper
+  def dispatch_routes(map)
+    resources map, :posts, only: Any[:index, :show, :create]
+    get map, "pages/:name", to: "pages#show", constraints: Hash.of(name: /[a-z]+/)
+    get map, "api", to: "api#index", constraints: Hash.of(subdomain: "api")
+    get map, "old/:id", to: redirect(map, "/posts/%{id}")
+    get map, "moved", to: redirect(map, path: "/posts", status: 302)
+    mount map, Echo.new, at: "/echo"
+    match map, "ping", to: "pages#ping", via: :head
+    constraints map, :admin_only do
+      get map, "secret", to: "pages#secret"
+    end
+    get map, "beta", to: "pages#beta", constraints: :beta_host
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw_with(set, DispatchRoutes.new)
+set.ActionDispatch::Routing::RouteSet.controllers = ShowsParams.new(nil)
+
+def show(set, method, path, host: "example.org")
+  env = Rack::MockRequest.env_for("http://#{host}#{path}", method: method)
+  status, headers, body = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+  out = ""
+  Array.each(body) { |s| out += s }
+  puts("#{method} #{host}#{path} -> #{status} #{Kernel.inspect(Hash.slice(headers, "location", "x-cascade"))} #{Kernel.inspect(out)}")
+end
+
+show(set, "GET", "/posts")
+show(set, "GET", "/posts/12.json")
+show(set, "POST", "/posts")
+show(set, "DELETE", "/posts/12")
+show(set, "GET", "/pages/about")
+show(set, "GET", "/pages/About1")
+show(set, "GET", "/api")
+show(set, "GET", "/api", host: "api.example.org")
+show(set, "GET", "/old/7")
+show(set, "GET", "/moved?x=1")
+show(set, "GET", "/echo/a/b")
+show(set, "HEAD", "/posts/3")
+show(set, "HEAD", "/ping")
+show(set, "GET", "/nothing")
+show(set, "GET", "/posts/")
+show(set, "GET", "/secret")
+show(set, "GET", "/secret?admin=1")
+show(set, "GET", "/beta")
+show(set, "GET", "/beta", host: "beta.example.org")

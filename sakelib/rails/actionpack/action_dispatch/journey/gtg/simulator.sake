@@ -1,0 +1,52 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/gtg/simulator.rb
+
+require "builder"
+
+module ActionDispatch
+  module Journey
+    module GTG
+      class Simulator
+        attr_reader tt
+
+        def static_token(byte)
+          case byte
+          in 46 then "."
+          in 47 then "/"
+          in 63 then "?"
+          else nil
+          end
+        end
+
+        # memos(string) { [] }: the routes whose tree accepts the path, or the block's value when none does
+        def memos(sim, string)
+          state = Any[0, nil]
+          pos = 0
+          eos = String.bytesize(string)
+          while pos < eos
+            start_index = pos
+            pos += 1
+            token = static_token(String.getbyte(string, start_index) || 0)
+            if token
+              state = TransitionTable.move(@tt, state, string, token, start_index, false)
+            else
+              pos += 1 while pos < eos && static_token(String.getbyte(string, pos) || 0) == nil
+              token = String.byteslice(string, start_index, pos - start_index) || ""
+              state = TransitionTable.move(@tt, state, string, token, start_index, true)
+            end
+          end
+          acceptance_states = Route[]
+          i = 0
+          while i < Array.size(state)
+            if state[i + 1] == nil
+              s = state[i]
+              s => Integer
+              Array.concat(acceptance_states, TransitionTable.memo(@tt, s)) if TransitionTable.accepting?(@tt, s)
+            end
+            i += 2
+          end
+          Array.empty?(acceptance_states) ? yield : acceptance_states
+        end
+      end
+    end
+  end
+end
