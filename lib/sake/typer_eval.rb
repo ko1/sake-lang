@@ -829,6 +829,13 @@ module Sake
           add_check(o, "#{n.fn.origin || n.fn.namespace}.#{n.fn.name}", "required", "a definition", atoms, :error, atoms) unless atoms.empty?
           return []
         end
+        # A mixin's function through a type's name (`A.get(x)`) is A's copy: an x of another type that includes the
+        # module is an error (`Jar.get(x)` dispatches). The first argument need not be an instance (a class-level
+        # function of the module), so only values of the module's includers are checked.
+        if n.fn.origin && args[0] && @program.struct_types.key?(n.fn.namespace)
+          includers = args[0].select { struct_atom?(_1) && (@program.includes[struct_name(_1)] || []).include?(n.fn.origin) }
+          record(o, n.fn.full_name, 1, n.fn.namespace, includers) if includers.any? { struct_name(_1) != n.fn.namespace }
+        end
         push_caller(o)
         begin
           call_user(n.fn, args, blk)

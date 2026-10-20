@@ -156,6 +156,9 @@ module Sake
         if c.failing == ["Integer"] && c.actual.include?("Float") && c.expected.split("|").include?("Float")
           hint += ["if the value comes from `sum`, an empty collection sums to the Integer 0; give the start: `Array.sum(xs, 0.0)`"]
         end
+        if c.arg == 1 && (ns, fname = c.op.split(/\.(?=[^.]+\z)/)) && (fn = program.functions.dig(ns, fname)) && fn.origin
+          hint = ["#{c.op} is #{ns}'s copy of #{fn.origin}.#{fname}; `#{fn.origin}.#{fname}(...)` runs the one of the value's own type"]
+        end
         if c.arg.is_a?(String) && (mod = c.arg[/\Aelem of (.+)\z/, 1])
           hint += ["#{mod}[...] holds values of the types that include #{mod}; to put #{got} in it, include #{mod} in its class"]
         end
