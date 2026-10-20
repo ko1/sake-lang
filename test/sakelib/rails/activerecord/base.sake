@@ -5,6 +5,7 @@ require "rails/activerecord/active_record"
 ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
 ActiveRecord::Migration.set_verbose(false)
 generate "rails/activerecord/active_record/generate/active_record", "base_schema.rb", "base_models.rb"
+generate "rails/activemodel/active_model/generate/active_model", "base_form.rb"
 BaseSchema.load
 # Ruby subscribes a block to "sql.active_record"; here a listener object
 class SqlLog
@@ -48,7 +49,7 @@ show_sql
 
 puts("-- create")
 p(Post.save(post))
-p([Post.id(post), Post.title(post), Post.new_record?(post), Post.persisted?(post), Post.changed?(post), Post.previous_changes(post).Hash.keys])
+p([Post.id(post), Post.title(post), Post.new_record?(post), Post.persisted?(post), Post.changed?(post), Post.previous_changes(post).ActiveSupport::HashWithIndifferentAccess.keys])
 show_sql
 second = Post.create(title: "Second post", body: "plain words", views: 3, published: true)
 p([Post.id(second), Post.title(second), Post.published(second)])
@@ -75,7 +76,7 @@ show_sql
 
 puts("-- update")
 found.Post.title = "Hello again"
-p([Post.changes(found), Post.save(found), Post.saved_changes(found).Hash.keys])
+p([Post.changes(found), Post.save(found), Post.saved_changes(found).ActiveSupport::HashWithIndifferentAccess.keys])
 show_sql
 p(Post.update(found, views: 20))
 p(Post.update(found, title: ""))
@@ -108,3 +109,33 @@ p([Post.count, Post.exists?(Post.id(second))])
 p(Post.where(id: Any[1, 2]).ActiveRecord::Relation.pluck(:id))
 show_sql
 p(Post.inspect(Post.build(title: "abc")))
+
+puts("-- ActiveModel")
+n = Post.model_name
+p([ActiveModel::Name.name(n), ActiveModel::Name.human(n), ActiveModel::Name.route_key(n), ActiveModel::Name.param_key(n), Post.i18n_scope])
+p([Post.human_attribute_name("created_at"), Post.human_attribute_name(:title)])
+p(Array.map(Post.validators_on(:title)) { |v| ActiveModel::AnyValidator.kind(v) })
+p(Array.map(Post.validators) { |v| [ActiveModel::AnyValidator.kind(v), ActiveModel::AnyValidator.options(v)] })
+kept = Post.first
+p([Post.to_key(kept), Post.to_param(kept), Kernel.equal?(Post.to_model(kept), kept), Post.to_partial_path(kept), Post.to_param(Post.build)])
+long = Post.build(title: "")
+Post.valid?(long)
+p(ActiveModel::Errors.details(Post.errors(long)))
+p(ActiveModel::Errors.to_hash(Post.errors(long), true))
+p(ActiveModel::Errors.messages(Post.errors(long)))
+I18n.backend_store(:en, Hash.of(activerecord: Hash.of(attributes: Hash.of(post: Hash.of(title: "Headline")), errors: Hash.of(models: Hash.of(post: Hash.of(attributes: Hash.of(title: Hash.of(blank: "is missing"))))))))
+Post.valid?(long)
+p(ActiveModel::Errors.full_messages(Post.errors(long)))
+p(Post.serializable_hash(kept, Hash.of(only: Any[:id, :title])))
+p(Post.as_json(kept, Hash.of(except: Any[:created_at, :updated_at])))
+puts(Post.to_json(kept, Hash.of(only: Any[:id, :views], methods: Any[:title])))
+copy = Post.from_json(Post.build, "{\"title\":\"From JSON\",\"views\":3}")
+p([Post.title(copy), Post.views(copy), Post.changed(copy)])
+show_sql
+
+puts("-- an ActiveModel form in the same program")
+form = PostForm.build(title: "A title that is long", post_id: Post.id(kept))
+p([PostForm.valid?(form), ActiveModel::Errors.full_messages(PostForm.errors(form)), ActiveModel::Name.i18n_key(PostForm.model_name), PostForm.i18n_scope, PostForm.persisted?(form)])
+form.PostForm.title = Post.title(kept)
+p([PostForm.valid?(form), Post.title(Post.find(PostForm.post_id(form))) == PostForm.title(form)])
+show_sql

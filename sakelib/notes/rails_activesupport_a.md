@@ -150,8 +150,9 @@ OrderedOptions at once).
 - Time zones: `Time.new(..., in: "America/New_York")` accepts only fixed offsets. `sakelib/tzinfo.sake` reads
   `/usr/share/zoneinfo` (TZif v2) in Sake, as the tzinfo gem does without tzinfo-data, so no built-in was needed;
   a built-in IANA zone (`Time.getlocal(t, "Asia/Tokyo")`) would make it unnecessary.
-- `NoMethodError` as a built-in exception (StringInquirer raises `ActiveSupport::NoMethodError`;
-  `ActiveSupport::DelegationError < StandardError`, Ruby's `< NoMethodError`).
+- `NoMethodError` as a built-in exception: landed; since the third wave StringInquirer and ArrayInquirer raise the
+  built-in, and `ActiveSupport::DelegationError < NoMethodError` as in Ruby (the first wave had
+  `ActiveSupport::NoMethodError` and `DelegationError < StandardError`).
 
 ## Bugs (repro in experiments/2026-10-20-rails-scale/bugs/)
 

@@ -1,13 +1,14 @@
-# Port of activemodel-8.1.3/lib/active_model/attribute_set.rb and attribute_set/builder.rb (partial: Builder and LazyAttributeSet/LazyAttributeHash (the database side is ActiveRecord's), no YAML encoder, no freeze)
+# Port of activemodel-8.1.3/lib/active_model/attribute_set.rb and attribute_set/builder.rb (partial: no LazyAttributeSet/LazyAttributeHash (Builder casts the row into Attributes when the record is built; each Attribute still casts its value on first read), no YAML encoder, no freeze)
 #
 # A Hash of attribute names (Strings) to ActiveModel::Attribute values (the module's includers).
+# Ruby's `attributes` is protected (other sets and ActiveRecord read it); Sake has no protected, so it is public.
 
 require "attribute/user_provided_default"
 
 module ActiveModel
   class AttributeSet
     include Indexable
-    private attr_accessor attributes
+    attr_reader attributes
 
     def [](s, name) = @attributes[name] || ActiveModel::Attribute.null(name)
     def []=(s, name, value)
@@ -66,5 +67,27 @@ module ActiveModel
     end
 
     def ==(s, other) = (other in AttributeSet) && @attributes == AttributeSet.attributes(other)
+
+    # Ruby's AttributeSet::Builder: the set of a row read from the database (ActiveRecord's instantiate).
+    class Builder
+      attr_reader types, default_attributes
+
+      # Ruby: LazyAttributeSet.new(values, types, additional_types, default_attributes); built eagerly here
+      def build_from_database(b, values = Hash.new)
+        attrs = Hash.new
+        Hash.each(@types) do |name, type|
+          if Hash.key?(values, name)
+            attrs[name] = ActiveModel::Attribute.from_database(name, values[name], type)
+          else
+            d = @default_attributes[name]
+            attrs[name] = d ? d : ActiveModel::Attribute.uninitialized(name, type)
+          end
+        end
+        Hash.each(values) do |name, v|
+          attrs[name] = ActiveModel::Attribute.from_database(name, v, ActiveModel::Type.default_value) unless Hash.key?(attrs, name)
+        end
+        AttributeSet.new(attrs)
+      end
+    end
   end
 end

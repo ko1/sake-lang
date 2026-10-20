@@ -1,9 +1,8 @@
 # Port of activerecord-8.1.3/lib/active_record/connection_adapters/sqlite3/database_statements.rb (partial: no
-# explain, no prepared statement pool: each query runs with SQLite3::Database.execute2)
+# explain, no prepared statement pool: each query prepares its statement and closes it)
 #
-# Ruby's perform_query prepares a statement, binds, steps and reads stmt.columns and stmt.types; Sake's built-in
-# has execute2 (the column names, then the rows) and changes, so the result's column types are not known here
-# (Ruby maps stmt.types through the type map; see the notes).
+# Ruby's perform_query prepares a statement, binds, steps and reads stmt.columns and stmt.types, which the type
+# map turns into the result's column types (SQLite3::Statement, as the gem's).
 
 module ActiveRecord
   module ConnectionAdapters
@@ -52,23 +51,30 @@ module ActiveRecord
           internal_execute(c, "BEGIN #{mode} TRANSACTION", "TRANSACTION", Any[], false, true, false)
         end
 
+        # Ruby: a prepared statement (cached per sql when prepare), bind, step or to_a, and the declared column
+        # types through the type map (Ruby's `stmt.types.map { |t| type_map.lookup(t) }`); no statement cache here
         def perform_query(c, raw_connection, sql, binds, type_casted_binds, prepare, batch)
+          total_changes_before_query = SQLite3::Database.total_changes(raw_connection)
           if batch
             SQLite3::Database.execute_batch(raw_connection, sql)
             return ActiveRecord::Result.empty_result(0)
           end
-          before = total_changes(c, raw_connection)
-          rows = SQLite3::Database.execute2(raw_connection, sql, type_casted_binds)
-          columns = Array.first(rows) || Any[]
-          affected = total_changes(c, raw_connection) > before ? SQLite3::Database.changes(raw_connection) : 0
-          ActiveRecord::Result.new(Array.map(columns) { |col| Kernel.to_s(col) }, Array.drop(rows, 1), nil, affected)
-        end
-
-        # Ruby: raw_connection.total_changes; the built-in has no total_changes, so SQLite's function is asked
-        def total_changes(c, raw_connection)
-          row = Array.first(SQLite3::Database.execute(raw_connection, "SELECT total_changes()"))
-          v = row ? row[0] : nil
-          (v in Integer) ? v : 0
+          stmt = SQLite3::Database.prepare(raw_connection, sql)
+          begin
+            SQLite3::Statement.bind_params(stmt, type_casted_binds) unless Array.empty?(type_casted_binds)
+            if SQLite3::Statement.column_count(stmt) == 0
+              SQLite3::Statement.step(stmt)
+              affected = SQLite3::Database.total_changes(raw_connection) > total_changes_before_query ? SQLite3::Database.changes(raw_connection) : 0
+              ActiveRecord::Result.empty_result(affected)
+            else
+              rows = SQLite3::Statement.to_a(stmt)
+              affected = SQLite3::Database.total_changes(raw_connection) > total_changes_before_query ? SQLite3::Database.changes(raw_connection) : 0
+              types = Array.map(SQLite3::Statement.types(stmt)) { |t| t == nil ? ActiveRecord::Type.default_value : lookup_cast_type(c, t) }
+              ActiveRecord::Result.new(SQLite3::Statement.columns(stmt), rows, types, affected)
+            end
+          ensure
+            SQLite3::Statement.close(stmt)
+          end
         end
 
         def cast_result(c, result) = result

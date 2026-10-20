@@ -10,7 +10,8 @@ generate "rails/activerecord/active_record/generate/active_record", "db/schema.r
 ```
 
 The core (Base's modules, persistence, a first Relation, the generator, the stand-ins) was written first; then
-four forks took relation, associations, features and migrations; their notes are the last four sections.
+four forks took relation, associations, features and migrations; their notes are the last four sections. The third
+wave (part 10) put the model layer on part 5's ActiveModel and removed the stand-ins: see "ActiveModel" below.
 
 ## Summary
 
@@ -18,21 +19,22 @@ About 14,000 Ruby code lines of activerecord-8.1.3 (lib/active_record: core, mod
 attribute_methods/*, attribute_assignment, connection_handling, errors, validations (+uniqueness), callbacks,
 transactions, timestamp, locking/*, counter_cache, enum, store, secure_token, relation.rb and relation/*,
 querying, sanitization, scoping/*, associations.rb and associations/* with reflection, autosave and
-nested_attributes, migration.rb and migration/*, schema, schema_migration, internal_metadata, schema_dumper; and
-activemodel's attribute_set as a stand-in) are ported in about 4,500 Sake code lines, of which about 1,050 are the
-generators (`active_record/generate/`, Sake only) and 290 the ActiveModel stand-ins. Code lines exclude blanks
-and comments; the Ruby side counts whole files, left-out parts included. Per-part tables are in the sections below.
+nested_attributes, migration.rb and migration/*, schema, schema_migration, internal_metadata, schema_dumper,
+translation, integration (to_param), serialization) are ported in about 4,250 Sake code lines, of which about 1,050
+are the generators (`active_record/generate/`, Sake only). Code lines exclude blanks and comments; the Ruby side
+counts whole files, left-out parts included. Per-part tables are in the sections below. (Until the third wave 290
+more lines were stand-ins for ActiveModel; they are gone, and ActiveModel's own modules run.)
 
-Tests (`ruby -Ilib test/test_sakelib.rb -n /rails_activerecord/`: 14 runs, 0 failures, generate.sake has no twin).
+Tests (`ruby -Ilib test/test_sakelib.rb -n /rails_activerecord/`: 13 runs, 0 failures, generate.sake has no twin).
 Each `.sake` prints what its `.rb` prints on the real gem against sqlite3 `:memory:`, with the SQL each step runs
 (a `sql.active_record` subscriber on both sides):
 
-| test | what | check (`bin/sake -c --strict`, load ~2-3) |
+| test | what | check (`bin/sake -c --strict`, load ~2-3; the third wave's numbers are in "ActiveModel" below) |
 |---|---|---|
-| base | attributes from the schema, build/save/create/find/where/order/count/pluck/exists?, dirty tracking, update, reload, validations, callbacks, destroy, inspect | 8.3 s, 234 MB |
+| base | attributes from the schema, build/save/create/find/where/order/count/pluck/exists?, dirty tracking, update, reload, validations, callbacks, destroy, inspect; (third wave) model_name, human_attribute_name, validators, to_key/to_param, errors' details/messages with i18n overrides, serializable_hash/as_json/to_json/from_json, a plain ActiveModel form in the same program | 8.3 s, 234 MB |
 | relation | where (Hash, nil, Array, Range, subquery, ?/named binds), where_not/or/and/rewhere/invert_where, order/reorder/reverse_order, limit/offset, select/distinct, group/having and grouped calculations, pluck/pick/ids, first/last/take, find_some, exists?, find_or_create_by, create_with, update_all/delete_all/destroy_all, update_counters, batches, merge/except/only, none, readonly, to_sql, inspect | 16.5 s, 319 MB |
 | scoping | named scopes as functions, default_scope, unscoped | 10.8 s, 266 MB |
-| associations | belongs_to, has_one, has_many (a CollectionProxy class per model), :through, habtm, includes/preload, joins/left_joins, where(author: record), dependent (5 kinds), counter_cache, autosave, nested attributes, inverse_of, "must exist" | **80.0 s, 592 MB** (bugs/activerecord_slow_check_associations/) |
+| associations | belongs_to, has_one, has_many (a CollectionProxy class per model), :through, habtm, includes/preload, joins/left_joins, where(author: record), dependent (5 kinds), counter_cache, autosave, nested attributes, inverse_of, "must exist" | **80.0 s, 592 MB** (bugs/activerecord_slow_check_associations/; 25.5 s after the lead's db3ea041, 33 s on ActiveModel) |
 | callbacks | every model callback kind in Rails' order, around, throw :abort, conditions, commit/rollback callbacks, uniqueness with scope/on | 11.9 s, 300 MB |
 | features | enum, store, secure token, attr_readonly, attribute API, readonly!, optimistic and pessimistic locking, counters, touch, record_timestamps, update_columns, savepoints | 24.1 s, 400 MB |
 | transactions | Post.transaction, Rollback, RecordInvalid rolling back, joined transactions, state restored, commit/rollback callbacks | 8.0 s, 235 MB |
@@ -91,8 +93,8 @@ object, attribute methods defined from the table at first use, and class-body li
 
 4. **Attribute values are one union.** Rails keeps attributes in an ActiveModel::AttributeSet of
    ActiveModel::Attribute (FromDatabase/FromUser with lazy casting and the original for dirty tracking): ported
-   as such, so dirty tracking is Rails' (`changed?` asks each Attribute; `changes_applied` keeps the set before
-   the save, whose changes are `saved_changes`). The value of any Attribute is the union of every type's cast
+   as such, and dirty tracking is ActiveModel::Dirty's (an AttributeMutationTracker over the set, and the one of
+   the last save for `saved_changes`; `changes` is a HashWithIndifferentAccess, as in Ruby). The value of any Attribute is the union of every type's cast
    (Integer|String|Time|Date|BigDecimal|Hash|...), so the generated reader narrows to the column's type:
 
    ```ruby
@@ -136,10 +138,11 @@ end
 Callbacks are ActiveSupport::Callbacks (part B): the generator writes Rails' `define_model_callbacks` lines and
 maps each `before_save :x, if: :y` to `set_callback :save, :before, :x, if: :y`, then calls
 `ActiveSupport::Callbacks::Generate.class_source`, so `_run_save_callbacks`, halting with `throw :abort`, around
-callbacks and conditions are part B's code. `validates :title, presence: true, length: {minimum: 3}` becomes
-validator objects (`def Post.__validator_0_object = once { PresenceValidator.new(Any[:title], Hash.new) }`) run
-as `:validate` callbacks in their order with `validate :method` lines, which is how Rails orders them; `on:
-:create` becomes a generated condition `__validation_on_create?`.
+callbacks and conditions are part B's code. `validates :title, presence: true, length: {minimum: 3}` goes to
+ActiveModel's generator (`ActiveModel::Validations::Generate.expand`), which makes validator objects
+(`def Post.__validator_0 = once { ActiveModel::Validations::PresenceValidator.new(Hash.of(attributes: Any[:title], class: "Post")) }`)
+run as `:validate` callbacks (`__validate_0`) in their order with `validate :method` lines, which is how Rails
+orders them; `on: :create` becomes a generated condition `__on_create?`.
 
 ## The SQL is Rails'
 
@@ -149,21 +152,80 @@ INSERT with partial inserts and `RETURNING "id"`, `BEGIN immediate TRANSACTION`/
 saves, the UPDATE of the changed columns and updated_at, `LIMIT ?` binds, `SELECT 1 AS one ... LIMIT ?` for
 exists?, `IN (?, ?)`, string conditions as `(views > ?)` with BoundSqlLiteral.
 
-## ActiveModel
+## ActiveModel (third wave: integrated)
 
-Part 5 (activemodel) was written at the same time. The model layer needs Errors, Error, Name, AttributeSet and
-the validators; until part 5 landed they are stand-ins with Rails' names under
-`active_record/stand_in/{active_model,attribute_set}.sake` (Sake only, marked so). **Not integrated.** Part 5 landed (commit
-dad1c7a1) with its own ActiveModel::Errors, Error, Name, AttributeSet and Validations (generated validators,
-`__errors`/`_validators`/`__send` required of the class, i18n messages through Translation). Its shape is the same
-as the stand-in's (a validator object per `validates` key held in a `once`, run as a `:validate` callback), but the
-modules require more of the model (Naming/Translation's lookup_ancestors, `__send`, `_validators`), and four
-forks' tests were built on the stand-in, so the swap was left for the next step: remove `stand_in/`, include
-part 5's ActiveModel::Validations (and Naming, Translation, Conversion) in the generated model, call
-`ActiveModel::Validations::Generate` for the validation lines instead of `validators`/`validations_source` in
-generate/model.sake, and give UniquenessValidator part 5's EachValidator shape. **Until then a program cannot
-require both `rails/activerecord/active_record` and part 5's validations/errors/attribute_set** (the classes are
-defined twice).
+Until the third wave the model layer ran on stand-ins (`active_record/stand_in/`: Errors, Error, Name, the
+validators, AttributeSet); now the generated model includes part 5's ActiveModel as Rails' Base does, and one
+program can require ActiveRecord and define plain ActiveModel classes next to the records (base.sake's
+`PostForm`, generated by ActiveModel's generator from `base_form.rb`). What changed:
+
+| Ruby | Sake now |
+|---|---|
+| `class Base; include ActiveModel::API` (AttributeAssignment, Validations with Naming/Translation, Conversion) | `include ActiveModel::API` first in the model (base_modules) |
+| `extend Translation` (i18n_scope :activerecord, lookup_ancestors) | translation.sake, included after API so its two functions win |
+| AttributeMethods::Dirty `include ActiveModel::Dirty` | `include ActiveModel::Dirty` before ActiveRecord::AttributeMethods; ActiveRecord's dirty.rb part (saved_change_to_attribute?, attribute_in_database, will_save_change_to_attribute?, changes_to_save, ...) on its two trackers |
+| ActiveRecord::Callbacks `include ActiveModel::Validations::Callbacks` | included after ActiveRecord::Callbacks (run_validations! inside the :validation chain) |
+| Serialization `include ActiveModel::Serializers::JSON` | both included, Serializers::JSON first (as_json, to_json, from_json, serializable_hash minus the inheritance column) |
+| Integration#to_param, `self.param_delimiter = "_"` | integration.sake (partial: to_param) over ActiveModel::Conversion |
+| `@errors`, `@context_for_validation`, `@attributes`, `@mutations_from_database`, `@mutations_before_last_save` | the record fields `__errors`, `__context_for_validation`, `__attributes`, `__mutations_from_database`, `__mutations_before_last_save` (ActiveModel's names for them) |
+| `validates ...`, `validate :m`, `validates_*_of` | ActiveModel's generator (`Validations::Generate.expand/source`) on an `ActiveModel::Generate::Info` that generate/model.sake builds per model; its new field `validator_namespaces` puts `ActiveRecord::Validations` (uniqueness) before ActiveModel's validators, Ruby's const_get from an ActiveRecord class |
+| UniquenessValidator < ActiveModel::EachValidator | the same (`class UniquenessValidator < ActiveModel::EachValidator`), with Rails' error options (`value:` among them) |
+| `send(name)` (read_attribute_for_validation, `%{value}`, serializable_hash's methods:) | generated `__send`: the columns, the singular associations, the names the validations read |
+| RecordInvalid.new(record) through I18n, en.yml (`must exist`, `has already been taken`, restrict_dependent_destroy) | validations.sake and `active_record/locale/en.yml` (copied), loaded with ActiveModel's at the first record (`ActiveRecord.load_locale`) |
+| belongs_to required: `validates_presence_of name, message: :required` | the generated check adds `:blank, message: :required` (details say `error: :blank` as Ruby's) |
+| `errors.add(:base, :"restrict_dependent_destroy.has_many", record:)` | the same key through I18n |
+| ActiveRecord::UnknownAttributeError = ActiveModel::UnknownAttributeError | the same alias; the generated `_assign_attribute` (Ruby's public_send of the setter, which ActiveModel::AttributeAssignment requires; it was `__assign`) ends in `attribute_writer_missing` |
+
+ActiveModel got what ActiveRecord needs, each as Ruby has it: AttributeSet::Builder (the set of a row; eager, no
+LazyAttributeSet) and a public `attributes` reader (Ruby's protected one), `super_valid?` and
+`super_serializable_hash` (the no-super names that ActiveRecord's overrides call).
+
+**ActiveRecord::Result** now carries the column types as Rails': perform_query prepares a SQLite3::Statement,
+binds, steps or reads the rows, and maps `SQLite3::Statement.types` through the type map, so
+`select_all(...).cast_values` casts a `boolean` column to true/false and `datetime(6)` to Time (the adapter test
+prints both), and pluck falls back to the result's column type for a non-attribute column. No statement cache
+(Ruby's `@statements[sql]` when prepared statements are on): each query prepares and closes.
+
+**Check time** (`bin/sake -c --strict`, the same checker (after the lead's db3ea041), load ~1; "stand-in" is HEAD's
+code with `stand_in/` restored, "ActiveModel" the integrated tree):
+
+| test | stand-in | ActiveModel |
+|---|---|---|
+| base (+ the new ActiveModel section and the form) | 7.0 s, 244 MB | 9.0 s, 298 MB |
+| relation | 9.4 s, 304 MB | 10.0 s, 317 MB |
+| scoping | 7.2 s, 249 MB | 8.0 s, 263 MB |
+| associations | 25.5 s, 449 MB | 33.1 s, 537 MB |
+| callbacks | 9.3 s, 274 MB | 11.5 s, 318 MB |
+| features | 16.7 s, 391 MB | 18.6 s, 424 MB |
+| transactions | 6.2 s, 239 MB | 7.1 s, 263 MB |
+
+Repeated (four runs each, alternating): associations 25.2-26.3 s (stand-in) against 31.9-33.1 s (ActiveModel),
+features 16.5-17.6 s against 18.1-18.8 s.
+
+So ActiveModel's modules cost about 10-30 % more check time. Why is a guess, not measured: its Errors/Error ask the
+record's class through module dispatch (human_attribute_name_of, model_name_of, read_attribute_for_validation), whose
+subject is the union of every model, and the trackers and HashWithIndifferentAccess are more code than the stand-in's
+reads of the set. Checking without Dirty, or without the i18n message path, would tell these apart.
+
+**Friction of the integration**
+- `module ActiveRecord::Translation; include ActiveModel::Translation; end` (Rails' shape) → "ActiveRecord::Translation.lookup_ancestors
+  needs `__model` from a namespace that includes ActiveRecord::Translation": the included module's functions are checked
+  in the including module, which has no model → the model includes ActiveModel's module itself (through API) and
+  ActiveRecord's module defines only its two functions. The same for Serialization over Serializers::JSON. Rails'
+  `include` inside a concern becomes "the class includes both, in Ruby's order" every time a module needs the includer.
+- `Post.previous_changes(post).Hash.keys` → "Hash.keys: argument 1 must be Hash, but is ActiveSupport::HashWithIndifferentAccess"
+  once Dirty was ActiveModel's → `.ActiveSupport::HashWithIndifferentAccess.keys` (Ruby's HWIA is a Hash; Sake's is a class).
+- `ActiveModel::AttributeSet.attributes(set)` from ActiveRecord → "field `attributes` of S is private" → made public
+  (Ruby's is protected; Sake has no protected).
+- `select_all(...).cast_values.first.map { }` → "Array.map: argument 1 must be Array, but can be true|false | Float | ..."
+  (cast_values of one column is the values) → `row => Array` first.
+- A shared git index: `git rm -r stand_in` staged the deletion, and another agent's commit (db3ea041) took it along,
+  so HEAD has active_record.sake requiring the deleted files until this wave is committed. Use plain `rm` when others
+  commit from the same tree.
+
+What read well: the swap was mostly deletions (the stand-ins, ActiveRecord's own validator generator and dirty
+functions), and every test printed what Rails prints on the first run after it compiled, the new ActiveModel
+section of base (validators, errors' details, i18n overrides, JSON) included.
 
 ## Built on, and changed in, the first wave's files
 

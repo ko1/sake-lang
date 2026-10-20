@@ -49,7 +49,7 @@ Code lines (no blanks, no comments). Ruby counts are whole files, left-out parts
 | conversion.rb | conversion.sake | 32 | 23 |
 | attribute_assignment.rb, forbidden_attributes_protection.rb, access.rb | attribute_assignment.sake, forbidden_attributes_protection.sake, access.sake | 61 | 57 |
 | api.rb, model.rb | api.sake | 27 | 16 |
-| attribute_set.rb, attribute_set/builder.rb | attribute_set.sake | 243 | 49 |
+| attribute_set.rb, attribute_set/builder.rb | attribute_set.sake | 243 | 66 |
 | attribute/user_provided_default.rb (+ Attribute#with_type, #dup_or_share) | attribute/user_provided_default.sake | 53 | 30 |
 | attribute_registration.rb | attribute_registration.sake | 90 | 19 |
 | attribute_methods.rb | attribute_methods.sake | 236 | 19 |
@@ -195,17 +195,31 @@ nil to the checker, which Ruby's reader is not.
 
 ## For ActiveRecord (and other includers)
 
-ActiveRecord's model layer can include these modules into its own generated classes. What an includer must have:
+ActiveRecord's model layer includes these modules into its generated classes since the third wave (part 10;
+`rails_activerecord.md`, "ActiveModel"): API (AttributeAssignment, Validations with Naming and Translation,
+Conversion), Dirty, Validations::Callbacks, Serializers::JSON, with ActiveRecord's Translation, Validations,
+AttributeMethods and Serialization after them, and its generator calls `ActiveModel::Validations::Generate`
+for the validation lines. For it this part gained, each as Ruby has it: `AttributeSet::Builder`
+(build_from_database, eager), a public `AttributeSet.attributes` (Ruby's protected reader), `super_valid?` and
+`super_serializable_hash` (the bodies ActiveRecord's valid? and serializable_hash call instead of super), and
+`Info.validator_namespaces` (the namespaces whose validators a class's const_get finds first: ActiveRecord passes
+`["ActiveRecord::Validations", ["uniqueness"]]`). A plain ActiveModel class and records live in one program
+(activerecord's base test). What an includer must have:
 
 | module | fields the class declares | functions the class (its generator) defines |
 |---|---|---|
 | Validations (also through API/Model/SecurePassword) | `__errors`, `__context_for_validation` | `__send(r, name)`, `__class_name`, `model_name`, `lookup_ancestors`, `_validators`, `__raw_value_for_validation(r, attr)` (ActiveRecord: `attribute_raw_value_for_validation(r, attr)`), `__callbacks`/`__callback`/`_run_validate_callbacks` (ActiveSupport::Callbacks::Generate) |
 | Validations::Callbacks | | `_run_validation_callbacks(r) { }` |
+| (ActiveRecord's fields for these) | `__errors`, `__context_for_validation`, `__attributes`, `__mutations_from_database`, `__mutations_before_last_save` | `__send`, `__class_name`, `__id`, `attribute_aliases`, `__raw_value_for_validation` (= `attribute_raw_value_for_validation`), `__attributes_for_serialization`, `_assign_attribute`, `_validators` (generate/model.sake) |
 | AttributeAssignment | | `_assign_attribute(r, k, v)`, `__class_name` |
 | Conversion | | `persisted?(r)` (API: false), `__id(r)` when the class has an id |
 | AttributeMethods / Attributes | `__attributes` (an AttributeSet; nil without Attributes) | `__send`, `attribute_aliases`, `_default_attributes` (Attributes), the attribute methods |
 | Dirty | `__mutations_from_database`, `__mutations_before_last_save` (and `__attributes`) | `_assign_attribute` |
 | Serialization / Serializers::JSON | | `__send`, `__attributes_for_serialization(r)` (= `attributes(r)`) |
+
+A module that includes one of these and whose functions need the includer (ActiveRecord::Translation over
+Translation, ActiveRecord::Serialization over Serializers::JSON) cannot include it: the included functions are
+checked in the module, which has no model. The class includes both, in Ruby's order, instead.
 
 `ActiveModel::Generate.program_source(text, path)` is the whole generator as a function; `collect`,
 `class_source`, `naming_source`, `send_source`, `assign_source`, `ActiveModel::Validations::Generate.expand/source`

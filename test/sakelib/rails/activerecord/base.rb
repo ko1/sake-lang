@@ -98,3 +98,34 @@ p([Post.count, Post.exists?(second.id)])
 p(Post.where(id: [1, 2]).pluck(:id))
 show_sql
 p(Post.new(title: "abc").inspect)
+
+puts("-- ActiveModel")
+n = Post.model_name
+p([n.name, n.human, n.route_key, n.param_key, Post.i18n_scope])
+p([Post.human_attribute_name("created_at"), Post.human_attribute_name(:title)])
+p(Post.validators_on(:title).map(&:kind))
+p(Post.validators.map { |v| [v.kind, v.options] })
+kept = Post.first
+p([kept.to_key, kept.to_param, kept.to_model.equal?(kept), kept.to_partial_path, Post.new.to_param])
+long = Post.new(title: "")
+long.valid?
+p(long.errors.details)
+p(long.errors.to_hash(true))
+p(long.errors.messages)
+I18n.backend.store_translations(:en, activerecord: { attributes: { post: { title: "Headline" } }, errors: { models: { post: { attributes: { title: { blank: "is missing" } } } } } })
+long.valid?
+p(long.errors.full_messages)
+p(kept.serializable_hash(only: [:id, :title]))
+p(kept.as_json(except: [:created_at, :updated_at]))
+puts(kept.to_json(only: [:id, :views], methods: [:title]))
+copy = Post.new.from_json('{"title":"From JSON","views":3}')
+p([copy.title, copy.views, copy.changed])
+show_sql
+
+puts("-- an ActiveModel form in the same program")
+require_relative "base_form"
+form = PostForm.new(title: "A title that is long", post_id: kept.id)
+p([form.valid?, form.errors.full_messages, PostForm.model_name.i18n_key, PostForm.i18n_scope, form.persisted?])
+form.title = kept.title
+p([form.valid?, Post.find(form.post_id).title == form.title])
+show_sql

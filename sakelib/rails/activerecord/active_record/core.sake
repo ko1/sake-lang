@@ -2,17 +2,17 @@
 # no encode_with/init_with of YAML, no strict_loading_mode :n_plus_one_only, no pretty_print, no connection_class)
 #
 # Ruby's Post.new(attrs) is `Post.build(attrs)` (Rails 8.1's alias of new; `new` is Sake's constructor) and
-# Ruby's `allocate` + `init_with_attributes` is the generated `Post.__allocate(attribute_set)` (the one place a
+# Ruby's `allocate` + `init_with_attributes` is the generated `Post.__allocate(attributes)` (the one place a
 # Post is made, so a model is one type) followed by `init_internals`. The instance state is the fields the
-# generator declares on every model (record_fields in generate/active_record.sake): Ruby's @attributes is the
-# field attribute_set (a field named attributes would make a reader that wins over Rails' `attributes`).
+# generator declares on every model (record_fields in generate/model.sake): Ruby's @attributes is the field
+# __attributes, as ActiveModel::AttributeMethods requires (a field named attributes would make a reader that wins
+# over Rails' `attributes`); @errors and @context_for_validation are ActiveModel::Validations' __errors and
+# __context_for_validation, @mutations_from_database/@mutations_before_last_save ActiveModel::Dirty's.
 
 module ActiveRecord
   module Core
     # Required of the model (generated): `Post.new(set)` with the instance fields left to initialize.
-    def __allocate(attribute_set) = raise(NotImplementedError)
-    # Required of the model (generated): `post.public_send("#{name}=", value)`, a `case` over the writers.
-    def __assign(r, name, value) = raise(NotImplementedError)
+    def __allocate(attributes) = raise(NotImplementedError)
 
     # Ruby: initialize(attributes = nil) (new_record) and init_with_attributes (instantiate)
     def init_internals(r, new_record)
@@ -24,9 +24,7 @@ module ActiveRecord
       @marked_for_destruction = false
       @destroyed_by_association = nil
       @association_cache = Hash.new
-      @errors_or_nil = ActiveModel::Errors.new(r)
       @strict_loading_record = false
-      @validation_context = nil
       @trigger_update_callback = false
       @trigger_destroy_callback = false
       r
@@ -37,6 +35,7 @@ module ActiveRecord
 
     # Ruby's new with the attributes as a Hash (Sake only: a Hash cannot be spread into keywords)
     def build_with(attributes)
+      ActiveRecord.load_locale
       r = __allocate(ActiveModel::AttributeSet.deep_dup(_default_attributes))
       init_internals(r, true)
       assign_attributes(r, attributes)

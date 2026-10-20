@@ -1,0 +1,142 @@
+# Port of activesupport-8.1.3/lib/active_support/message_encryptor.rb (partial: no rotation (Messages::Rotator); serializer ::JSON only, see messages/codec.sake)
+#
+#   Ruby                                                       Sake
+#   e = MessageEncryptor.new(key, cipher: "aes-256-gcm",       e = MessageEncryptor.new(key, cipher: "aes-256-gcm")
+#         serializer: JSON)
+#   e.encrypt_and_sign(value, purpose: :login)                 MessageEncryptor.encrypt_and_sign(e, value, purpose: :login)
+#   e.decrypt_and_verify(message, purpose: :login)             MessageEncryptor.decrypt_and_verify(e, message, purpose: :login)
+#
+# The cipher is the OpenSSL::Cipher built-in. Ruby's throw :invalid_message_* inside catch_and_raise are the
+# Messages exceptions of codec.sake, rescued in decrypt_and_verify as Ruby's catch blocks do.
+
+require "message_verifier"
+require "messages/codec"
+
+module ActiveSupport
+  class MessageEncryptor
+    attr_reader secret, sign_secret, cipher, url_safe
+    private attr_accessor aead_mode, verifier
+
+    class InvalidMessage < StandardError
+    end
+
+    # Ruby's cattr_accessor :use_authenticated_message_encryption (default false; Rails 5.2+ apps set it).
+    def use_authenticated_message_encryption = false
+    def default_cipher = MessageEncryptor.use_authenticated_message_encryption ? "aes-256-gcm" : "aes-256-cbc"
+    def AUTH_TAG_LENGTH = 16
+    def SEPARATOR = "--"
+
+    # Ruby: initialize(secret, sign_secret = nil, cipher:, url_safe:, ...)
+    def initialize(e)
+      @cipher = MessageEncryptor.default_cipher if @cipher == nil
+      @url_safe = false if @url_safe == nil
+      # Ruby: new_cipher.authenticated? (a call of new_cipher here hides the code after a later call from the checker:
+      # bugs/activesupport_call_after_initialize_callee_unchecked.sake)
+      @aead_mode = OpenSSL::Cipher.authenticated?(OpenSSL::Cipher.new(@cipher))
+      @verifier = @aead_mode ? nil : MessageVerifier.new(@sign_secret || @secret, url_safe: @url_safe)
+    end
+
+    def encrypt_and_sign(e, value, expires_at: nil, expires_in: nil, purpose: nil)
+      create_message(e, value, {expires_at: expires_at, expires_in: expires_in, purpose: purpose})
+    end
+
+    def decrypt_and_verify(e, message, purpose: nil)
+      read_message(e, message, {expires_at: nil, expires_in: nil, purpose: purpose})
+    rescue Messages::InvalidMessageContent
+      nil
+    rescue Messages::InvalidMessageFormat, Messages::InvalidMessageSerialization => error
+      raise InvalidMessage, Exception.message(error)
+    end
+
+    def key_len(cipher = MessageEncryptor.default_cipher) = OpenSSL::Cipher.key_len(OpenSSL::Cipher.new(cipher))
+
+    def create_message(e, value, metadata) = sign(e, encrypt(e, Messages::Metadata.serialize_with_metadata(value, metadata)))
+
+    def read_message(e, message, metadata)
+      Messages::Metadata.deserialize_with_metadata(decrypt(e, verify(e, message)), metadata)
+    end
+
+    def inspect(e) = "#<ActiveSupport::MessageEncryptor>"
+
+    # Ruby's @verifier.create_message(data) with the NullSerializer: the data signed as it is.
+    def sign(e, data)
+      v = @verifier
+      v ? MessageVerifier.sign_encoded(v, Messages::Codec.encode(data, @url_safe)) : data
+    end
+
+    def verify(e, data)
+      v = @verifier
+      v ? MessageVerifier.decode(v, MessageVerifier.extract_encoded(v, data)) : data
+    end
+
+    def encrypt(e, data)
+      c = new_cipher(e)
+      OpenSSL::Cipher.encrypt(c)
+      OpenSSL::Cipher.set_key(c, @secret)
+      iv = OpenSSL::Cipher.random_iv(c)
+      OpenSSL::Cipher.set_auth_data(c, "") if @aead_mode
+      encrypted_data = OpenSSL::Cipher.update(c, data) + OpenSSL::Cipher.final(c)
+      parts = String[encrypted_data, iv]
+      Array.push(parts, OpenSSL::Cipher.auth_tag(c, MessageEncryptor.AUTH_TAG_LENGTH)) if @aead_mode
+      join_parts(e, parts)
+    end
+
+    def decrypt(e, encrypted_message)
+      c = new_cipher(e)
+      encrypted_data, iv, auth_tag = extract_parts(e, encrypted_message)
+      if @aead_mode && String.bytesize(auth_tag || "") != MessageEncryptor.AUTH_TAG_LENGTH
+        raise Messages::InvalidMessageFormat, "truncated auth_tag"
+      end
+      begin
+        OpenSSL::Cipher.decrypt(c)
+        OpenSSL::Cipher.set_key(c, @secret)
+        OpenSSL::Cipher.set_iv(c, iv || "")
+        if @aead_mode
+          OpenSSL::Cipher.set_auth_tag(c, auth_tag || "")
+          OpenSSL::Cipher.set_auth_data(c, "")
+        end
+        decrypted = OpenSSL::Cipher.update(c, encrypted_data || "") + OpenSSL::Cipher.final(c)
+        String.force_encoding(decrypted, "UTF-8")   # Ruby's JSON.parse reads the binary String as UTF-8
+      rescue OpenSSL::Cipher::CipherError => error
+        raise Messages::InvalidMessageFormat, Exception.message(error)
+      end
+    end
+
+    def length_after_encode(e, length_before_encode)
+      if @url_safe
+        Float.ceil(4 * length_before_encode / 3.0)   # without padding
+      else
+        4 * Float.ceil(length_before_encode / 3.0)   # with padding
+      end
+    end
+
+    def length_of_encoded_iv(e) = length_after_encode(e, OpenSSL::Cipher.iv_len(new_cipher(e)))
+    def length_of_encoded_auth_tag(e) = length_after_encode(e, MessageEncryptor.AUTH_TAG_LENGTH)
+
+    def join_parts(e, parts) = Array.join(Array.map(parts) { |part| Messages::Codec.encode(part, @url_safe) }, MessageEncryptor.SEPARATOR)
+
+    def extract_part(e, encrypted_message, rindex, length)
+      index = rindex - length
+      sep = MessageEncryptor.SEPARATOR
+      raise Messages::InvalidMessageFormat, "missing separator" unless String.slice(encrypted_message, index - String.length(sep), String.length(sep)) == sep
+      String.slice(encrypted_message, index, length) || ""
+    end
+
+    def extract_parts(e, encrypted_message)
+      parts = String[]
+      rindex = String.length(encrypted_message)
+      if @aead_mode
+        Array.push(parts, extract_part(e, encrypted_message, rindex, length_of_encoded_auth_tag(e)))
+        rindex -= MessageEncryptor.SEPARATOR.String.length + length_of_encoded_auth_tag(e)
+      end
+      Array.push(parts, extract_part(e, encrypted_message, rindex, length_of_encoded_iv(e)))
+      rindex -= MessageEncryptor.SEPARATOR.String.length + length_of_encoded_iv(e)
+      head = String.slice(encrypted_message, 0, rindex)
+      raise Messages::InvalidMessageFormat, "missing encrypted data" if head == nil   # Ruby: decode(nil) raises
+      Array.push(parts, head)
+      Array.map(Array.reverse(parts)) { |part| Messages::Codec.decode(part, @url_safe) }
+    end
+
+    def new_cipher(e) = OpenSSL::Cipher.new(@cipher)
+  end
+end

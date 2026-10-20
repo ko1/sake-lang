@@ -26,6 +26,11 @@ begin
 rescue ActiveSupport::DelegationError => e
   puts e.message
 end
+begin
+  orphan.name
+rescue NoMethodError => e
+  puts e.class.name
+end
 puts(<<~SAKE)
   def Post.author_name(obj)
     target = @author

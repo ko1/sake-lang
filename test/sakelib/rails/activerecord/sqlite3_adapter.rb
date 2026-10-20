@@ -57,6 +57,9 @@ r = conn.select_all(posts.project(posts[:id], posts[:title], posts[:views], post
 p(r.columns)
 p(r.rows)
 p(r.to_a.first)
+# the declared column types (the statement's) cast the values: published is boolean, created_at datetime
+p(r.cast_values)
+p(conn.select_all("SELECT created_at, upper(title) FROM posts WHERE id = 1").cast_values.first.map { |v| v.class.name })
 p(conn.select_value(posts.project(posts[:id].count)))
 p(conn.select_values(posts.project(posts[:title]).where(posts[:views].gt(5))))
 p(conn.select_rows("SELECT title, created_at FROM posts WHERE id = 1"))

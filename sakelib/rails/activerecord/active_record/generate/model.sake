@@ -6,15 +6,16 @@
 # (schema.sake) and writes, per model:
 #
 #   class Post                                     the instance state (Ruby's ivars), and the abstract parent
-#     attr_accessor attribute_set, new_record, ...
+#     attr_accessor __attributes, new_record, ...
 #     include ApplicationRecord                    (an abstract class is a module that includes ActiveRecord::Base)
 #   end
 #   class Post::ActiveRecord_Relation              Ruby's relation_delegate_class: a relation of Posts
 #   def Post.__model = once { ActiveRecord::ModelClass.new("Post", "posts") ... }
 #   def Post.title(r) ... def Post.title=(r, value) ... title?, title_changed?, title_was, ...
-#   def Post.__assign(r, name, value)              public_send("#{name}=", value)
+#   def Post._assign_attribute(r, name, value)     public_send("#{name}=", value)
+#   def Post.__send(r, name)                       send(name), for ActiveModel (read_attribute_for_validation)
 #   callbacks (ActiveSupport::Callbacks' generator on the model's define_model_callbacks and before_save lines)
-#   validators (`validates` lines as validator objects run in the :validate chain)
+#   validators (ActiveModel's generator on the `validates`/`validate` lines: validator objects in the :validate chain)
 #
 # The parts other files add (associations, enum, store, ...) are the `*_source` functions they define, called
 # from class_source.
@@ -22,6 +23,7 @@
 require "ruby_value"
 require "schema"
 require "rails/activesupport/active_support/generate/callbacks"
+require "rails/activemodel/active_model/generate/validations"
 require "rails/activesupport/active_support/inflector"
 
 module ActiveRecord
@@ -30,20 +32,21 @@ module ActiveRecord
 
     # Ruby's instance variables of a record (Core#init_internals and the modules' state)
     def record_fields
-      String["attribute_set", "new_record", "previously_new_record", "destroyed", "readonly_record", "frozen",
-             "marked_for_destruction", "destroyed_by_association", "association_cache", "errors_or_nil", "strict_loading_record",
-             "validation_context", "trigger_update_callback", "trigger_destroy_callback", "attributes_before_last_save",
+      String["__attributes", "new_record", "previously_new_record", "destroyed", "readonly_record", "frozen",
+             "marked_for_destruction", "destroyed_by_association", "association_cache", "__errors", "strict_loading_record",
+             "__context_for_validation", "trigger_update_callback", "trigger_destroy_callback", "__mutations_from_database", "__mutations_before_last_save",
              "start_transaction_state", "new_record_before_last_commit"]
     end
 
     # Ruby's ActiveRecord::Base include list, in its order (base.sake)
     def base_modules
-      String["ActiveRecord::Core", "ActiveRecord::Persistence", "ActiveRecord::ModelSchema", "ActiveRecord::Scoping",
-             "ActiveRecord::AttributeMethods", "ActiveModel::Validations", "ActiveRecord::Validations",
+      String["ActiveModel::API", "ActiveRecord::Translation",
+             "ActiveRecord::Core", "ActiveRecord::Persistence", "ActiveRecord::ModelSchema", "ActiveRecord::Scoping",
+             "ActiveRecord::Integration", "ActiveModel::Dirty", "ActiveRecord::AttributeMethods", "ActiveRecord::Validations",
              "ActiveRecord::CounterCache", "ActiveRecord::Locking::Optimistic", "ActiveSupport::Callbacks",
-             "ActiveRecord::Callbacks", "ActiveRecord::Timestamp", "ActiveRecord::Associations",
+             "ActiveRecord::Callbacks", "ActiveModel::Validations::Callbacks", "ActiveRecord::Timestamp", "ActiveRecord::Associations",
              "ActiveRecord::Transactions", "ActiveRecord::Querying", "Indexable",
-             "ActiveRecord::AutosaveAssociation", "ActiveRecord::Reflection::ClassMethods"] + Features.base_modules
+             "ActiveRecord::AutosaveAssociation", "ActiveRecord::Reflection::ClassMethods", "ActiveModel::Serializers::JSON", "ActiveRecord::Serialization"] + Features.base_modules
     end
 
     # The class-body calls the model generator knows (the others' are added by them)
@@ -59,7 +62,7 @@ module ActiveRecord
              "after_save_commit", "attribute"]
     end
 
-    def known_calls = Generate.CALLS + Associations.CALLS + Features.CALLS
+    def known_calls = Generate.CALLS + ActiveModel::Validations::Generate.CALLS + Associations.CALLS + Features.CALLS
 
     def body_name(b) = ActiveSupport::Generate::ClassBody.name(b)
     def decls(b) = ActiveSupport::Generate::ClassBody.declarations(b)
@@ -139,8 +142,10 @@ module ActiveRecord
       s += Features.default_scopes_source(b, chain, path)
       s += attribute_methods_source(k, cols, path, t, chain)
       s += assign_source(b, chain, cols, path)
-      s += validations_source(b, chain, path)
-      s += callbacks_source(b, chain, bodies, path)
+      info = model_info(b, chain, path)
+      s += callbacks_source(b, chain, bodies, path, info)
+      s += validations_source(b, chain, path, info)
+      s += send_source(b, chain, cols, info)
       s += Associations.class_source(b, bodies, tables, path)
       s += Features.class_source(b, chain, cols, path)
       s
@@ -223,66 +228,41 @@ module ActiveRecord
     # Ruby's _assign_attribute: public_send("#{k}=", v) over the writers the class has
     def assign_source(b, chain, cols, path)
       k = body_name(b)
-      s = "def #{k}.__assign(r, name, value)\n  case name\n"
+      s = "def #{k}._assign_attribute(r, name, value)\n  case name\n"
       Array.each(cols) { |c| s += "  in #{Kernel.inspect(c[0])} then r.#{k}.#{c[0]} = value\n" }
       Array.each(Associations.writers(b, chain)) { |w| s += "  in #{Kernel.inspect(w)} then r.#{k}.#{w} = value\n" }
       Array.each(Features.writers(b, chain)) { |w| s += "  in #{Kernel.inspect(w)} then r.#{k}.#{w} = value\n" }
-      s += "  else raise ActiveRecord::UnknownAttributeError.new(\"unknown attribute '\#{name}' for #{k}.\", #{Kernel.inspect(k)}, name)\n  end\nend\n"
+      s += "  else attribute_writer_missing(r, name, value)\n  end\nend\n"
       s
     end
 
-    # validates :a, :b, presence: true, length: { minimum: 3 }, allow_nil: true, on: :create, if: :x?
-    def VALIDATOR_CLASSES
-      Hash.of("presence" => "ActiveModel::Validations::PresenceValidator", "absence" => "ActiveModel::Validations::AbsenceValidator",
-              "length" => "ActiveModel::Validations::LengthValidator", "numericality" => "ActiveModel::Validations::NumericalityValidator",
-              "inclusion" => "ActiveModel::Validations::InclusionValidator", "exclusion" => "ActiveModel::Validations::ExclusionValidator",
-              "uniqueness" => "ActiveRecord::Validations::UniquenessValidator", "format" => "ActiveModel::Validations::FormatValidator",
-              "confirmation" => "ActiveModel::Validations::ConfirmationValidator", "acceptance" => "ActiveModel::Validations::AcceptanceValidator",
-              "comparison" => "ActiveModel::Validations::ComparisonValidator")
+    # Ruby's send(name) (ActiveModel's read_attribute_for_validation, the errors' %{value}): the columns, the
+    # singular associations and the other names the validations read; others raise NoMethodError (__send_missing)
+    def send_source(b, chain, cols, info)
+      k = body_name(b)
+      names = Array.map(cols) { |c| c[0] } + Associations.writers(b, chain).Array.reject { |w| String.end_with?(w, "_attributes") }
+      names = Array.uniq(names + ActiveModel::Generate::Info.readers(info))
+      s = "def #{k}.__class_name = #{Kernel.inspect(k)}\n"
+      s += "def #{k}.attribute_aliases = once { Hash.new }\n"
+      s += "def #{k}.__id(r) = #{k}.id(r)\n"
+      s += "def #{k}.__attributes_for_serialization(r) = #{k}.attributes(r)\n"
+      s += "def #{k}.__raw_value_for_validation(r, attr_name) = #{k}.attribute_raw_value_for_validation(r, attr_name)\n"
+      s += "def #{k}.__send(r, __name)\n  case __name\n"
+      Array.each(names) { |n| s += "  in :#{n} then #{k}.#{n}(r)\n" }
+      s += "  else __send_missing(r, __name)\n  end\nend\n"
+      s
     end
 
-    def COMMON_OPTIONS = String["allow_nil", "allow_blank", "message"]
+    # What ActiveModel's validations generator collects for a class (ActiveModel::Generate::Info), with
+    # ActiveRecord's validators found first (Ruby's const_get from an ActiveRecord model: UniquenessValidator)
+    def model_info(b, chain, path)
+      k = body_name(b)
+      ActiveModel::Generate::Info.new(k, nil, b, path, chain, String[], Any[], String[], String[],
+        ActiveModel::Generate::AttributeDecl[], Any[], Hash.new, Any[], Any[], Any[], String[], Any[], Any[], k,
+        Any[["ActiveRecord::Validations", String["uniqueness"]]])
+    end
+
     def CONDITION_OPTIONS = String["if", "unless", "on"]
-
-    # The validators of a body's lines: [line, validator class, attribute names, options source, condition source]
-    def validators(chain, path)
-      out = Any[]
-      Array.each(chain) do |b|
-        Array.each(decls(b)) do |d|
-          call = decl_call(d)
-          n = decl_line(d)
-          pos, opts = split_options(decl_args(d))
-          attrs = Array.map(pos) { |a| ":#{string_of(a)}" }
-          common = Array.select(opts) { |o| Array.include?(Generate.COMMON_OPTIONS, Kernel.to_s(o[0])) }
-          conds = Array.select(opts) { |o| Array.include?(Generate.CONDITION_OPTIONS, Kernel.to_s(o[0])) }
-          if call == "validates"
-            Array.each(opts) do |o|
-              key = Kernel.to_s(o[0])
-              next if Array.include?(Generate.COMMON_OPTIONS, key) || Array.include?(Generate.CONDITION_OPTIONS, key)
-              klass = Generate.VALIDATOR_CLASSES[key]
-              raise ArgumentError, "#{path}:#{n}: Unknown validator: '#{ActiveSupport::Inflector.camelize(key)}Validator'" if klass == nil
-              v = String.strip(Kernel.to_s(o[1]))
-              next if v == "false"
-              own = if v == "true" then String[]
-                    elsif String.start_with?(v, "{") then Array.map(hash_pairs(String.slice(v, 1...-1) || "", n, path)) { |p| p }
-                    elsif key == "inclusion" || key == "exclusion" then String["in: #{value(v, n, path)}"]
-                    elsif key == "format" then String["with: #{value(v, n, path)}"]
-                    else String[]
-                    end
-              all = own + Array.map(common) { |c| "#{c[0]}: #{value(Kernel.to_s(c[1]), n, path)}" }
-              Array.push(out, [n, klass, attrs, all, conds])
-            end
-          elsif String.start_with?(call, "validates_") && String.end_with?(call, "_of")
-            key = String.delete_suffix(String.delete_prefix(call, "validates_"), "_of")
-            klass = Generate.VALIDATOR_CLASSES[key]
-            raise ArgumentError, "#{path}:#{n}: Unknown validator: '#{call}'" if klass == nil
-            all = Array.map(Array.reject(opts) { |o| Array.include?(Generate.CONDITION_OPTIONS, Kernel.to_s(o[0])) }) { |c| "#{c[0]}: #{value(Kernel.to_s(c[1]), n, path)}" }
-            Array.push(out, [n, klass, attrs, all, conds])
-          end
-        end
-      end
-      out
-    end
 
     # The condition options of a callback, as Ruby text, with `on:` turned into a generated predicate
     def condition_args(conds, kind)
@@ -311,28 +291,21 @@ module ActiveRecord
       Array.uniq(ctxs)
     end
 
-    def validations_source(b, chain, path)
+    # ActiveModel's validators (Validations::Generate.source) and the before/after_validation and commit `on:` predicates
+    def validations_source(b, chain, path, info)
       k = body_name(b)
-      s = ""
-      Array.each_with_index(validators(chain, path)) do |v, i|
-        n, klass, attrs, opts, _ = v
-        s += "# sake-origin: #{path}:#{n}\n"
-        h = Array.empty?(opts) ? "Hash.new" : "Hash.of(#{Array.join(opts, ", ")})"
-        s += "def #{k}.__validator_#{i}_object = once { #{klass}.new(Any[#{Array.join(attrs, ", ")}], #{h}) }\n"
-        s += "def #{k}.__validator_#{i}(r) = #{k}.run_validator(r, #{k}.__validator_#{i}_object)\n"
-      end
+      s = ActiveModel::Validations::Generate.source(info)
       Array.each(on_contexts(chain)) do |ctx|
-        s += "def #{k}.__validation_on_#{ctx}?(r) = #{k}.validation_context(r) == :#{ctx}\n"
+        s += "def #{k}.__validation_on_#{ctx}?(r) = #{k}.validation_context_in?(r, Symbol[:#{ctx}])\n"
         s += "def #{k}.__commit_on_#{ctx}?(r) = #{k}.transaction_include_any_action?(r, :#{ctx})\n"
       end
-      s += "# sake-origin: none\n" if s != ""
       s
     end
 
     def decl(n, call, args) = ActiveSupport::Generate::Declaration.new(n, call, args)
 
     # Ruby's define_model_callbacks and the model's callback lines as ActiveSupport::Callbacks declarations
-    def callbacks_body(b, chain, path)
+    def callbacks_body(b, chain, path, info)
       k = body_name(b)
       line = ActiveSupport::Generate::ClassBody.line(b)
       ds = ActiveSupport::Generate::Declaration[]
@@ -340,7 +313,6 @@ module ActiveRecord
       Array.push(ds, decl(line, "define_callbacks", String[":validation", "skip_after_callbacks_if_terminated: true", "scope: [:kind, :name]"]))
       Array.push(ds, decl(line, "define_callbacks", String[":validate", "scope: :name"]))
       Array.push(ds, decl(line, "define_callbacks", String[":save", ":create", ":update", ":destroy", "skip_after_callbacks_if_terminated: true", "scope: [:kind, :name]"]))
-      vs = validators(chain, path)
       Array.each(chain) do |cb|
         Array.each(decls(cb)) do |d|
           call = decl_call(d)
@@ -349,12 +321,8 @@ module ActiveRecord
           conds = Array.select(opts) { |o| Array.include?(Generate.CONDITION_OPTIONS, Kernel.to_s(o[0])) }
           Array.each(Features.callback_declarations(d, path)) { |x| Array.push(ds, x) }
           Array.each(Associations.callback_declarations(k, d, path)) { |x| Array.push(ds, x) }
-          if call == "validate"
-            Array.each(pos) { |m| Array.push(ds, decl(n, "set_callback", String[":validate", m] + condition_args(conds, "validation"))) }
-          elsif call == "validates" || (String.start_with?(call, "validates_") && String.end_with?(call, "_of"))
-            Array.each_with_index(vs) do |v, i|
-              Array.push(ds, decl(n, "set_callback", String[":validate", ":__validator_#{i}"] + condition_args(v[4], "validation"))) if v[0] == n
-            end
+          if Array.include?(ActiveModel::Validations::Generate.CALLS, call) || call == "validates_uniqueness_of"
+            ActiveModel::Validations::Generate.expand(info, ActiveSupport::Generate::Declaration[d], ds)
           elsif (m = String.match(call, /\A(before|after|around)_(validation|save|create|update|destroy|initialize|find|touch)\z/))
             # Ruby's ActiveModel::Callbacks prepends after_* callbacks (_define_after_model_callback: prepend: true)
             extra = m[1] == "after" && m[2] != "initialize" && m[2] != "find" && m[2] != "touch" ? String["prepend: true"] : String[]
@@ -373,9 +341,9 @@ module ActiveRecord
       ActiveSupport::Generate::ClassBody.new(k, nil, line, ds)
     end
 
-    def callbacks_source(b, chain, bodies, path)
+    def callbacks_source(b, chain, bodies, path, info)
       k = body_name(b)
-      body = callbacks_body(b, chain, path)
+      body = callbacks_body(b, chain, path, info)
       s = ActiveSupport::Callbacks::Generate.class_source(body, ActiveSupport::Generate::ClassBody[body], path)
       # a model without callbacks: the dispatcher's case needs one branch
       s = String.gsub(s, "  case filter\n# sake-origin: none\n", "  case filter\n  in :__no_callback then nil\n# sake-origin: none\n")

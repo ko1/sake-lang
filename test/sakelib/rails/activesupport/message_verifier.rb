@@ -57,6 +57,7 @@ k1 = kg.generate_key("signed cookie", 32)
 puts(k1.unpack1("H*"))
 kg256 = ActiveSupport::KeyGenerator.new("secret_key_base", iterations: 2, hash_digest_class: OpenSSL::Digest::SHA256)
 puts(kg256.generate_key("authenticated encrypted cookie", 32).unpack1("H*"))
+puts(ActiveSupport::KeyGenerator.new("secret_key_base").generate_key("signed cookie").unpack1("H*"))   # the default 2**16 iterations, 64 bytes
 caching = ActiveSupport::CachingKeyGenerator.new(kg)
 p(caching.generate_key("signed cookie", 32) == k1)
 v3 = ActiveSupport::MessageVerifier.new(k1, serializer: JSON)

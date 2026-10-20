@@ -139,8 +139,8 @@ test compares it with a Ruby subscriber.
 
 ## Built-ins Sake lacks (requests)
 
-- `SQLite3::Database.total_changes` (Ruby's perform_query compares it before and after); asked with
-  `SELECT total_changes()` instead, one more statement per query.
+- `SQLite3::Database.total_changes` (Ruby's perform_query compares it before and after): landed; since the third
+  wave perform_query calls it as Ruby does (the first wave asked `SELECT total_changes()`, one more statement per query).
 - The declared column types of a result (`stmt.types`), so that `Result#column_types`/`cast_values` can use the
   type map as Rails does; without it a result's columns use Type.default_value.
 - Prepared statements (`prepare`/`bind`/`step`) for the statement pool (not needed for correctness).

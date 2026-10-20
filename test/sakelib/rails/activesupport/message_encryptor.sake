@@ -1,0 +1,56 @@
+# ActiveSupport::MessageEncryptor (AES-256-GCM and AES-256-CBC with its verifier, purpose, expiry, url_safe) on a key from KeyGenerator.
+
+require "rails/activesupport/active_support/message_encryptor"
+require "rails/activesupport/active_support/key_generator"
+require "json"
+
+ME = ActiveSupport::MessageEncryptor   # Ruby: serializer: JSON, and the metadata in it (Rails 7.1's default)
+p([ME.key_len, ME.key_len("aes-256-gcm"), ME.key_len("aes-128-gcm"), ME.default_cipher])
+key = "k" * 32
+gcm = ME.new(key, cipher: "aes-256-gcm")
+cbc = ME.new(key, cipher: "aes-256-cbc")
+puts("messages made by Ruby's gem (the IV is random, so these are fixed here):")
+p(ME.decrypt_and_verify(gcm, "jy4M+IWt8jai1l/G7SWEZQcCsikJ5g7epH+Fq1A5ZrRTU8cbeAe9FYbJ6Oz5aqQ=--i+vQZDjceBOzq1F1--xp9zTiy32HCorpjnirgDBw==", purpose: :login))
+p(ME.decrypt_and_verify(gcm, "jy4M+IWt8jai1l/G7SWEZQcCsikJ5g7epH+Fq1A5ZrRTU8cbeAe9FYbJ6Oz5aqQ=--i+vQZDjceBOzq1F1--xp9zTiy32HCorpjnirgDBw==", purpose: :other))
+p(ME.decrypt_and_verify(cbc, "U3lHZGp4NW1tWHlMWm95RWJZTFRRUT09LS0zMFNZMDNiMjg5UUNUb3FUdVpydG9RPT0=--b620e2b50f40af56c27de11782a3bac5a1a00368"))
+url = ME.new(key, cipher: "aes-256-gcm", url_safe: true)
+p(ME.decrypt_and_verify(url, "EqiKdThqAbZsHg--g0M6FvBsVIejHibT--SiH13b-WcA6RTpQjJwRjLA"))
+puts("round trips:")
+m = ME.encrypt_and_sign(gcm, Hash.of("user_id" => 7, "role" => "admin"))
+p([Array.drop(Array.map(String.split(m, "--")) { |s| String.size(s) }, 1), ME.decrypt_and_verify(gcm, m)])
+m2 = ME.encrypt_and_sign(cbc, "hello", purpose: :share)
+p([String.count(m2, "-"), ME.decrypt_and_verify(cbc, m2, purpose: :share), ME.decrypt_and_verify(cbc, m2)])
+m3 = ME.encrypt_and_sign(gcm, Any[1, 2], expires_at: Time.utc(2000, 1, 1))
+p(ME.decrypt_and_verify(gcm, m3))
+m4 = ME.encrypt_and_sign(gcm, 42, expires_in: 3600)
+p(ME.decrypt_and_verify(gcm, m4))
+m5 = ME.encrypt_and_sign(url, "a/b?c>>>")
+p([String.include?(m5, "+") || String.include?(m5, "/") || String.include?(m5, "="), ME.decrypt_and_verify(url, m5)])
+puts("errors:")
+def try(label)
+  print(label, ": ")
+  p(yield)
+rescue ActiveSupport::MessageEncryptor::InvalidMessage => e
+  puts("InvalidMessage: #{Exception.message(e)}")
+end
+data, iv, tag = String.split(m, "--")
+data = data || ""
+tag = tag || ""
+try("tampered data") { ME.decrypt_and_verify(gcm, "#{String.reverse(data)}--#{iv}--#{tag}") }
+try("tampered tag") { ME.decrypt_and_verify(gcm, "#{data}--#{iv}--#{String.sub(tag, /\A./) { |c| c == "A" ? "B" : "A" }}") }
+try("truncated tag") { ME.decrypt_and_verify(gcm, "#{data}--#{iv}--#{String.slice(tag, 0, 20)}") }
+try("missing separator") { ME.decrypt_and_verify(gcm, "#{data}#{iv}#{tag}") }
+try("wrong key") { ME.new("j" * 32, cipher: "aes-256-gcm").ME.decrypt_and_verify(m) }
+try("cbc, wrong signature") { ME.decrypt_and_verify(cbc, String.sub(m2, /.\z/) { |c| c == "0" ? "1" : "0" }) }
+try("cbc, another sign secret") { ME.new(key, "other", cipher: "aes-256-cbc").ME.decrypt_and_verify(m2) }
+begin
+  ME.new("short", cipher: "aes-256-gcm").ME.encrypt_and_sign("x")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+puts("with KeyGenerator (Rails' 1000 iterations, the encrypted cookie salt):")
+kg = ActiveSupport::KeyGenerator.new("secret_key_base", iterations: 1000)
+secret = ActiveSupport::KeyGenerator.generate_key(kg, "authenticated encrypted cookie", ME.key_len("aes-256-gcm"))
+puts(String.unpack1(secret, "H*"))
+cookie = ME.new(secret, cipher: "aes-256-gcm")
+p(ME.decrypt_and_verify(cookie, ME.encrypt_and_sign(cookie, Hash.of("session_id" => "abc"), purpose: "cookie.session"), purpose: "cookie.session"))

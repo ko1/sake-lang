@@ -2,7 +2,7 @@
 
 Callbacks, class_attribute, rescuable, CurrentAttributes, notifications (fanout, instrumenter, Event), Subscriber,
 LogSubscriber, ActiveSupport::Logger (with LoggerSilence and LoggerThreadSafeLevel), TaggedLogging,
-BroadcastLogger, MessageVerifier (with Messages::Codec/Metadata), KeyGenerator, SecurityUtils, ParameterFilter,
+BroadcastLogger, MessageVerifier and MessageEncryptor (with Messages::Codec/Metadata), KeyGenerator, SecurityUtils, ParameterFilter,
 and the generators that turn class bodies into Sake. Under `sakelib/rails/activesupport/active_support/`;
 tests in `test/sakelib/rails/activesupport/` (`ruby -Ilib test/test_sakelib.rb -n /rails_activesupport_/`).
 
@@ -147,11 +147,12 @@ the functions directly (`ActiveSupport::Callbacks::Generate.class_source(body, b
 | tagged_logging.rb | tagged_logging.sake | 104 | 55 |
 | broadcast_logger.rb | broadcast_logger.sake | 108 | 68 |
 | security_utils.rb | security_utils.sake | 22 | 13 |
-| key_generator.rb | key_generator.sake (PBKDF2 written over HMAC) | 38 | 41 |
+| key_generator.rb | key_generator.sake (on the OpenSSL::PKCS5 built-in) | 38 | 27 |
 | messages/codec.rb, messages/metadata.rb | messages/codec.sake | 206 | 73 |
 | message_verifier.rb | message_verifier.sake | 93 | 77 |
+| message_encryptor.rb | message_encryptor.sake (third wave, on the OpenSSL::Cipher built-in) | 144 | 106 |
 | parameter_filter.rb | parameter_filter.sake | 82 | 55 |
-| **total** | | **2,373** | **1,390** |
+| **total** | | **2,517** | **1,482** |
 | (Sake only) Kernel#throw/catch | throw.sake | | 11 |
 | (Sake only) the class-body side of callbacks, class_attribute, rescuable, current_attributes | generate/{class_body,callbacks,class_attribute,rescuable,current_attributes,active_support}.sake | | 385 |
 
@@ -160,7 +161,7 @@ not a compression ratio.
 
 Tests (each `.sake` and `.rb` print the same; `generate.sake` prints the generated source and has no twin):
 callbacks (+ callbacks_decl.rb), class_attribute (+ _decl.rb), rescuable (+ _decl.rb), current_attributes
-(+ _decl.rb), notifications, log_subscriber, logger, message_verifier (with KeyGenerator), parameter_filter,
+(+ _decl.rb), notifications, log_subscriber, logger, message_verifier (with KeyGenerator), message_encryptor (third wave), parameter_filter,
 generate. 1,138 lines.
 
 Check time (`/usr/bin/time -f "%es %MKB" bin/sake -c --strict`, load average ~4 on the machine): callbacks.sake
@@ -180,9 +181,7 @@ notifications 1.28 s, the others ~1.1 s.
   Rails 8.2"), so not ported.
 - **Per-thread state** (IsolatedExecutionState): the notifier's handle stack, the logger's local level and tag
   stack, CurrentAttributes' instance are one per program. Requests are served one at a time in the 10-12 server.
-- **MessageEncryptor** (AES-256-GCM / AES-256-CBC): no cipher in sakelib (openssl is HMAC only) and AES in Sake would
-  be the slow substitute the brief warns about. Asked for as a built-in (below); the encrypted cookie jar needs it.
-- **Serializers**: MessageVerifier uses `::JSON` only, with the metadata envelope inside the message (Rails 7.1's
+- **Serializers**: MessageVerifier and MessageEncryptor use `::JSON` only, with the metadata envelope inside the message (Rails 7.1's
   `use_message_serializer_for_metadata = true`); no Marshal, MessagePack, `:json_allow_marshal` fallbacks, no
   rotation (`Messages::Rotator`, `rotate`).
 - **Cache stores** (Store, Entry, MemoryStore, FileStore, NullStore, LocalCache), **ErrorReporter**,
@@ -196,15 +195,20 @@ notifications 1.28 s, the others ~1.1 s.
 
 ## Built-ins Sake lacks (requests)
 
-- **A cipher**: `OpenSSL::Cipher` AES-256-GCM (and CBC) for MessageEncryptor and the encrypted cookie jar.
-- **PBKDF2**: `OpenSSL::PKCS5.pbkdf2_hmac` / `OpenSSL::KDF.pbkdf2_hmac`. Written in Sake over sakelib's HMAC it is
-  correct (the keys match Ruby's) but one HMAC-SHA1 is ~20 ms, so Rails.application.key_generator's 1000
-  iterations take ~20 s per key and ActiveSupport's default 2**16 about 20 minutes. The tests use 2-3 iterations.
+All the requests below except throw/catch's values landed in the built-ins wave; the third wave (part 10) moved
+the port onto them (see "Third wave" at the end).
+
+- **A cipher**: `OpenSSL::Cipher` AES-256-GCM (and CBC) for MessageEncryptor and the encrypted cookie jar. (Landed.)
+- **PBKDF2**: `OpenSSL::PKCS5.pbkdf2_hmac` / `OpenSSL::KDF.pbkdf2_hmac`. Written in Sake over sakelib's HMAC it was
+  correct (the keys match Ruby's) but one HMAC-SHA1 was ~20 ms, so Rails.application.key_generator's 1000
+  iterations took ~20 s per key and ActiveSupport's default 2**16 about 20 minutes. (Landed; the default now takes
+  well under a second, and the test derives one key with it.)
 - **throw/catch**: written as `throw.sake` (an exception class), without a thrown value. Callbacks need only
   `throw :abort`; the message codecs throw values, which became three exception classes.
 - **The class name of a value** (`e.class.name`): Notifications' `payload[:exception]`, InstrumentationSubscriberError's
-  message and the log subscriber's error line need it; `Notifications.class_name(e)` parses `Kernel.inspect(e)`.
-- **`Regexp[]`** (a typed Array of Regexps): ParameterFilter keeps its patterns in `Any[]`.
+  message and the log subscriber's error line need it; `Notifications.class_name(e)` parsed `Kernel.inspect(e)`.
+  (Landed as `Kernel.class_name`.)
+- **`Regexp[]`** (a typed Array of Regexps): ParameterFilter kept its patterns in `Any[]`. (Landed.)
 
 ## Bugs and surprises (repros in experiments/2026-10-20-rails-scale/bugs/)
 
@@ -276,3 +280,35 @@ typo) is `callbacks_decl.rb:8: error: undefined function normalise / hint: did y
 runs (checked). What read badly: instance-first calls on the class-level things Rails makes
 look global (`Current.user(Current.instance)` for `Current.user`; `ActiveSupport::Callbacks::ClassMethods.skip_callback(Post.__class_callbacks, ...)`
 for `Post.skip_callback(...)`), and names doubled to avoid one name per function (`set_level`/`effective_level`).
+
+## Third wave (part 10): the built-ins in place of the workarounds
+
+| workaround (first wave) | now |
+|---|---|
+| PBKDF2 over OpenSSL::HMAC in key_generator.sake (`KeyGenerator.pbkdf2_hmac`, 13 lines) | `OpenSSL::PKCS5.pbkdf2_hmac`, Ruby's call. message_verifier's test adds a key with the default 2**16 iterations: the whole test runs in 1.3 s |
+| `Notifications.class_name(e)` matching `/\A#<((?:\w\|::)+)/` on `Kernel.inspect(e)` | `Kernel.class_name(e)` (the function stays, a one-liner, since fanout/instrumenter/log_subscriber call it) |
+| `class ActiveSupport::NoMethodError < StandardError` (string_inquirer.sake); `DelegationError < StandardError` | the built-in `NoMethodError`; `DelegationError < NoMethodError` as Ruby's. The tests rescue `NoMethodError` (delegation's also prints the class of a DelegationError caught as one) |
+| ParameterFilter's `Any[]` of compiled patterns | `Regexp[]` (the filters given stay `Any[]`: Strings, Symbols and Regexps) |
+| no MessageEncryptor | `message_encryptor.sake`: Rails' encrypt/decrypt/extract_parts/length_after_encode on OpenSSL::Cipher, AES-256-GCM (iv--tag) and AES-256-CBC signed by a MessageVerifier, purpose/expiry metadata, url_safe. The keyword API is the one ActionDispatch's encrypted jar was written against (`encrypt_and_sign(e, v, purpose:, expires_at:)`). Ruby's `catch_and_raise :invalid_message_format, as: InvalidMessage` / `catch_and_ignore :invalid_message_content` are rescues of codec.sake's exceptions |
+
+The message_encryptor test decrypts three messages the real gem made (GCM with a purpose, CBC, url_safe GCM: the
+IV is random, so they are fixed in both files), round-trips with purpose/expiry, and prints Rails' messages for a
+tampered body (`invalid base64`), a tampered tag and a wrong key (`AEAD authentication tag verification failed`),
+a truncated tag and a missing separator, a CBC signature mismatch (`mismatched digest`), and a short key
+(`key must be 32 bytes`); then a key from KeyGenerator with Rails' 1000 iterations and the encrypted cookie salt.
+It printed what the gem prints on the first run.
+
+Check times (`bin/sake -c --strict`, load ~1.5), before → after: message_verifier 1.09 → 1.13 s (one more key),
+notifications 1.08 → 1.07 s, log_subscriber 1.15 → 1.11 s, parameter_filter 0.93 → 0.92 s, delegation 0.93 → 0.87 s,
+string_inquirer 0.79 → 0.72 s; message_encryptor (new) 1.19 s, 54 MB.
+
+Friction and a checker bug:
+- MessageEncryptor's `initialize` called `new_cipher(e)` (Ruby's `@aead_mode = new_cipher.authenticated?`), and
+  `decrypt` calls it again → `warning: rescue ActiveSupport::Messages::InvalidMessageContent: the begin body never
+  raises ... [unused-rescue]` on decrypt_and_verify, although the run rescued it. `bin/sake --types` listed
+  everything after decrypt's `new_cipher` call as dead: when a function that `initialize` calls is called again
+  later, the checker treats the code after the later call as unreachable, and does not check it (a `1 + "x"`
+  there passes `-c --strict`). Repro `bugs/activesupport_call_after_initialize_callee_unchecked.sake`. Worked around
+  by writing `OpenSSL::Cipher.new(@cipher)` in initialize. Other ports may have code hidden the same way.
+- Ruby's test needed `require "active_support/core_ext/time"` for `expires_in:` (Metadata calls `Time#advance`),
+  which a plain `require "active_support"` does not load; Sake's codec adds seconds to `Time.now`.

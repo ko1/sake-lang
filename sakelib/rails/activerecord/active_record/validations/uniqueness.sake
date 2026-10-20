@@ -1,5 +1,6 @@
 # Port of activerecord-8.1.3/lib/active_record/validations/uniqueness.rb (partial: no case_sensitive: false
-# (lower()), no conditions:, no composite scope through associations)
+# (lower()), no conditions: (a lambda), no composite scope through associations, no validation_needed? (the
+# unique-index shortcut: the query always runs), no map_enum_attribute)
 #
 # Ruby's validate_each builds `record.class.unscoped.where(attribute => value)` (minus the record itself) and asks
 # exists?. The record's class is not a value here, so the query is the mixin function
@@ -7,19 +8,26 @@
 
 module ActiveRecord
   module Validations
-    class UniquenessValidator
-      attr_reader attributes, options
-      include ActiveModel::Validations::EachValidator
+    class UniquenessValidator < ActiveModel::EachValidator
+      def initialize(v)
+        scope = (@options || Hash.new)[:scope]
+        unless (scope in nil | Symbol | String) || ((scope in Array) && Array.all?(scope) { |s| s in Symbol | String })
+          raise ArgumentError, "#{Kernel.inspect(scope)} is not supported format for :scope option. Pass a symbol or an array of symbols instead: `scope: :user_id`"
+        end
+        super_initialize(v)
+      end
 
       def validate_each(v, record, attribute, value)
-        scope = options(v)[:scope]
+        scope = @options[:scope]
         scopes = case scope
                  in Symbol then Symbol[scope]
                  in Array then Array.map(scope) { |s| String.to_sym(Kernel.to_s(s)) }
                  else Symbol[]
                  end
         if ActiveRecord::Validations.uniqueness_taken?(record, attribute, value, scopes)
-          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :taken, error_options(v))
+          error_options = Hash.except(@options, :case_sensitive, :scope, :conditions)
+          error_options[:value] = value
+          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :taken, error_options)
         end
       end
     end
