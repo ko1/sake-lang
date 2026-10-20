@@ -161,7 +161,7 @@ module Sake
         else a
         end
       end
-      desc = desc.uniq.sort_by!(&:inspect) # many sites of one shape are one shape
+      desc = desc.uniq.sort_by!(&:hash) # many sites of one shape are one shape (any order fixed within a run will do)
       (@shape_descs ||= {})[desc] ||= desc.freeze
     end
 

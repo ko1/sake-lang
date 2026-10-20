@@ -1286,7 +1286,7 @@ module Sake
       end
       # `Integer.+(a, b)`: the operator rows whose left operand is the type.
       return binop(node, name, args[0], args[1]) if @registry.binary_ops.key?(name) && fn.params.size == 2 && fn.params[1] == "Any"
-      struct_hooks(args, name)
+      struct_hooks(args, name) unless NO_COMPARE.include?(fn.full_name) || (QUERY_BLOCK.include?(fn.full_name) && args.size == 1)
       builtin_result(fn.full_name, args, blk, node)
     end
 
@@ -1307,6 +1307,10 @@ module Sake
       else
         groups = (memo[key] = [*compared_groups_of(tys, meets), GEN[0]])[1]
       end
+      # The same comparisons in the same instantiation in one pass run the same calls: once is enough.
+      return if (@hooks_done ||= {}).key?(done = [@cur_inst.__id__, groups.__id__, *key]) && @hooks_done_gen == @passes
+      (@hooks_done = {}; @hooks_done_gen = @passes) unless @hooks_done_gen == @passes
+      @hooks_done[done] = true
       groups.each do |g, other|
         g.each do |x|
           %w[<=> ==].each { |op| (fn = @program.functions.dig(struct_name(x), op)) and call_user(fn, [one(x), other], nil) }
@@ -1343,6 +1347,22 @@ module Sake
     end
 
     # Built-ins that compare one argument with another's elements or keys (`Array.include?(xs, x)`).
+    # Built-ins whose Ruby methods never call a value's == or <=> (they walk, add, remove by position, or count),
+    # so struct_hooks has nothing to analyze for them; it took half of the check of ActiveRecord's associations test.
+    NO_COMPARE = %w[Array.each Array.each_with_index Array.each_with_object Array.map Array.flat_map Array.filter_map
+                    Array.select Array.filter Array.reject Array.empty? Array.size Array.length Array.push Array.<<
+                    Array.append Array.pop Array.shift Array.unshift Array.prepend Array.first Array.last Array.dup
+                    Array.reverse Array.join Array.concat Array.each_slice Array.each_cons Array.compact Array.flatten
+                    Array.take Array.drop Array.reverse_each Array.clear Array.sum Array.inject Array.reduce
+                    Hash.each Hash.each_pair Hash.each_key Hash.each_value Hash.keys Hash.values Hash.empty? Hash.size
+                    Hash.length Hash.dup Hash.map Hash.select Hash.filter Hash.reject Hash.filter_map Hash.flat_map
+                    Hash.transform_values Hash.each_with_object Hash.to_a Hash.clear Hash.compact
+                    Set.each Set.empty? Set.size Set.length Set.to_a Set.dup Set.map Set.select Set.reject
+                    Kernel.p Kernel.puts Kernel.print Kernel.to_s Kernel.inspect].to_set.freeze
+    # any?/all?/none?/one? compare only with a pattern argument (Ruby's ===); with a block they do not.
+    QUERY_BLOCK = %w[Array.any? Array.all? Array.none? Array.one? Hash.any? Hash.all? Hash.none?
+                     Set.any? Set.all? Set.none?].to_set.freeze
+
     MEETS_ARGUMENTS = %w[include? member? index find_index rindex count delete delete? key? has_key? value? has_value? key
                          fetch fetch_values values_at dig [] []= store add add? union difference intersection intersect?
                          subset? superset? disjoint? - + & | ==].freeze
