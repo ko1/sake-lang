@@ -1,0 +1,58 @@
+require "rails/actionpack/action_controller/base"
+
+# A bare ActionController::Metal subclass, and controllers called as Rack apps through `action(name)`, without
+# routes: response_body=, status=, content_type=, headers, the ActionNotFound message, and a controller's names
+# (controller_path, controller_name, action_methods).
+class HelloController < ActionController::Metal
+  def index(c) = set_response_body(c, "Hello World!")
+  def teapot(c)
+    set_status(c, 418)
+    set_content_type(c, "text/plain")
+    ActionDispatch::Response.set_header(response(c), "X-Brew", "earl grey")
+    set_response_body(c, "short and stout")
+  end
+end
+
+module Admin
+  class PostsController < ActionController::Base
+    def index(c) = render c, plain: "admin posts for #{ActionDispatch::Request.params(request(c))["page"]}"
+    def show(c) = render c, plain: "admin post"
+
+    # private
+    def helper(c) = "not an action"
+  end
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_metal.sake"
+
+def show_response(name, triple)
+  status, headers, body = triple
+  out = ""
+  Array.each(body) { |s| out += s }
+  keys = Array.select(Hash.keys(headers).Array.sort) { |k| k != "content-length" }
+  puts("#{name} -> #{status}")
+  Array.each(keys) { |k| puts("  #{k}: #{headers[k]}") }
+  puts("  body: #{Kernel.inspect(out)}")
+end
+
+def env_for(path) = Rack::MockRequest.env_for("http://www.example.com#{path}")
+
+show_response("HelloController#index", Rack::App.call(HelloController.action(:index), env_for("/")))
+show_response("HelloController#teapot", Rack::App.call(HelloController.action("teapot"), env_for("/")))
+show_response("Admin::PostsController#index", Rack::App.call(Admin::PostsController.action(:index), env_for("/admin/posts?page=2")))
+begin
+  Rack::App.call(Admin::PostsController.action(:helper), env_for("/"))
+rescue AbstractController::ActionNotFound => e
+  puts("AbstractController::ActionNotFound: #{Exception.message(e)}")
+end
+begin
+  Rack::App.call(HelloController.action(:nope), env_for("/"))
+rescue AbstractController::ActionNotFound => e
+  puts("AbstractController::ActionNotFound: #{Exception.message(e)}")
+end
+
+c = Admin::PostsController.new
+p(Admin::PostsController.controller_path(c), Admin::PostsController.controller_name(c))
+p(Set.to_a(Admin::PostsController.action_methods(c)).Array.sort)
+# (Ruby also lists the included modules' public methods as HelloController's actions; Sake lists the class's own)
+p(HelloController.controller_path(HelloController.new), Set.to_a(HelloController.action_methods(HelloController.new)).Array.sort)
+p(Admin::PostsController.available_action?(c, "show"), Admin::PostsController.available_action?(c, "helper"), Admin::PostsController.available_action?(c, "../show"))

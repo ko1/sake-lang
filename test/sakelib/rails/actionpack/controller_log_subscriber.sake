@@ -1,0 +1,66 @@
+require "rails/actionpack/action_controller/base"
+require "rails/actionpack/action_controller/log_subscriber"
+
+# ActionController's log lines (Processing by, Parameters, Completed, Redirected to, Filter chain halted,
+# rescue_from handled, Sent data, Unpermitted parameters), written to a log file. Durations and the backtrace
+# frame differ between runs, so they are replaced before printing.
+class Gone < StandardError
+end
+
+class LogsController < ActionController::Base
+  def index(c) = render c, plain: "page #{params(c)[:page]}"
+  def create(c) = redirect_to c, "/logs"
+  def secret(c) = render c, plain: "secret"
+  def broken(c) = raise Gone, "it is gone"
+  def download(c) = send_data c, "data", filename: "logs.txt"
+  def filter(c)
+    p = ActionController::Parameters.permit(ActionController::Parameters.require(params(c), :log), :title)
+    render c, plain: "title=#{ActionController::Parameters.[](p, :title)}"
+  end
+
+  # private
+  def authenticate(c) = head c, :forbidden
+  def gone(c, e) = head c, :gone
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_log_subscriber_decl.rb", "controller_log_subscriber.sake"
+
+class ActionDispatch::Routing::Mapper
+  def logs_routes(map)
+    resources map, :logs, only: Any[:index, :create]
+    Array.each(String["secret", "broken", "download", "filter"]) { |a| get map, "logs/#{a}", to: "logs##{a}" }
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.logs_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+path = File.join(Dir.tmpdir, "sake_controller_log_subscriber.log")
+File.delete(path) if File.exist?(path)
+log = ActiveSupport::Logger.new(path)
+ActiveSupport::Logger.set_level(log, :debug)
+ActiveSupport::LogSubscriber.set_logger(log)
+ActiveSupport::LogSubscriber.set_colorize_logging(false)
+AbstractController::Logger.set_logger(log)
+ActionController::LogSubscriber.attach
+ActionController::Parameters.set_action_on_unpermitted_parameters(:log)
+
+def send_request(set, method, path)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}", method: method)
+  status, _, _ = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+  puts("#{method} #{path} -> #{status}")
+end
+
+send_request(set, "GET", "/logs?page=2")
+send_request(set, "POST", "/logs")
+send_request(set, "GET", "/logs/secret.json")
+send_request(set, "GET", "/logs/broken")
+send_request(set, "GET", "/logs/download")
+send_request(set, "GET", "/logs/filter?log[title]=a&log[body]=b&log[tag]=c")
+
+ActiveSupport::Logger.close(log)
+Array.each(File.readlines(path)) do |line|
+  l = String.gsub(String.chomp(line), /\d+(\.\d+)?ms/, "Nms")
+  l = String.sub(String.sub(l, / - .*\z/, " - <frame>"), /request: #<[^>]*>/, "request: #<ActionDispatch::Request>")
+  puts("log: #{l}") unless String.start_with?(l, "# Logfile created")
+end
+File.delete(path)

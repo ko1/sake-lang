@@ -1,0 +1,92 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/instrumentation.rb (partial: no ExecutionContext; view_runtime is measured around render)
+#
+# Ruby's overrides of render, send_file, send_data, redirect_to and process_action call super inside an
+# instrument block; here each calls the layer below by name (rendering_render, flash_redirect_to, ...), or
+# takes the layer below as its block (instrumentation_process_action).
+
+require "rails/activesupport/active_support/notifications"
+require "rails/actionpack/action_dispatch/http/filter_parameters"
+require "rails/actionpack/action_dispatch/middleware/show_exceptions"
+
+module ActionController
+  module Instrumentation
+    def render_with_options(c, action, options)
+      render_output = nil
+      t0 = Process.clock_gettime(Process.CLOCK_MONOTONIC, :float_millisecond)
+      render_output = rendering_render(c, action, options)
+      @_view_runtime = cleanup_view_runtime(c) { Process.clock_gettime(Process.CLOCK_MONOTONIC, :float_millisecond) - t0 }
+      render_output
+    end
+
+    def send_file(c, path, **options)
+      payload = Hash.dup(options)
+      payload[:path] = path
+      ActiveSupport::Notifications.instrument("send_file.action_controller", payload) { data_streaming_send_file(c, path, options) }
+    end
+
+    def send_data(c, data, **options)
+      ActiveSupport::Notifications.instrument("send_data.action_controller", Hash.dup(options)) { data_streaming_send_data(c, data, options) }
+    end
+
+    def redirect_to(c, options = Hash.new, **response_options)
+      ActiveSupport::Notifications.instrument("redirect_to.action_controller", Hash.of(request: request(c))) do |payload|
+        result = flash_redirect_to(c, options, response_options)
+        payload[:status] = status(c)
+        payload[:location] = location(c)
+        result
+      end
+    end
+
+    def instrumentation_process_action(c, method_name)
+      req = request(c)
+      raw_payload = Hash.of(
+        controller: _class_name(c),
+        action: action_name(c),
+        request: req,
+        params: ActionDispatch::Request.filtered_parameters(req),
+        headers: ActionDispatch::Request.headers(req),
+        format: Mime::Type.symbol(ActionDispatch::Request.format(req)),
+        method: ActionDispatch::Request.request_method(req),
+        path: ActionDispatch::Request.filtered_path(req)
+      )
+      ActiveSupport::Notifications.instrument("start_processing.action_controller", raw_payload)
+      ActiveSupport::Notifications.instrument("process_action.action_controller", raw_payload) do |payload|
+        begin
+          result = yield
+          payload[:response] = response(c)
+          payload[:status] = status(c)
+          result
+        rescue => error
+          payload[:status] = ActionDispatch::ExceptionWrapper.status_code_for_exception(ActiveSupport::Notifications.class_name(error))
+          raise error
+        ensure
+          append_info_to_payload(c, payload)
+        end
+      end
+    end
+
+    # A callback halted the chain (Ruby: a private override of halted_callback_hook).
+    def halted_callback_hook(c, filter, name)
+      ActiveSupport::Notifications.instrument("halted_callback.action_controller", Hash.of(filter: filter))
+      nil
+    end
+
+    def cleanup_view_runtime(c) = yield
+
+    def append_info_to_payload(c, payload)
+      payload[:view_runtime] = @_view_runtime
+      nil
+    end
+
+    def view_runtime(c) = @_view_runtime
+
+    # ClassMethods#log_process_action
+    def log_process_action(payload)
+      messages = String[]
+      view_runtime = payload[:view_runtime]
+      Array.push(messages, format("Views: %.1fms", view_runtime)) if (view_runtime in Float)
+      messages
+    end
+    module_function :log_process_action
+  end
+end

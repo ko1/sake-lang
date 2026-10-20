@@ -1,0 +1,70 @@
+# Port of actionpack-8.1.3/lib/action_controller/api.rb and api/api_rendering.rb
+#
+# API is Metal with fewer modules (no views, flash, cookies, forgery protection): ApiRendering's render_to_body
+# processes the options first, and the body comes from the renderers or the :body/:plain/:html option.
+
+require "metal"
+require "../abstract_controller/callbacks"
+require "../abstract_controller/rendering"
+require "metal/url_for"
+require "metal/redirecting"
+require "metal/rendering"
+require "metal/renderers"
+require "metal/head"
+require "metal/conditional_get"
+require "metal/implicit_render"
+require "metal/strong_parameters"
+require "metal/data_streaming"
+require "metal/default_headers"
+require "metal/rescue"
+require "metal/instrumentation"
+require "metal/params_wrapper"
+
+module ActionController
+  # Ruby's ApiRendering#render_to_body (_process_options, then super), below Renderers'.
+  module ApiRendering
+    def api_render_to_body(c, options)
+      _process_options(c, options)
+      rendering_render_to_body(c, options)
+    end
+  end
+
+  class API < Metal
+    include AbstractController::Rendering
+    include ActionDispatch::Routing::UrlFor
+    include UrlFor
+    include Redirecting
+    include Rendering
+    include ApiRendering
+    include Renderers
+    include Head
+    include ConditionalGet
+    include BasicImplicitRender
+    include StrongParameters
+    include DataStreaming
+    include AbstractController::Callbacks
+    include Rescue
+    include Instrumentation
+    include ParamsWrapper
+
+    def make_response!(request) = DefaultHeaders.make_response!(request)
+
+
+    def process_action(c, method_name)
+      params_wrapper_process_action(c, method_name) do
+        instrumentation_process_action(c, method_name) do
+          rescue_process_action(c, method_name) do
+            callbacks_process_action(c, method_name) do
+              rendering_process_action(c, method_name) { send_action(c, method_name) }
+            end
+          end
+        end
+      end
+    end
+
+    def render_to_body(c, options) = _render_to_body_with_renderer(c, options) || api_render_to_body(c, options)
+
+    # Instrumentation's redirect_to calls Flash's; API has no flash.
+    def flash_redirect_to(c, options, response_options) = redirecting_redirect_to(c, options, response_options)
+  end
+end

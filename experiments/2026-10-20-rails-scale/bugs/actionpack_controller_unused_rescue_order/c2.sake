@@ -1,0 +1,112 @@
+require "rails/actionpack/action_controller/base"
+
+# Controllers on ActionController::Base, dispatched through the routes: render plain/json/html/body, status,
+# redirect_to, head, implicit render, callbacks with only/except, around and after callbacks, halting,
+# rescue_from, DoubleRenderError, respond_to, fresh_when, send_data.
+class RecordNotFound < StandardError
+end
+
+class ApplicationController < ActionController::Base
+  # private
+  def wrap(c)
+    puts("  around { #{action_name(c)}")
+    yield
+    puts("  } around #{action_name(c)}")
+  end
+  def stamp(c) = ActionDispatch::Response.set_header(response(c), "X-Stamp", "stamped")
+  def not_found(c, e) = render c, plain: "not found: #{Exception.message(e)}", status: :not_found
+end
+
+class PostsController < ApplicationController
+  attr_reader post
+
+  def index(c) = render c, plain: "all posts"
+  def show(c) = render c, json: Hash.of("id" => @post, "title" => "Hello")
+  def create(c) = redirect_to c, "/posts/1", status: :see_other
+  def update(c) = render c, html: "<b>#{@post}</b>", status: :accepted
+  def destroy(c) = head c, :no_content, x_deleted: "yes"
+
+  # private
+  def authenticate(c)
+    head c, :unauthorized if ActionDispatch::Request.params(request(c))["token"] != "secret"
+  end
+  def load_post(c) = @post = Kernel.to_s(ActionDispatch::Request.params(request(c))["id"])
+end
+
+class PagesController < ApplicationController
+  def missing(c) = raise RecordNotFound, "post 42"
+  def twice(c)
+    render c, plain: "one"
+    render c, plain: "two"
+  end
+  def nothing(c) = nil
+  def body(c) = render c, body: "raw"
+  def negotiate(c)
+    respond_to(c, :html, :json) do |format|
+      case format
+      in :html then render c, html: "<p>html</p>"
+      in :json then render c, json: Any[1, 2]
+      else nil
+      end
+    end
+  end
+  def cached(c) = fresh_when c, etag: "v1"
+  def download(c) = send_data c, "a,b\n", filename: "report.csv"
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_base_decl.rb", "controller_base.sake"
+
+class ActionDispatch::Routing::Mapper
+  def base_routes(map)
+    resources map, :posts, only: Any[:index, :show, :create, :update, :destroy]
+    Array.each(String["missing", "twice", "nothing", "body", "negotiate", "cached", "download"]) { |a| get map, a, to: "pages##{a}" }
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.base_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+def show_response(method, path, status, headers, body)
+  out = ""
+  Array.each(body) { |s| out += s }
+  keys = Array.select(Hash.keys(headers).Array.sort) { |k| k != "content-length" }
+  puts("#{method} #{path} -> #{status}")
+  Array.each(keys) { |k| puts("  #{k}: #{headers[k]}") }
+  puts("  body: #{Kernel.inspect(out)}")
+end
+
+def request(set, method, path, headers = Hash.new)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}", method: method)
+  Hash.each(headers) { |k, v| env[k] = v }
+  begin
+    status, hs, body = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+    show_response(method, path, status, hs, body)
+  rescue AbstractController::Error, ActionController::ActionControllerError => e
+    puts("#{method} #{path} -> #{ActiveSupport::Notifications.class_name(e)}: #{String.slice(Exception.message(e), 0, 70)}")
+  end
+end
+
+def t5(set)
+  req = ActionDispatch::Request.new(Rack::MockRequest.env_for("http://www.example.com/twice"))
+  begin
+    ActionDispatch::App.call(set, req)
+  rescue AbstractController::Error => e
+    p(10)
+  end
+end
+t5(set)
+request(set, "GET", "/posts")
+request(set, "GET", "/posts/7")
+request(set, "POST", "/posts")
+request(set, "POST", "/posts?token=secret")
+request(set, "PATCH", "/posts/7?token=secret")
+request(set, "DELETE", "/posts/7?token=secret")
+request(set, "GET", "/missing")
+request(set, "GET", "/twice")
+request(set, "GET", "/nothing")
+request(set, "GET", "/nothing", Hash.of("HTTP_ACCEPT" => "application/json"))
+request(set, "GET", "/body")
+request(set, "GET", "/negotiate", Hash.of("HTTP_ACCEPT" => "application/json"))
+request(set, "GET", "/negotiate.html")
+request(set, "GET", "/cached")
+request(set, "GET", "/cached", Hash.of("HTTP_IF_NONE_MATCH" => "W/\"8f2a39dd2fdaecc8bd47e2a9bdc5ea4f\""))
+request(set, "GET", "/download")

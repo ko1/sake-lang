@@ -1,0 +1,151 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/redirecting.rb (partial: no Proc locations, no allowed_redirect_hosts, no :notify instrumentation; a record location goes through the app's polymorphic_url, not here)
+#
+# `redirect_to post_url(post), notice: "Saved"` is `redirect_to c, post_url(c, post), notice: "Saved"`; the flash
+# keys are taken off by Flash's redirect_to first (flash.sake), as Ruby's Flash#redirect_to and its super.
+
+require "exceptions"
+require "rails/activesupport/active_support/core_ext/string/filters"
+require "uri"
+require "../../abstract_controller/logger"
+
+module ActionController
+  module Redirecting
+    class UnsafeRedirectError < StandardError
+    end
+    class OpenRedirectError < StandardError
+      def build(location) = OpenRedirectError.new("Unsafe redirect to #{Kernel.inspect(String.truncate(Kernel.to_s(location), 100))}, pass allow_other_host: true to redirect anyway.")
+    end
+    class PathRelativeRedirectError < StandardError
+      def build(url) = PathRelativeRedirectError.new("Path relative URL redirect detected: #{Kernel.inspect(url)}")
+    end
+    class ActionControllerError < StandardError
+      include ActionController::ActionControllerError
+    end
+
+    def illegal_header_value_regex = /[\x00-\x08\x0A-\x1F]/
+
+    # mattr_accessor :raise_on_open_redirects (false), :action_on_open_redirect (:log), :action_on_path_relative_redirect (:log)
+    def _redirect_config = once { Hash.of(:raise_on_open_redirects => false, :action_on_open_redirect => :log, :action_on_path_relative_redirect => :log) }
+    def raise_on_open_redirects = _redirect_config[:raise_on_open_redirects] == true
+    def set_raise_on_open_redirects(v) = _redirect_config[:raise_on_open_redirects] = v
+    def action_on_open_redirect = _redirect_config[:action_on_open_redirect]
+    def set_action_on_open_redirect(v) = _redirect_config[:action_on_open_redirect] = v
+    def action_on_path_relative_redirect = _redirect_config[:action_on_path_relative_redirect]
+    def set_action_on_path_relative_redirect(v) = _redirect_config[:action_on_path_relative_redirect] = v
+    module_function :illegal_header_value_regex, :_redirect_config, :raise_on_open_redirects, :set_raise_on_open_redirects,
+      :action_on_open_redirect, :set_action_on_open_redirect, :action_on_path_relative_redirect, :set_action_on_path_relative_redirect
+
+    # Redirects the browser to the target specified in options (a URL or path String, or url_for options).
+    def redirecting_redirect_to(c, options, response_options)
+      raise ActionControllerError.new("Cannot redirect to nil!") if options == nil
+      raise AbstractController::DoubleRenderError.build if response_body(c)
+      allow_other_host = Hash.delete(response_options, :allow_other_host)
+      proposed_status = _extract_redirect_to_status(c, options, response_options)
+      redirect_to_location = _compute_redirect_to_location(c, request(c), options)
+      _ensure_url_is_http_header_safe(c, redirect_to_location)
+      set_location(c, _enforce_open_redirect_protection(c, redirect_to_location, allow_other_host))
+      set_response_body(c, "")
+      set_status(c, proposed_status)
+    end
+    def redirect_to(c, options = Hash.new, **response_options) = redirecting_redirect_to(c, options, response_options)
+
+    def redirect_back(c, fallback_location:, allow_other_host: nil, **args)
+      redirect_back_or_to(c, fallback_location, allow_other_host: allow_other_host == nil ? _allow_other_host(c) : allow_other_host, **args)
+    end
+
+    def redirect_back_or_to(c, fallback_location, allow_other_host: nil, **options)
+      allow = allow_other_host == nil ? _allow_other_host(c) : allow_other_host
+      referer = ActionDispatch::Request.referer(request(c))
+      options[:allow_other_host] = allow
+      if referer && (allow || _url_host_allowed?(c, referer))
+        redirect_to(c, referer, **options)
+      else
+        Hash.delete(options, :allow_other_host)
+        redirect_to(c, fallback_location, **options)
+      end
+    end
+
+    def _compute_redirect_to_location(c, request, options)
+      location = case options
+                 in String
+                   if String.match?(options, /\A([a-z][a-z\d\-+.]*:|\/\/).*/i)
+                     options
+                   else
+                     _handle_path_relative_redirect(c, options) if !String.start_with?(options, "/") && !String.start_with?(options, "?") && !String.empty?(options)
+                     ActionDispatch::Request.protocol(request) + ActionDispatch::Request.host_with_port(request) + options
+                   end
+                 else url_for(c, options)
+                 end
+      String.delete(location, "\0\r\n")
+    end
+
+    # Verifies the passed location is an internal URL that's safe to redirect to, and returns it, or nil if not.
+    def url_from(c, location)
+      return nil if location == nil || location == ""
+      _url_host_allowed?(c, location) ? location : nil
+    end
+
+    def _allow_other_host(c)
+      return false if Redirecting.raise_on_open_redirects
+      Redirecting.action_on_open_redirect != :raise
+    end
+
+    def _extract_redirect_to_status(c, options, response_options)
+      if (options in Hash) && Hash.key?(options, :status)
+        s = Hash.delete(options, :status)
+        return ActionDispatch::Response.rack_status_code(s) if (s in Symbol | Integer)
+      end
+      s = response_options[:status]
+      return ActionDispatch::Response.rack_status_code(s) if (s in Symbol | Integer)
+      302
+    end
+
+    def _enforce_open_redirect_protection(c, location, allow_other_host)
+      if allow_other_host == true || _url_host_allowed?(c, location)
+        location
+      elsif allow_other_host == false
+        raise OpenRedirectError.build(location)
+      elsif !_allow_other_host(c)
+        raise OpenRedirectError.build(location)
+      elsif Redirecting.action_on_open_redirect == :log
+        l = logger(c)
+        ActiveSupport::Logger.warn(l, "Open redirect to #{Kernel.inspect(location)} detected") if l
+        location
+      else
+        raise OpenRedirectError.build(location)
+      end
+    end
+
+    def _url_host_allowed?(c, url)
+      url_to_s = Kernel.to_s(url)
+      host = URI.host(URI.parse(url_to_s))
+      if host == nil || host == ""
+        String.start_with?(url_to_s, "/") && !String.start_with?(url_to_s, "//")
+      else
+        host == ActionDispatch::Request.host(request(c))
+      end
+    rescue ArgumentError, URI::InvalidURIError
+      false
+    end
+
+    def _ensure_url_is_http_header_safe(c, url)
+      if String.match?(url, Redirecting.illegal_header_value_regex)
+        msg = "The redirect URL #{url} contains one or more illegal HTTP header field character. " +
+          "Set of legal characters defined in https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.6"
+        raise UnsafeRedirectError, msg
+      end
+    end
+
+    def _handle_path_relative_redirect(c, url)
+      message = "Path relative URL redirect detected: #{Kernel.inspect(url)}"
+      case Redirecting.action_on_path_relative_redirect
+      in :log
+        l = logger(c)
+        ActiveSupport::Logger.warn(l, message) if l
+      in :raise then raise PathRelativeRedirectError.build(url)
+      else nil
+      end
+      nil
+    end
+  end
+end

@@ -1,0 +1,60 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/data_streaming.rb (partial: send_file reads the file into the body; Rails' Response#send_file streams it with a FileBody)
+
+require "exceptions"
+require "rails/actionpack/action_dispatch/http/content_disposition"
+
+module ActionController
+  module DataStreaming
+    def default_send_file_type = "application/octet-stream"
+    def default_send_file_disposition = "attachment"
+    module_function :default_send_file_type, :default_send_file_disposition
+
+    # Sends the file: send_file(c, "files/report.pdf", type: "application/pdf", disposition: "inline").
+    def send_file(c, path, **options) = data_streaming_send_file(c, path, options)
+    def data_streaming_send_file(c, path, options)
+      raise MissingFile, "Cannot read file #{path}" unless File.file?(path) && File.readable?(path)
+      options[:filename] = File.basename(path) if options[:filename] == nil && !options[:url_based_filename]
+      send_file_headers!(c, options)
+      s = options[:status]
+      set_status(c, (s in Symbol | Integer) ? s : 200)
+      ct = options[:content_type]
+      set_content_type(c, Kernel.to_s(ct)) if Hash.key?(options, :content_type) && ct
+      set_response_body(c, File.read(path))
+    end
+
+    # Sends the given binary data to the browser.
+    def send_data(c, data, **options) = data_streaming_send_data(c, data, options)
+    def data_streaming_send_data(c, data, options)
+      send_file_headers!(c, options)
+      opts = Hash.slice(options, :status, :content_type)
+      opts[:body] = data
+      render_with_options(c, nil, opts)
+    end
+
+    def send_file_headers!(c, options)
+      type_provided = Hash.key?(options, :type)
+      content_type = Hash.fetch(options, :type, DataStreaming.default_send_file_type)
+      set_content_type(c, (content_type in Symbol) ? content_type : Kernel.to_s(content_type)) if content_type != nil
+      ActionDispatch::Response.set_sending_file(response(c), true)
+      raise ArgumentError, ":type option required" if content_type == nil
+      filename = options[:filename]
+      case content_type
+      in Symbol then set_content_type(c, content_type)
+      else
+        ct = Kernel.to_s(content_type)
+        if !type_provided && filename
+          t = Mime::Type.lookup_by_extension(String.delete(String.downcase(File.extname(Kernel.to_s(filename))), "."))
+          ct = Mime::Type.to_s(t) if t
+        end
+        set_content_type(c, ct)
+      end
+      disposition = Hash.fetch(options, :disposition, DataStreaming.default_send_file_disposition)
+      if disposition
+        ActionDispatch::Response.set_header(response(c), "Content-Disposition",
+          ActionDispatch::Http::ContentDisposition.format(disposition: Kernel.to_s(disposition), filename: filename ? Kernel.to_s(filename) : nil))
+      end
+      ActionDispatch::Response.set_header(response(c), "Content-Transfer-Encoding", "binary")
+      nil
+    end
+  end
+end

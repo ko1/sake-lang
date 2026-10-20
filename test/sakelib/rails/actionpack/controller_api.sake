@@ -1,0 +1,80 @@
+require "rails/actionpack/action_controller/api"
+
+# Controllers on ActionController::API: render json/plain/body with status and location, head, redirect_to,
+# rescue_from, callbacks (only/if/skip), BasicImplicitRender's 204, params from the query, the path and a JSON body.
+class Forbidden < StandardError
+end
+
+class ApiController < ActionController::API
+  def health(c) = head c, :ok
+
+  # private
+  def count(c) = ActionDispatch::Response.set_header(response(c), "X-Counted", "1")
+  def forbidden(c, e) = render c, json: Hash.of("error" => Exception.message(e)), status: :forbidden
+end
+
+class ItemsController < ApiController
+  attr_reader item
+
+  def index(c) = render c, json: Any[Hash.of("id" => 1), Hash.of("id" => 2)]
+  def show(c) = render c, json: Hash.of("id" => @item, "q" => params(c)[:q])
+  def create(c)
+    name = ActionController::Parameters.expect(params(c), item: Any[:name])
+    name => ActionController::Parameters
+    render c, json: Hash.of("created" => ActionController::Parameters.[](name, :name)), status: :created, location: "/items/3"
+  end
+  def update(c) = head c, :no_content
+  def destroy(c) = raise Forbidden, "no deleting"
+  def ping(c) = render c, plain: "pong"
+  def raw(c) = render c, body: "raw body", content_type: "application/octet-stream"
+  def nothing(c) = nil
+  def go(c) = redirect_to c, "/items", status: :moved_permanently
+
+  # private
+  def find_item(c) = @item = Kernel.to_s(params(c)[:id])
+  def tag(c) = ActionDispatch::Response.set_header(response(c), "X-Tag", "tagged")
+  def tagged?(c) = params(c)[:tag] == "1"
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_api_decl.rb", "controller_api.sake"
+
+class ActionDispatch::Routing::Mapper
+  def api_routes(map)
+    resources map, :items
+    Array.each(String["ping", "raw", "nothing", "go"]) { |a| get map, a, to: "items##{a}" }
+    get map, "health", to: "api#health"
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.api_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+def show_response(method, path, status, headers, body)
+  out = ""
+  Array.each(body) { |s| out += s }
+  keys = Array.select(Hash.keys(headers).Array.sort) { |k| k != "content-length" }
+  puts("#{method} #{path} -> #{status}")
+  Array.each(keys) { |k| puts("  #{k}: #{headers[k]}") }
+  puts("  body: #{Kernel.inspect(out)}")
+end
+
+def send_request(set, method, path, body = nil)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}", method: method, input: body || "")
+  if body
+    env["CONTENT_TYPE"] = "application/json"
+    env["CONTENT_LENGTH"] = Integer.to_s(String.bytesize(body))
+  end
+  status, hs, b = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+  show_response(method, path, status, hs, b)
+end
+
+send_request(set, "GET", "/items")
+send_request(set, "GET", "/items/7?q=x")
+send_request(set, "GET", "/items/7?q=x&tag=1")
+send_request(set, "POST", "/items", "{\"item\":{\"name\":\"pen\",\"price\":3}}")
+send_request(set, "PATCH", "/items/7")
+send_request(set, "DELETE", "/items/7")
+send_request(set, "GET", "/ping")
+send_request(set, "GET", "/raw")
+send_request(set, "GET", "/nothing")
+send_request(set, "GET", "/go")
+send_request(set, "GET", "/health")

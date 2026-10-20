@@ -1,0 +1,118 @@
+# Port of nothing (Sake only): the class-level settings of a controller's class body (class attributes)
+#
+# Lines such as `protect_from_forgery with: :exception`, `wrap_parameters format: [:json]`,
+# `http_basic_authenticate_with name: "u", password: "p"` set class attributes in Ruby (and add callbacks).
+# `expand` adds the callbacks lines Ruby's class methods add (as CurrentAttributes::Generate.expand does), and
+# `class_source` writes the class attributes as generated functions (a subclass reads its parent's):
+#
+#   Ruby (class body)                                  Sake
+#   protect_from_forgery with: :exception, only: :x    + before_action :verify_authenticity_token, prepend: false, only: :x
+#                                                      + append_after_action :verify_same_origin_request
+#                                                      def K.__forgery_protection_strategy = :exception
+#   skip_forgery_protection                            + skip_before_action :verify_authenticity_token, raise: false
+#   http_basic_authenticate_with name: "u",            + before_action :_http_basic_authenticate_7
+#     password: "p"                                    def K._http_basic_authenticate_7(c) = http_basic_authenticate_or_request_with(c, ...)
+#   wrap_parameters :post, format: [:json]             def K.__wrapper_options = once { ParamsWrapper::ClassMethods.wrap_parameters(...) }
+
+require "rails/activesupport/active_support/generate/class_body"
+
+module ActionController
+  module Generate
+    module Settings
+      module_function
+
+      def CALLS = String["protect_from_forgery", "skip_forgery_protection", "http_basic_authenticate_with", "wrap_parameters"]
+      def CALLBACK_KEYS = String["only", "except", "if", "unless", "prepend"]
+
+      def decl(n, call, args) = ActiveSupport::Generate::Declaration.new(n, call, args)
+
+      def callback_options(args) = Array.select(args) { |a| (o = ActiveSupport::Generate.option(a)) != nil && Array.include?(Settings.CALLBACK_KEYS, o[0]) }
+
+      # The callbacks lines of the settings, added after each setting line (in place).
+      def expand(body)
+        decls = ActiveSupport::Generate::ClassBody.declarations(body)
+        out = ActiveSupport::Generate::Declaration[]
+        Array.each(decls) do |d|
+          Array.push(out, d)
+          n = ActiveSupport::Generate::Declaration.line(d)
+          args = ActiveSupport::Generate::Declaration.args(d)
+          case ActiveSupport::Generate::Declaration.call(d)
+          in "protect_from_forgery"
+            opts = callback_options(args)
+            Array.push(opts, "prepend: false") unless Array.any?(opts) { |a| String.start_with?(a, "prepend:") }
+            Array.push(out, decl(n, "before_action", String[":verify_authenticity_token"] + opts))
+            Array.push(out, decl(n, "append_after_action", String[":verify_same_origin_request"]))
+          in "skip_forgery_protection"
+            opts = callback_options(args)
+            Array.push(opts, "raise: false")
+            Array.push(out, decl(n, "skip_before_action", String[":verify_authenticity_token"] + opts))
+          in "http_basic_authenticate_with"
+            Array.push(out, decl(n, "before_action", String[":_http_basic_authenticate_#{n}"] + callback_options(args)))
+          else nil
+          end
+        end
+        Array.replace(decls, out)
+        nil
+      end
+
+      def option_value(args, key, n, path)
+        a = Array.find(args) { |x| (o = ActiveSupport::Generate.option(x)) != nil && o[0] == key }
+        return nil if a == nil
+        o = ActiveSupport::Generate.option(a)
+        o ? ActiveSupport::Generate.value(o[1], n, path) : nil
+      end
+
+      def lines(body, call)
+        body == nil ? ActiveSupport::Generate::Declaration[] : ActiveSupport::Generate.declarations(body, String[call])
+      end
+
+      # name: the controller; parent: its controller parent (nil for the root); body: its class body or nil.
+      def class_source(name, parent, body, path)
+        s = ""
+        # forgery_protection_strategy (Ruby: config, nil until protect_from_forgery; default with: :null_session)
+        strategy = parent == nil ? "nil" : "#{parent}.__forgery_protection_strategy"
+        Array.each(lines(body, "protect_from_forgery")) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          w = option_value(ActiveSupport::Generate::Declaration.args(d), "with", n, path) || ":null_session"
+          st = option_value(ActiveSupport::Generate::Declaration.args(d), "store", n, path) || ":session"
+          strategy = "(ActionController::RequestForgeryProtection.storage_strategy(#{st}) && ActionController::RequestForgeryProtection.protection_method(#{w}))"
+        end
+        s += "def #{name}.__forgery_protection_strategy = #{strategy}\n"
+        s += "def #{name}.forgery_protection_strategy(c) = #{name}.__forgery_protection_strategy\n"
+        # http_basic_authenticate_with's block
+        Array.each(lines(body, "http_basic_authenticate_with")) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          args = ActiveSupport::Generate::Declaration.args(d)
+          user = option_value(args, "name", n, path)
+          password = option_value(args, "password", n, path)
+          raise ArgumentError, "#{path}:#{n}: Expected name: to be a String, got #{user == nil ? "NilClass" : user}" unless user && String.start_with?(user, "\"")
+          raise ArgumentError, "#{path}:#{n}: Expected password: to be a String, got #{password == nil ? "NilClass" : password}" unless password && String.start_with?(password, "\"")
+          realm = option_value(args, "realm", n, path) || "nil"
+          s += "# sake-origin: #{path}:#{n}\n"
+          s += "def #{name}._http_basic_authenticate_#{n}(c) = http_basic_authenticate_or_request_with(c, name: #{user}, password: #{password}, realm: #{realm})\n"
+        end
+        # _wrapper_options (class_attribute, default Options.from_hash(format: []); inherited copies it)
+        klass = Kernel.inspect(Generate.controller_name(name))
+        base = parent == nil ? "ActionController::ParamsWrapper::ClassMethods.default(#{klass})" : "ActionController::ParamsWrapper::ClassMethods.inherit(#{parent}.__wrapper_options, #{klass})"
+        Array.each(lines(body, "wrap_parameters")) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          pos = String[]
+          opts = String[]
+          Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+            o = ActiveSupport::Generate.option(a)
+            if o == nil
+              Array.push(pos, ActiveSupport::Generate.value(a, n, path))
+            else
+              Array.push(opts, "#{o[0]}: #{ActiveSupport::Generate.value(o[1], n, path)}")
+            end
+          end
+          s += "# sake-origin: #{path}:#{n}\n"
+          base = "ActionController::ParamsWrapper::ClassMethods.wrap_parameters(#{base}, #{klass}, #{ActiveSupport::Generate.join_args(pos, opts)})"
+        end
+        s += "def #{name}.__wrapper_options = once { #{base} }\n"
+        s += "def #{name}._wrapper_options(c) = #{name}.__wrapper_options\n"
+        s
+      end
+    end
+  end
+end

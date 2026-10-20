@@ -1,0 +1,98 @@
+# Port of actionpack-8.1.3/lib/action_controller/log_subscriber.rb (partial: no fragment cache events, no verbose redirect source lines, no backtrace_cleaner; rescue_from_callback has no backtrace frame)
+#
+# Ruby's `class LogSubscriber < ActiveSupport::LogSubscriber` with one public method per event and
+# `attach_to :action_controller` (at load). Here the subscriber includes ActiveSupport::LogSubscriber and names
+# its events (Ruby finds them with public_methods); `ActionController::LogSubscriber.attach` is the attach_to.
+# The logger is ActiveSupport::LogSubscriber's (Ruby: ActionController::Base.logger, which railties sets to the
+# same Rails.logger). Ruby's rescue_from_callback payload is the exception; here [class name, message].
+
+require "rails/activesupport/active_support/log_subscriber"
+require "rails/actionpack/action_dispatch/middleware/show_exceptions"
+require "metal/instrumentation"
+
+module ActionController
+  class LogSubscriber
+    attr_reader name
+    include ActiveSupport::LogSubscriber
+
+    def internal_params = String["controller", "action", "format", "_method", "only_path"]
+
+    def attach = ActiveSupport::LogSubscriber.attach_to(:action_controller, LogSubscriber.new("action_controller"))
+
+    def __events(s) = Symbol[:start_processing, :process_action, :halted_callback, :rescue_from_callback, :send_file, :redirect_to, :send_data, :unpermitted_parameters]
+    def __event(s, method, event)
+      case method
+      in :start_processing then start_processing(s, event)
+      in :process_action then process_action(s, event)
+      in :halted_callback then halted_callback(s, event)
+      in :rescue_from_callback then rescue_from_callback(s, event)
+      in :send_file then send_file(s, event)
+      in :redirect_to then redirect_to(s, event)
+      in :send_data then send_data(s, event)
+      in :unpermitted_parameters then unpermitted_parameters(s, event)
+      else nil
+      end
+    end
+
+    def start_processing(s, event)
+      l = ActiveSupport::LogSubscriber.logger
+      return nil unless l && (ActiveSupport::Logger | ActiveSupport::BroadcastLogger).info?(l)
+      payload = ActiveSupport::Notifications::Event.payload(event)
+      params = Hash.new
+      ps = payload[:params]
+      Hash.each(ps) { |k, v| params[k] = v unless Array.include?(LogSubscriber.internal_params, Kernel.to_s(k)) } if (ps in Hash)
+      format = payload[:format]
+      format = (format in Symbol) ? String.upcase(Symbol.to_s(format)) : (format == nil ? "*/*" : Kernel.to_s(format))
+      info(s, "Processing by #{payload[:controller]}##{payload[:action]} as #{format}")
+      info(s, "  Parameters: #{Kernel.inspect(params)}") unless Hash.empty?(params)
+    end
+
+    def process_action(s, event)
+      payload = ActiveSupport::Notifications::Event.payload(event)
+      additions = Instrumentation.log_process_action(payload)
+      status = payload[:status]
+      exception = payload[:exception]
+      if status == nil && (exception in [String, String])
+        status = ActionDispatch::ExceptionWrapper.status_code_for_exception(exception[0])
+      end
+      Array.push(additions, "GC: #{Float.round(ActiveSupport::Notifications::Event.gc_time(event), 1)}ms")
+      code = (status in Integer) ? status : 0
+      message = "Completed #{status} #{Rack::Utils.http_status_codes[code]} in #{Float.round(ActiveSupport::Notifications::Event.duration(event))}ms" +
+        " (#{Array.join(additions, " | ")})"
+      info(s, message)
+    end
+
+    def halted_callback(s, event)
+      info(s, "Filter chain halted as #{Kernel.inspect(ActiveSupport::Notifications::Event.payload(event)[:filter])} rendered or redirected")
+    end
+
+    def rescue_from_callback(s, event)
+      exception = ActiveSupport::Notifications::Event.payload(event)[:exception]
+      if exception in [String, String]
+        info(s, "rescue_from handled #{exception[0]} (#{exception[1]}) - ")
+      end
+    end
+
+    def send_file(s, event)
+      info(s, "Sent file #{ActiveSupport::Notifications::Event.payload(event)[:path]} (#{Float.round(ActiveSupport::Notifications::Event.duration(event), 1)}ms)")
+    end
+
+    def redirect_to(s, event)
+      info(s, "Redirected to #{ActiveSupport::Notifications::Event.payload(event)[:location]}")
+    end
+
+    def send_data(s, event)
+      info(s, "Sent data #{ActiveSupport::Notifications::Event.payload(event)[:filename]} (#{Float.round(ActiveSupport::Notifications::Event.duration(event), 1)}ms)")
+    end
+
+    def unpermitted_parameters(s, event)
+      payload = ActiveSupport::Notifications::Event.payload(event)
+      keys = payload[:keys]
+      context = payload[:context]
+      return nil unless (keys in Array) && (context in Hash)
+      display_unpermitted_keys = Array.join(Array.map(keys) { |e| ":#{e}" }, ", ")
+      ctx = Array.join(Hash.map(context) { |k, v| "#{k}: #{v}" }, ", ")
+      debug(s, color(s, "Unpermitted parameter#{Array.size(keys) > 1 ? "s" : ""}: #{display_unpermitted_keys}. Context: { #{ctx} }", ActiveSupport::LogSubscriber.RED))
+    end
+  end
+end

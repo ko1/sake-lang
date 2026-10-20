@@ -1,0 +1,88 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/conditional_get.rb and etag_with_flash.rb (partial: no record objects (`object.try(:updated_at)`), no `etag { }` blocks of the app; EtagWithTemplateDigest needs ActionView's digests)
+#
+# Ruby's class attribute etaggers holds blocks (`etag { current_user&.id }`); EtagWithFlash adds
+# `etag { flash if request.respond_to?(:flash) && !flash.empty? }`. Here the etaggers are the function
+# `etaggers_values(c)`: the flash's, which a controller may override to add its own. Ruby's `include Head` is
+# Base's (a module that includes a module must define what the included one calls).
+
+require "head"
+
+module ActionController
+  module ConditionalGet
+    # Sets the etag, last_modified, or both on the response, and renders `304 Not Modified` if the request is
+    # already fresh.
+    def fresh_when(c, object = nil, etag: nil, weak_etag: nil, strong_etag: nil, last_modified: nil, public: false, cache_control: nil, template: nil)
+      res = response(c)
+      Hash.delete(ActionDispatch::Response.cache_control(res), :no_store)
+      weak = weak_etag
+      weak = etag || object if weak == nil && strong_etag == nil
+      if strong_etag
+        ActionDispatch::Response.set_strong_etag(res, combine_etags(c, strong_etag))
+      elsif weak || template
+        ActionDispatch::Response.set_weak_etag(res, combine_etags(c, weak))
+      end
+      ActionDispatch::Response.set_last_modified(res, last_modified) if last_modified
+      ActionDispatch::Response.cache_control(res)[:public] = true if public
+      Hash.merge!(ActionDispatch::Response.cache_control(res), cache_control) if cache_control
+      head(c, :not_modified) if ActionDispatch::Request.fresh?(request(c), res)
+      nil
+    end
+
+    # Sets the etag and/or last_modified on the response and checks them against the request. If the request
+    # doesn't match the provided options, it is considered stale.
+    def stale?(c, object = nil, etag: nil, weak_etag: nil, strong_etag: nil, last_modified: nil, public: false, cache_control: nil, template: nil)
+      fresh_when(c, object, etag: etag, weak_etag: weak_etag, strong_etag: strong_etag, last_modified: last_modified, public: public, cache_control: cache_control, template: template)
+      !ActionDispatch::Request.fresh?(request(c), response(c))
+    end
+
+    # Sets the Cache-Control header, overwriting existing directives.
+    def expires_in(c, seconds, public: nil, must_revalidate: nil, stale_while_revalidate: nil, stale_if_error: nil, immutable: nil, **options)
+      cc = ActionDispatch::Response.cache_control(response(c))
+      Hash.delete(cc, :no_store)
+      cc[:max_age] = seconds
+      cc[:public] = public
+      cc[:must_revalidate] = must_revalidate
+      cc[:stale_while_revalidate] = stale_while_revalidate
+      cc[:stale_if_error] = stale_if_error
+      cc[:immutable] = immutable
+      Hash.delete(options, :private)
+      cc[:extras] = Hash.map(options) { |k, v| "#{k}=#{v}" }
+      ActionDispatch::Response.set_date(response(c), Time.now) unless ActionDispatch::Response.date?(response(c))
+      nil
+    end
+
+    # Sets an HTTP 1.1 Cache-Control header of `no-cache`.
+    def expires_now(c) = Hash.replace(ActionDispatch::Response.cache_control(response(c)), Hash.of(no_cache: true))
+
+    # Cache or yield the block. The cache is supposed to never expire.
+    def http_cache_forever(c, public: false)
+      expires_in(c, 3155695200, public: public, immutable: true)
+      yield if stale?(c, etag: ActionDispatch::Request.fullpath(request(c)), last_modified: Time.utc(2011, 1, 1), public: public)
+    end
+
+    # Sets an HTTP 1.1 Cache-Control header of `no-store`.
+    def no_store(c) = Hash.replace(ActionDispatch::Response.cache_control(response(c)), Hash.of(no_store: true))
+
+    def must_understand(c)
+      cc = ActionDispatch::Response.cache_control(response(c))
+      cc[:must_understand] = true
+      cc[:no_store] = true
+      nil
+    end
+
+    # Ruby: etaggers.map { |etagger| instance_exec(options, &etagger) }; EtagWithFlash's is the only one.
+    def etaggers_values(c)
+      list = Any[]
+      f = ActionDispatch::Request.flash(request(c))
+      # Ruby's cache key of the FlashHash (an Enumerable) is its pairs: "notice/hi"
+      Array.push(list, Hash.map(ActionDispatch::Flash::FlashHash.to_hash(f)) { |k, v| Any[k, v] }) if !ActionDispatch::Flash::FlashHash.empty?(f)
+      list
+    end
+
+    def combine_etags(c, validator)
+      list = Any[validator]
+      Array.concat(list, etaggers_values(c))
+      Array.compact(list)
+    end
+  end
+end

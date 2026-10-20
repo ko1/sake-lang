@@ -1,0 +1,41 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/url_for.rb and abstract_controller/url_for.rb (partial: no engine script names; action_methods does not subtract route helper names, since helpers are not functions of the controller here)
+#
+# Ruby's url_options memoizes {host:, port:, protocol:, _recall:} merged with default_url_options; the routes are
+# the controller's `_routes` (railties includes `Rails.application.routes.url_helpers`, which defines it). Here
+# `_routes(c)` is the RouteSet the request came through (or the one a test sets with `set_routes`).
+
+require "rails/actionpack/action_dispatch/routing"
+
+module ActionController
+  # Ruby's includes (AbstractController::UrlFor, ActionDispatch::Routing::UrlFor) are Base's: a module that
+  # includes a module must define what that module calls.
+  module UrlFor
+
+    def _routes(c)
+      r = @_routes_set
+      return r if r
+      r = ActionDispatch::Request.routes(request(c))
+      raise "In order to use #url_for, you must include routing helpers explicitly. For instance, `include Rails.application.routes.url_helpers`." unless r
+      r
+    end
+    def set_routes(c, routes) = @_routes_set = routes
+
+    def url_options(c)
+      cached = @_url_options
+      return cached if cached
+      req = request(c)
+      options = Hash.of(host: ActionDispatch::Request.host(req), port: ActionDispatch::Request.optional_port(req),
+        protocol: ActionDispatch::Request.protocol(req), _recall: ActionDispatch::Request.path_parameters(req))
+      Hash.merge!(options, default_url_options(c))
+      original_script_name = ActionDispatch::Request.original_script_name(req)
+      if original_script_name
+        options[:original_script_name] = original_script_name
+      else
+        same_origin = Kernel.equal?(@_routes_set || ActionDispatch::Request.routes(req), ActionDispatch::Request.routes(req))
+        options[:script_name] = ActionDispatch::Request.script_name(req) if same_origin
+      end
+      @_url_options = options
+      options
+    end
+  end
+end

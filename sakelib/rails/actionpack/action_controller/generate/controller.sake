@@ -1,0 +1,294 @@
+# Port of nothing (Sake only): what Ruby finds by reflection in a controller class, written as Sake source
+#
+#   Ruby                                              Sake (generated per controller class)
+#   PostsController.name, controller_path, _prefixes  _class_name(c), controller_path(c), controller_name(c), _prefixes(c)
+#   action_methods (public_instance_methods)          action_methods(c): the `def name(c)` of the class and its
+#                                                     controller parents, above a `# private` line (Sake has no private def)
+#   send(action_name)                                 _send_action(c, name): a `case` over the actions
+#   instance_variables (view_assigns)                 view_assigns(c): the fields that do not start with _
+#   PostsController.action(:index)                    action(name): an ActionController::ActionEndpoint
+#   before_action/around_action/skip_*_action lines   ActiveSupport::Callbacks' four functions + the class body
+#   rescue_from lines                                 ActiveSupport::Rescuable::Generate's three
+#   "posts" => PostsController (constantize)          class ActionController::ControllerSet: Routing::Controllers' dispatch
+#
+# The inputs are the class bodies (a Ruby file, as ActiveSupport's generators read: Ruby requires the same file)
+# and the Sake source of the controllers. Generated source is read before the program, so it only adds
+# `def K.f` functions to the program's classes and declares the one new class ControllerSet.
+
+require "rails/activesupport/active_support/generate/class_body"
+require "rails/activesupport/active_support/generate/rescuable"
+require "rails/activesupport/active_support/inflector"
+require "settings"
+
+module ActionController
+  module Generate
+    # A controller class found in Sake source: its name, parent, line, path and public one-argument functions.
+    class SakeClass
+      attr_reader name, parent, line, path, actions
+    end
+
+    module_function
+
+    def CALLBACK_CALLS = String["before_action", "after_action", "around_action", "append_before_action", "append_after_action",
+      "append_around_action", "prepend_before_action", "prepend_after_action", "prepend_around_action",
+      "skip_before_action", "skip_after_action", "skip_around_action"]
+    def CALLS = Generate.CALLBACK_CALLS + String["rescue_from"] + Settings.CALLS
+    def ROOTS = String["ActionController::Base", "ActionController::API", "ActionController::Metal"]
+
+    # The classes of a Sake file, with full names (module nesting), and their action functions.
+    def scan_sake(text, path)
+      classes = SakeClass[]
+      stack = Any[]
+      private_from = Hash.new
+      String.lines(text).Array.each_with_index do |raw, i|
+        line = String.chomp(raw)
+        n = i + 1
+        m = String.match(line, /\A(\s*)(module|class) ([A-Z][\w:]*)(?: < ([A-Z][\w:]*))?\s*\z/)
+        if m
+          indent = String.size(Kernel.to_s(m[1]))
+          names = Array.map(stack) { |e| e[1] }
+          full = Array.join(names + String[Kernel.to_s(m[3])], "::")
+          Array.push(stack, [indent, Kernel.to_s(m[3]), full])
+          if m[2] == "class" && m[4] != nil
+            Array.push(classes, SakeClass.new(full, Kernel.to_s(m[4]), n, path, String[]))
+          end
+          next
+        end
+        e = String.match(line, /\A(\s*)end\s*\z/)
+        if e
+          top = Array.last(stack)
+          Array.pop(stack) if top && top[0] == String.size(Kernel.to_s(e[1]))
+          next
+        end
+        top = Array.last(stack)
+        next if top == nil
+        k = Array.find(classes) { |c| SakeClass.name(c) == top[2] }
+        next if k == nil
+        body_indent = top[0] + 2
+        if String.match?(line, /\A\s*# private\s*\z/) && String.size(line) - String.size(String.lstrip(line)) == body_indent
+          private_from[top[2]] = n
+          next
+        end
+        d = String.match(line, /\A(\s*)def ([a-z_]\w*[?!]?)\((\w+)\)/)
+        next if d == nil || String.size(Kernel.to_s(d[1])) != body_indent || Hash.key?(private_from, top[2])
+        name = Kernel.to_s(d[2])
+        next if String.start_with?(name, "_")
+        name = "new" if name == "new_"   # the `new` action (action_function)
+        Array.push(SakeClass.actions(k), name)
+      end
+      classes
+    end
+
+    # The controller classes: those whose parents lead to ActionController::Base, API or Metal.
+    def controllers(classes)
+      Array.select(classes) { |k| root_of(k, classes) != nil }
+    end
+
+    def root_of(k, classes)
+      parent = SakeClass.parent(k)
+      seen = 0
+      while seen < 50
+        return parent if Array.include?(Generate.ROOTS, parent)
+        pk = Array.find(classes) { |c| SakeClass.name(c) == parent }
+        return nil if pk == nil
+        parent = SakeClass.parent(pk)
+        seen += 1
+      end
+      nil
+    end
+
+    # k and its controller parents, the root (the class right below ActionController::Base) first.
+    def lineage(k, classes)
+      chain = SakeClass[k]
+      parent = SakeClass.parent(k)
+      while !Array.include?(Generate.ROOTS, parent)
+        pk = Array.find(classes) { |c| SakeClass.name(c) == parent }
+        break if pk == nil
+        Array.unshift(chain, pk)
+        parent = SakeClass.parent(pk)
+      end
+      chain
+    end
+
+    # Ruby's controller_path: name.delete_suffix("Controller").underscore
+    def controller_path(name) = ActiveSupport::Inflector.underscore(String.delete_suffix(name, "Controller"))
+    # Ruby's controller_name: name.demodulize.delete_suffix("Controller").underscore
+    def controller_name(name) = ActiveSupport::Inflector.underscore(String.delete_suffix(ActiveSupport::Inflector.demodulize(name), "Controller"))
+
+    # A Sake function name for an action (`new` is Sake's constructor: the action is `new_`).
+    def action_function(name) = name == "new" ? "new_" : name
+
+    def body_for(name, bodies) = Array.find(bodies) { |b| ActiveSupport::Generate::ClassBody.name(b) == name }
+
+    # The callbacks of one class body: [methods, arounds, Sake lines].
+    def scan_callbacks(body, path)
+      methods = Symbol[]
+      arounds = Symbol[]
+      lines = String[]
+      Array.each(ActiveSupport::Generate.declarations(body, Generate.CALLBACK_CALLS)) do |d|
+        n = ActiveSupport::Generate::Declaration.line(d)
+        call = ActiveSupport::Generate::Declaration.call(d)
+        pos = String[]
+        opts = String[]
+        Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+          o = ActiveSupport::Generate.option(a)
+          if o == nil
+            raise ArgumentError, "#{path}:#{n}: `#{a}`: a callback is a method name (a block or an object has no Sake form here)" if !ActiveSupport::Generate.symbol?(a)
+            s = ActiveSupport::Generate.symbol(a)
+            if !String.start_with?(call, "skip_")
+              Array.push(methods, s)
+              Array.push(arounds, s) if String.end_with?(call, "around_action")
+            end
+            Array.push(pos, a)
+            next
+          end
+          key, v = o
+          raise ArgumentError, "#{path}:#{n}: unknown key: :#{key}. Valid keys are: :only, :except, :if, :unless, :prepend, :raise" if !Array.include?(String["only", "except", "if", "unless", "prepend", "raise"], key)
+          if key == "if" || key == "unless"
+            Array.each(String.scan(v, /:(\w+[?!]?)/)) { |s| Array.push(methods, String.to_sym(Kernel.to_s(s[0]))) }
+          end
+          Array.push(opts, "#{key}: #{ActiveSupport::Generate.value(v, n, path)}")
+        end
+        Array.push(lines, "# sake-origin: #{path}:#{n}\n  AbstractController::Callbacks::ClassMethods.#{call}(c, #{ActiveSupport::Generate.join_args(pos, opts)})\n")
+      end
+      [methods, arounds, lines]
+    end
+
+    def callbacks_source(k, chain, bodies, path)
+      name = SakeClass.name(k)
+      methods = Symbol[:performed?]
+      arounds = Symbol[]
+      own = String[]
+      Array.each(chain) do |sk|
+        b = body_for(SakeClass.name(sk), bodies)
+        next if b == nil
+        ms, ars, lines = scan_callbacks(b, path)
+        Array.concat(methods, ms)
+        Array.concat(arounds, ars)
+        own = lines if Kernel.equal?(sk, k)
+      end
+      methods = Array.uniq(methods)
+      arounds = Array.uniq(arounds)
+      parent = Array.size(chain) > 1 ? SakeClass.name(Array.fetch(chain, -2)) : nil
+      s = "def #{name}.__callbacks(t) = #{name}.__class_callbacks\n"
+      s += "def #{name}.__callback(t, filter)\n  case filter\n"
+      Array.each(methods) { |m| s += "  in #{Kernel.inspect(m)} then #{m}(t)\n" if !Array.include?(arounds, m) }
+      s += "  else raise ArgumentError, \"undefined method '\#{filter}' for an instance of #{name}\"\n  end\nend\n"
+      if !Array.empty?(arounds)
+        s += "def #{name}.__around_callback(t, filter)\n  case filter\n"
+        Array.each(arounds) { |m| s += "  in #{Kernel.inspect(m)} then #{m}(t) { yield }\n" }
+        s += "  else raise ArgumentError, \"undefined method '\#{filter}' for an instance of #{name}\"\n  end\nend\n"
+      end
+      s += "def #{name}._run_process_action_callbacks(t, &b) = run_callbacks(t, :process_action, &b)\n"
+      s += "def #{name}.__class_callbacks = once do\n"
+      if parent == nil
+        s += "  c = ActiveSupport::Callbacks::ClassMethods.new_callbacks\n  AbstractController::Callbacks::ClassMethods.define_process_action(c)\n"
+      else
+        s += "  c = ActiveSupport::Callbacks::ClassMethods.inherit(#{parent}.__class_callbacks)\n"
+      end
+      Array.each(own) { |l| s += l }
+      s += "# sake-origin: none\n  c\nend\n"
+      s += "def #{name}._process_action_callbacks = ActiveSupport::Callbacks::ClassMethods.get_callbacks(#{name}.__class_callbacks, :process_action)\n"
+      s
+    end
+
+    def rescue_source(k, chain, bodies, path)
+      name = SakeClass.name(k)
+      # Every controller of the chain as a class body (empty when the Ruby file has none), so a subclass gets
+      # its parents' handlers.
+      list = ActiveSupport::Generate::ClassBody[]
+      Array.each(chain) do |sk|
+        b = body_for(SakeClass.name(sk), bodies)
+        decls = b ? Array.select(ActiveSupport::Generate::ClassBody.declarations(b)) { |d| ActiveSupport::Generate::Declaration.call(d) == "rescue_from" } : ActiveSupport::Generate::Declaration[]
+        parent = Kernel.equal?(sk, Array.first(chain)) ? nil : SakeClass.parent(sk)
+        Array.push(list, ActiveSupport::Generate::ClassBody.new(SakeClass.name(sk), parent, b ? ActiveSupport::Generate::ClassBody.line(b) : SakeClass.line(sk), decls))
+      end
+      body = Array.last(list)
+      src = body ? ActiveSupport::Rescuable::Generate.class_source(body, list, path) : ""
+      return src if src != ""
+      "def #{name}.__rescue_handlers(t) = Any[[\"\", :none]]\ndef #{name}.__rescue_match?(t, class_name, e) = false\ndef #{name}.__rescue_call(t, handler, e) = nil\n"
+    end
+
+    # The Sake source of one controller class.
+    def class_source(k, classes, bodies, path)
+      name = SakeClass.name(k)
+      chain = lineage(k, classes)
+      actions = String[]
+      Array.each(chain) { |sk| Array.each(SakeClass.actions(sk)) { |a| Array.push(actions, a) unless Array.include?(actions, a) } }
+      prefixes = Array.reverse(chain).Array.map { |sk| Kernel.inspect(controller_path(SakeClass.name(sk))) }
+      s = "# sake-origin: #{SakeClass.path(k)}:#{SakeClass.line(k)}\n"
+      s += "def #{name}._class_name(c) = #{Kernel.inspect(name)}\n"
+      s += "def #{name}.controller_path(c) = #{Kernel.inspect(controller_path(name))}\n"
+      s += "def #{name}.controller_name(c) = #{Kernel.inspect(controller_name(name))}\n"
+      s += "def #{name}._prefixes(c) = String[#{Array.join(prefixes, ", ")}]\n"
+      s += "def #{name}.__action_methods = once { Set.new(String[#{Array.join(Array.map(actions) { |a| Kernel.inspect(a) }, ", ")}]) }\n"
+      s += "def #{name}.action_methods(c) = #{name}.__action_methods\n"
+      root = root_of(k, classes)
+      branches = Array.map(actions) { |a| "  in #{Kernel.inspect(a)} then #{action_function(a)}(c)\n" }
+      Array.push(branches, "  in \"default_render\" then default_render(c)\n") if root == "ActionController::Base"
+      s += "def #{name}._send_action(c, method_name)\n"
+      s += Array.empty?(branches) ? "  if false then nil\n" : "  case method_name\n" + Array.join(branches, "")
+      s += "  else raise AbstractController::ActionNotFound.new(\"The action '\#{method_name}' could not be found for #{name}\", #{Kernel.inspect(name)}, method_name)\n  end\nend\n"
+      s += "def #{name}.view_assigns(c)\n  h = Hash.new\n  Array.each(#{name}.field_names) { |f| h[Symbol.to_s(f)] = #{name}.read_field(c, f) unless String.start_with?(Symbol.to_s(f), \"_\") }\n  h\nend\n"
+      s += "def #{name}.action(name) = ActionController::ActionEndpoint.new(ActionController::ControllerSet.new, #{Kernel.inspect(controller_path(name))}, Kernel.to_s(name))\n"
+      # A bare Metal has no callbacks or rescue_from (AbstractController::Callbacks, Rescue are Base's and API's).
+      if root != "ActionController::Metal"
+        s += callbacks_source(k, chain, bodies, path)
+        s += rescue_source(k, chain, bodies, path)
+      end
+      parent = Array.size(chain) > 1 ? SakeClass.name(Array.fetch(chain, -2)) : nil
+      s += Settings.class_source(name, parent, body_for(name, bodies), path)
+      in_namespace(name, s)
+    end
+
+    # `def A::B.f` is not Sake: a namespaced controller's functions are written inside its modules
+    # (`module Admin` + `def PostsController.f` defines Admin::PostsController.f).
+    def in_namespace(name, s)
+      return s unless String.include?(name, "::")
+      parts = String.split(name, "::")
+      short = Array.last(parts) || name
+      mods = Array.take(parts, Array.size(parts) - 1)
+      body = String.gsub(s, Regexp.new("^def #{Regexp.escape(name)}\\."), "def #{short}.")
+      Array.join(Array.map(mods) { |m| "module #{m}\n" }, "") + body + Array.join(Array.map(mods) { |m| "end\n" }, "")
+    end
+
+    # Rails' controller lookup by name (constantize) for the RouteSet's Dispatcher.
+    def controller_set_source(ks)
+      s = "# sake-origin: none\nmodule ActionController\n  class ControllerSet\n    include ActionDispatch::Routing::Controllers\n"
+      s += "    def dispatch(cs, controller, action, req)\n      case controller\n"
+      Array.each(ks) do |k|
+        name = SakeClass.name(k)
+        s += "      in #{Kernel.inspect(controller_path(name))} then ::#{name}.dispatch(::#{name}.new, action, req, ::#{name}.make_response!(req))\n"
+      end
+      s += "      else raise ActionController::RoutingError.new(\"uninitialized constant \#{ActiveSupport::Inflector.camelize(controller)}Controller\", Any[])\n"
+      s += "      end\n    end\n  end\nend\n"
+      s
+    end
+
+    # The whole source: every controller of the Sake files, with the class bodies of the Ruby files.
+    def source(paths)
+      classes = SakeClass[]
+      bodies = ActiveSupport::Generate::ClassBody[]
+      decl_path = ""
+      Array.each(paths) do |path|
+        if String.end_with?(path, ".rb")
+          decl_path = path
+          Array.concat(bodies, ActiveSupport::Generate.parse(File.read(path), path))
+        else
+          Array.concat(classes, scan_sake(File.read(path), path))
+        end
+      end
+      Array.each(bodies) { |b| Settings.expand(b) }
+      Array.each(bodies) do |b|
+        Array.each(ActiveSupport::Generate::ClassBody.declarations(b)) do |d|
+          next if Array.include?(Generate.CALLS, ActiveSupport::Generate::Declaration.call(d))
+          raise ArgumentError, "#{decl_path}:#{ActiveSupport::Generate::Declaration.line(d)}: `#{ActiveSupport::Generate::Declaration.call(d)}` is not a controller class-body declaration the generator knows"
+        end
+      end
+      ks = controllers(classes)
+      s = ""
+      Array.each(ks) { |k| s += class_source(k, classes, bodies, decl_path) }
+      s + controller_set_source(ks)
+    end
+  end
+end

@@ -1,0 +1,86 @@
+require "rails/actionpack/action_dispatch/middleware/stack"
+require "rails/actionpack/action_controller/base"
+
+# Conditional GET: fresh_when with etag/last_modified/public/cache_control, stale?, a strong etag, the flash in
+# the etag (EtagWithFlash), expires_in, expires_now, no_store, must_understand, http_cache_forever.
+class PagesController < ActionController::Base
+  def weak(c) = fresh_when c, etag: "v1", public: true
+  def modified(c) = fresh_when c, last_modified: Time.utc(2026, 10, 1, 12, 0, 0), cache_control: Hash.of(max_age: 60)
+  def strong(c) = fresh_when c, strong_etag: Any["post", 7]
+  def both(c)
+    if stale?(c, etag: "v2", last_modified: Time.utc(2026, 10, 1, 12, 0, 0))
+      render c, plain: "fresh content"
+    end
+  end
+  def flashed(c)
+    ActionDispatch::Flash::FlashNow.[]=(ActionDispatch::Flash::FlashHash.now(flash(c)), :notice, "hi")
+    fresh_when c, etag: "v1"
+  end
+  def expiring(c)
+    expires_in c, 3600, public: true, must_revalidate: true, foo: "bar"
+    render c, plain: "expires"
+  end
+  def now(c)
+    expires_now c
+    render c, plain: "now"
+  end
+  def nostore(c)
+    no_store c
+    render c, plain: "no store"
+  end
+  def understand(c)
+    must_understand c
+    render c, plain: "must understand"
+  end
+  def forever(c)
+    http_cache_forever(c, public: true) { render c, plain: "forever" }
+  end
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_conditional_get.sake"
+
+class ActionDispatch::Routing::Mapper
+  def cg_routes(map)
+    Array.each(String["weak", "modified", "strong", "both", "flashed", "expiring", "now", "nostore", "understand", "forever"]) { |a| get map, a, to: "pages##{a}" }
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.cg_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+# the session the flash needs (a store kept in memory is enough here)
+stack = ActionDispatch::MiddlewareStack.new
+ActionDispatch::MiddlewareStack.use(stack, "ActionDispatch::Flash")
+app = ActionDispatch::MiddlewareStack.build(stack, set)
+
+def send_request(app, path, headers = Hash.new)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}")
+  env["HTTP_ACCEPT"] = "application/json"   # no templates: the implicit render is 204, not MissingExactTemplate
+  Hash.each(headers) { |k, v| env[k] = v }
+  status, hs, body = ActionDispatch::App.call(app, ActionDispatch::Request.new(env))
+  out = ""
+  Array.each(body) { |s| out += s }
+  puts("GET #{path} #{Array.join(Hash.keys(headers), ",")} -> #{status} #{Kernel.inspect(out)}")
+  Array.each(String["etag", "last-modified", "cache-control", "date"]) do |k|
+    v = hs[k]
+    v = "<now>" if k == "date" && v != nil
+    puts("  #{k}: #{v}") if v != nil
+  end
+  hs["etag"]
+end
+
+etag = send_request(app, "/weak")
+send_request(app, "/weak", Hash.of("HTTP_IF_NONE_MATCH" => Kernel.to_s(etag)))
+send_request(app, "/modified")
+send_request(app, "/modified", Hash.of("HTTP_IF_MODIFIED_SINCE" => "Thu, 01 Oct 2026 12:00:00 GMT"))
+send_request(app, "/modified", Hash.of("HTTP_IF_MODIFIED_SINCE" => "Wed, 30 Sep 2026 12:00:00 GMT"))
+etag = send_request(app, "/strong")
+send_request(app, "/strong", Hash.of("HTTP_IF_NONE_MATCH" => Kernel.to_s(etag)))
+etag = send_request(app, "/both")
+send_request(app, "/both", Hash.of("HTTP_IF_NONE_MATCH" => Kernel.to_s(etag), "HTTP_IF_MODIFIED_SINCE" => "Thu, 01 Oct 2026 12:00:00 GMT"))
+send_request(app, "/both", Hash.of("HTTP_IF_NONE_MATCH" => Kernel.to_s(etag)))
+send_request(app, "/flashed")
+send_request(app, "/expiring")
+send_request(app, "/now")
+send_request(app, "/nostore")
+send_request(app, "/understand")
+send_request(app, "/forever")

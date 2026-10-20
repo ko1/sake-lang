@@ -1,0 +1,146 @@
+# Port of actionpack-8.1.3/lib/abstract_controller/callbacks.rb (partial: no block callbacks (`before_action { }`), no callback objects)
+#
+# Ruby's `before_action :set_post, only: [:show]` normalizes `only:` into an ActionFilter condition and calls
+# set_callback(:process_action, :before, :set_post, if: [filter]). The same happens here at the first use of the
+# class's chains: the class body's lines become calls of ClassMethods below inside the generated
+# `__class_callbacks` (action_controller/generate/controllers.sake), on ActiveSupport::Callbacks' chains.
+#
+#   Ruby (class body)                              Sake (generated)
+#   before_action :set_post, only: [:show]         AbstractController::Callbacks::ClassMethods.before_action(c, :set_post, {only: Any[:show]})
+#   define_callbacks :process_action,              ClassMethods.define_process_action(c)   (Callbacks' `included do`)
+#     terminator: ->(c, l) { l.call; c.performed? }
+
+require "rails/activesupport/active_support/callbacks"
+require "error"
+
+module AbstractController
+  module Callbacks
+    include ActiveSupport::Callbacks
+
+    # What ActionFilter asks of the controller (AbstractController::Base has them), as mixin functions to dispatch
+    # on: required stubs would beat the pasted definitions (bugs/actionpack_controller_required_stub_beats_pasted.sake).
+    def callbacks_action_name(c) = action_name(c)
+    def callbacks_available_action?(c, name) = available_action?(c, name)
+    def callbacks_class_name(c) = _class_name(c)
+
+    # mattr_accessor :raise_on_missing_callback_actions, default: false
+    def _callbacks_config = once { Hash.of(:raise_on_missing_callback_actions => false) }
+    def raise_on_missing_callback_actions = _callbacks_config[:raise_on_missing_callback_actions] == true
+    def set_raise_on_missing_callback_actions(v) = _callbacks_config[:raise_on_missing_callback_actions] = v
+    module_function :_callbacks_config, :raise_on_missing_callback_actions, :set_raise_on_missing_callback_actions
+
+    # Ruby's private process_action(...) = run_callbacks(:process_action) { super }; the block is the super.
+    def callbacks_process_action(c, method_name)
+      run_callbacks(c, :process_action) { yield }
+    end
+
+    # `only:`/`except:` as a condition object (Ruby calls its before/after/around, aliases of match?).
+    class ActionFilter
+      attr_reader filters, conditional_key, actions
+      include ActiveSupport::Callbacks::Conditionals::Filter
+
+      def build(filters, conditional_key, actions)
+        list = case actions
+               in Array then Array.map(actions) { |a| Kernel.to_s(a) }
+               else String[Kernel.to_s(actions)]
+               end
+        ActionFilter.new(filters, conditional_key, Set.new(list))
+      end
+
+      def match?(f, controller)
+        if Callbacks.raise_on_missing_callback_actions
+          missing_action = Set.find(@actions) { |action| !Callbacks.callbacks_available_action?(controller, action) }
+          if missing_action
+            filter_names = Array.size(@filters) == 1 ? Kernel.inspect(Array.first(@filters)) : Kernel.inspect(@filters)
+            message = "The #{missing_action} action could not be found for the #{filter_names}\n" +
+              "callback on #{Callbacks.callbacks_class_name(controller)}, but it is listed in the controller's\n" +
+              ":#{@conditional_key} option.\n\n" +
+              "Raising for missing callback actions is a new default in Rails 7.1, if you'd\n" +
+              "like to turn this off you can delete the option from the environment configurations\n" +
+              "or set `config.action_controller.raise_on_missing_callback_actions` to `false`.\n"
+            raise ActionNotFound.new(message, Callbacks.callbacks_class_name(controller), missing_action)
+          end
+        end
+        Set.include?(@actions, Callbacks.callbacks_action_name(controller))
+      end
+    end
+
+    # Ruby's ClassMethods (before_action, ...): functions of the class's chains, which the generated class body
+    # passes first. A call's arguments are the names and one trailing Record of options, as the class body has them.
+    module ClassMethods
+      module_function
+
+      # Callbacks' `included do define_callbacks :process_action, terminator: ..., skip_after_callbacks_if_terminated: true`
+      def define_process_action(callbacks)
+        ActiveSupport::Callbacks::ClassMethods.define_callbacks(callbacks, :process_action, {terminator: :performed?, skip_after_callbacks_if_terminated: true})
+      end
+
+      # Ruby's _insert_callbacks + _normalize_callback_options: [names, if conditions, unless conditions, prepend?].
+      def _insert_callbacks(names_and_options)
+        names = Symbol[]
+        options = Hash.new
+        Array.each(names_and_options) do |x|
+          case x
+          in Symbol then Array.push(names, x)
+          else Hash.merge!(options, Record.to_h(x))
+          end
+        end
+        ifs = _conditions(options[:if])
+        unlesses = _conditions(options[:unless])
+        only = options[:only]
+        Array.unshift(ifs, ActionFilter.build(names, :only, only)) if only != nil
+        except = options[:except]
+        Array.unshift(unlesses, ActionFilter.build(names, :except, except)) if except != nil
+        [names, ifs, unlesses, Hash.key?(options, :if) || only != nil, Hash.key?(options, :unless) || except != nil, options[:prepend] == true]
+      end
+
+      def _conditions(x)
+        list = Any[]
+        case x
+        in nil then nil
+        in Array then Array.each(x) { |v| Array.push(list, v) }
+        else Array.push(list, x)
+        end
+        list
+      end
+
+      def _set(callbacks, kind, names_and_options, prepend)
+        names, ifs, unlesses, _, _, pre = _insert_callbacks(names_and_options)
+        Array.each(names) do |name|
+          ActiveSupport::Callbacks::ClassMethods.set_callback(callbacks, :process_action, kind, name, {if: ifs, unless: unlesses, prepend: prepend || pre})
+        end
+        callbacks
+      end
+
+      def _skip(callbacks, kind, names_and_options)
+        names, ifs, unlesses, has_if, has_unless, _ = _insert_callbacks(names_and_options)
+        Array.each(names) do |name|
+          if has_if && has_unless
+            ActiveSupport::Callbacks::ClassMethods.skip_callback(callbacks, :process_action, kind, name, {if: ifs, unless: unlesses})
+          elsif has_if
+            ActiveSupport::Callbacks::ClassMethods.skip_callback(callbacks, :process_action, kind, name, {if: ifs})
+          elsif has_unless
+            ActiveSupport::Callbacks::ClassMethods.skip_callback(callbacks, :process_action, kind, name, {unless: unlesses})
+          else
+            ActiveSupport::Callbacks::ClassMethods.skip_callback(callbacks, :process_action, kind, name)
+          end
+        end
+        callbacks
+      end
+
+      # Ruby defines these nine (and the append_ aliases) with define_method over [:before, :after, :around].
+      def before_action(callbacks, *names) = _set(callbacks, :before, names, false)
+      def after_action(callbacks, *names) = _set(callbacks, :after, names, false)
+      def around_action(callbacks, *names) = _set(callbacks, :around, names, false)
+      def append_before_action(callbacks, *names) = _set(callbacks, :before, names, false)
+      def append_after_action(callbacks, *names) = _set(callbacks, :after, names, false)
+      def append_around_action(callbacks, *names) = _set(callbacks, :around, names, false)
+      def prepend_before_action(callbacks, *names) = _set(callbacks, :before, names, true)
+      def prepend_after_action(callbacks, *names) = _set(callbacks, :after, names, true)
+      def prepend_around_action(callbacks, *names) = _set(callbacks, :around, names, true)
+      def skip_before_action(callbacks, *names) = _skip(callbacks, :before, names)
+      def skip_after_action(callbacks, *names) = _skip(callbacks, :after, names)
+      def skip_around_action(callbacks, *names) = _skip(callbacks, :around, names)
+    end
+  end
+end

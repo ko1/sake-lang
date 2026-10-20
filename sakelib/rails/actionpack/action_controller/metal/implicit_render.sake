@@ -1,0 +1,54 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/implicit_render.rb and basic_implicit_render.rb
+#
+# Ruby's BasicImplicitRender#send_action calls super (the action) and then default_render unless performed?.
+# The action call is the generated `_send_action(c, name)` (Ruby's `send`).
+
+require "exceptions"
+
+module ActionController
+  module BasicImplicitRender
+    def send_action(c, method_name) = basic_implicit_render_send_action(c, method_name)
+    def basic_implicit_render_send_action(c, method_name)
+      ret = _send_action(c, method_name)
+      default_render(c) unless performed?(c)
+      ret
+    end
+
+    def basic_default_render(c) = head(c, :no_content)
+    def default_render(c) = basic_default_render(c)
+  end
+
+  module ImplicitRender
+    # Renders the template of the action when there is one, else 204 No Content (or an error for a browser).
+    def default_render(c)
+      req = request(c)
+      if template_exists?(c, action_name(c), _prefixes(c))
+        render(c)
+      elsif any_templates?(c, action_name(c), _prefixes(c))
+        message = "#{_class_name(c)}\##{action_name(c)} is missing a template " +
+          "for this request format and variant.\n" +
+          "\nrequest.formats: #{Kernel.inspect(Array.map(ActionDispatch::Request.formats(req)) { |f| Mime::Type.to_s(f) })}" +
+          "\nrequest.variant: #{Kernel.inspect(ActionDispatch::Request.variant(req))}"
+        raise UnknownFormat, message
+      elsif interactive_browser_request?(c)
+        message = "#{_class_name(c)}\##{action_name(c)} is missing a template for request formats: #{Array.join(Array.map(ActionDispatch::Request.formats(req)) { |f| Mime::Type.to_s(f) }, ",")}"
+        raise MissingExactTemplate.new(message, _class_name(c), action_name(c))
+      else
+        l = logger(c)
+        ActiveSupport::Logger.info(l, "No template found for #{_class_name(c)}\##{action_name(c)}, rendering head :no_content") if l
+        basic_default_render(c)
+      end
+    end
+
+    def method_for_action(c, action_name) = implicit_render_method_for_action(c, action_name)
+    def implicit_render_method_for_action(c, action_name)
+      return action_name if action_method?(c, action_name)
+      template_exists?(c, action_name, _prefixes(c)) ? "default_render" : nil
+    end
+
+    def interactive_browser_request?(c)
+      req = request(c)
+      ActionDispatch::Request.get?(req) && Mime::Type.==(ActionDispatch::Request.format(req), Mime.[](:html)) && !ActionDispatch::Request.xhr?(req)
+    end
+  end
+end

@@ -1,0 +1,62 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/renderers.rb (partial: no add_renderer/remove_renderer, no use_renderers; the four renderers are a `case`)
+#
+# Ruby's `add :json do |json, options| ... end` defines a method `_render_with_renderer_json` and adds :json to
+# RENDERERS; render_to_body looks for the first renderer key in the options and `send`s that method. Sake has no
+# define_method: the renderers are the branches of `_render_with_renderer(c, name, value, options)`. A renderer an
+# app adds would be one more branch (railties could generate it).
+
+require "rails/activesupport/active_support/json"
+require "exceptions"
+
+module ActionController
+  module Renderers
+    # RENDERERS (Renderers::All's _renderers), in Ruby's order of `add`.
+    def renderers = Symbol[:json, :js, :xml, :markdown]
+    # class_attribute :escape_json_responses, default: true (deprecated in 8.1 to be true)
+    def escape_json_responses? = true
+    module_function :renderers, :escape_json_responses?
+
+    def render_to_body(c, options) = _render_to_body_with_renderer(c, options) || rendering_render_to_body(c, options)
+
+    def _render_to_body_with_renderer(c, options)
+      Array.each(Renderers.renderers) do |name|
+        if Hash.key?(options, name)
+          _process_options(c, options)
+          return _render_with_renderer(c, name, Hash.delete(options, name), options)
+        end
+      end
+      nil
+    end
+
+    # The bodies of Ruby's `add :json`, `add :js`, `add :xml`, `add :markdown`.
+    def _render_with_renderer(c, name, value, options)
+      case name
+      in :json
+        json_options = Hash.except(options, :callback, :content_type, :status)
+        callback = options[:callback]
+        json = (value in String) ? value : ActiveSupport::JSON.encode(value, json_options)
+        if callback != nil && callback != ""
+          mt = media_type(c)
+          set_content_type(c, :js) if mt == nil || mt == "application/json"
+          "/**/#{callback}(#{json})"
+        else
+          set_content_type(c, :json) if media_type(c) == nil
+          json
+        end
+      in :js
+        set_content_type(c, :js) if media_type(c) == nil
+        Kernel.to_s(value)
+      in :xml
+        set_content_type(c, :xml) if media_type(c) == nil
+        Kernel.to_s(value)
+      in :markdown
+        set_content_type(c, :md) if media_type(c) == nil
+        Kernel.to_s(value)
+      else raise MissingRenderer.new("No renderer defined for format: #{name}")
+      end
+    end
+  end
+
+  class MissingRenderer < StandardError
+  end
+end

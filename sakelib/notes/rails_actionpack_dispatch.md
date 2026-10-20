@@ -240,9 +240,10 @@ helpers.post_path(post, format: :json)          ShopUrlHelpers.post_path(ctx, po
    `{ yield }` inside `shallow`/`nested`/`scope` blocks. `bin/sake -c --strict` of a file drawing 30 routes: **2 min
    5 s**; one `resources`: 14.7 s; one `get`: 2.0 s; running it: 1.2 s. Rewritten with `_enter_*` functions (push a
    frame, return the old scope; the caller restores it) so that only the public DSL functions yield, and with
-   apply_common_behavior_for as frames entered one after the other: **2.9 s**, 2.1 s, same output. A synthetic file
-   with the same nesting of yields did not reproduce the blow-up (0.7 s), so I could not isolate the cause; the
-   before/after above is the evidence. This is the measure the whole effort is about: Rails-shaped code with blocks
+   apply_common_behavior_for as frames entered one after the other: **2.9 s**, 2.1 s, same output. Reconstructed and shrunk in
+   experiments/2026-10-20-rails-scale/bugs/actionpack_dispatch_slow_check_nested_yield/ (82 s vs 2.7 s): the cost is
+   a yielding function reaching itself again with `{ yield }` from several call sites (resources → apply_common_behavior_for
+   → public_send_resource → resources); 64 such sites in a one-function file take 9 s, without the recursion 1 s. This is the measure the whole effort is about: Rails-shaped code with blocks
    passed down through helpers can cost the checker far more than its size suggests.
 10. A chain step `RoutesInspector.make(...).Routing::RoutesInspector.format(...)` at the top level → `undefined type
     or module Routing::RoutesInspector` → the full `ActionDispatch::Routing::RoutesInspector` (a step's type is

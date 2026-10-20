@@ -1,0 +1,52 @@
+require "rails/actionpack/action_controller/base"
+require "rails/actionpack/action_controller/api"
+require "json"
+
+# ParamsWrapper: a JSON body's keys wrapped under the controller's singular name, with :include, :exclude, a
+# name, false, a subclass inheriting its parent's options, an API controller with form bodies, and the cases
+# that are not wrapped (a form body, a key already there).
+class ApplicationController < ActionController::Base
+  def create(c) = render c, plain: "#{_class_name(c)} #{Kernel.inspect(ActionController::Parameters.to_unsafe_h(params(c)))}"
+end
+class PostsController < ApplicationController
+end
+class PeopleController < ApplicationController
+end
+class CommentsController < ApplicationController
+end
+class NotesController < ApplicationController
+end
+module Api
+  class UsersController < ActionController::API
+    def create(c) = render c, plain: "#{_class_name(c)} #{Kernel.inspect(ActionController::Parameters.to_unsafe_h(params(c)))} #{Kernel.inspect(ActionDispatch::Request.request_parameters(request(c)))}"
+  end
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_params_wrapper_decl.rb", "controller_params_wrapper.sake"
+
+class ActionDispatch::Routing::Mapper
+  def wrapper_routes(map)
+    Array.each(String["posts", "people", "comments", "notes"]) { |r| post map, r, to: "#{r}#create" }
+    post map, "users", to: "api/users#create"
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.wrapper_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+def request(set, path, content_type, body)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}", method: "POST", input: body)
+  env["CONTENT_TYPE"] = content_type
+  status, _headers, out = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+  text = ""
+  Array.each(out) { |s| text += s }
+  puts("#{path} #{content_type} -> #{status} #{text}")
+end
+
+json = JSON.generate(Hash.of("title" => "Hi", "name" => "ann", "age" => 3, "secret" => "x"))
+request(set, "/posts", "application/json", json)
+request(set, "/posts", "application/x-www-form-urlencoded", "title=Hi")
+request(set, "/posts", "application/json", JSON.generate(Hash.of("title" => "Hi", "post" => "given")))
+request(set, "/people", "application/json", json)
+request(set, "/comments", "application/json", json)
+request(set, "/notes", "application/json", json)
+request(set, "/users", "application/x-www-form-urlencoded", "name=bob&authenticity_token=t")

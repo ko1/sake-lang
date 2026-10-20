@@ -1,0 +1,131 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/params_wrapper.rb (partial: no model (`wrap_parameters Person`, include from attribute_names): the default name is the controller name singularized)
+#
+# Ruby's class attribute _wrapper_options holds an Options Struct with the controller class (klass) in it, and
+# `inherited` copies the parent's with the subclass as klass. Here klass is the controller's name, and the
+# generator writes the class attribute per controller from the class body's `wrap_parameters` lines:
+#
+#   Ruby (class body)                              Sake (generated)
+#   wrap_parameters format: [:json]                def PostsController.__wrapper_options = once { ParamsWrapper::ClassMethods.wrap_parameters(
+#                                                    ApplicationController.__wrapper_options, "posts", {format: Any[:json]}) }
+#   (a subclass)                                   def CommentsController.__wrapper_options = once { ParamsWrapper::ClassMethods.inherit(
+#                                                    PostsController.__wrapper_options, "comments") }
+
+require "rails/activesupport/active_support/inflector"
+require "rails/actionpack/action_dispatch/http/filter_parameters"
+
+module ActionController
+  module ParamsWrapper
+    def EXCLUDE_PARAMETERS = String["authenticity_token", "_method", "utf8"]
+    module_function :EXCLUDE_PARAMETERS
+
+    # Ruby's Options < Struct.new(:name, :format, :include, :exclude, :klass, :model); name_set is Ruby's @name_set.
+    class Options
+      attr_reader format, include, exclude, klass, name_set
+      private attr_accessor name_
+
+      def from_hash(hash, klass)
+        name = hash[:name]
+        f = hash[:format]
+        format = case f
+                 in nil then Symbol[]
+                 in Array then Array.map(f) { |x| String.to_sym(Kernel.to_s(x)) }
+                 else Symbol[String.to_sym(Kernel.to_s(f))]
+                 end
+        Options.new(format, Options.strings(hash[:include]), Options.strings(hash[:exclude]), klass, name != nil, name == nil ? nil : Kernel.to_s(name))
+      end
+
+      def strings(x)
+        case x
+        in nil then nil
+        in Array then Array.map(x) { |v| Kernel.to_s(v) }
+        else String[Kernel.to_s(x)]
+        end
+      end
+
+      # The wrapping key: the given name, else the controller name singularized (Ruby computes it once, lazily).
+      def name(o)
+        return @name_ if @name_set
+        n = @name_
+        return n if n
+        n = ActiveSupport::Inflector.singularize(@klass)
+        @name_ = n
+        n
+      end
+
+      def to_h(o) = Hash.of(format: @format)
+      def with_klass(o, klass) = Options.new(@format, @include, @exclude, klass, @name_set, @name_set ? @name_ : nil)
+    end
+
+    # Ruby's ClassMethods (the class body's wrap_parameters, inherited).
+    module ClassMethods
+      module_function
+
+      def default(klass) = Options.from_hash(Hash.of(format: Any[]), klass)
+
+      # Ruby's wrap_parameters(name_or_model_or_options, options = {}): the arguments as the class body has them.
+      def wrap_parameters(base, klass, *args)
+        options = Hash.new
+        Array.each(args) do |a|
+          case a
+          in false then options[:format] = Any[]
+          in Symbol | String then options[:name] = a
+          else Hash.merge!(options, Record.to_h(a))
+          end
+        end
+        opts = Hash.merge(Hash.of(format: Options.format(base)), options)
+        Options.from_hash(opts, klass)
+      end
+
+      # Ruby's inherited(klass): the parent's options, for the subclass when wrapping is on.
+      def inherit(base, klass) = Array.empty?(Options.format(base)) ? base : Options.with_klass(base, klass)
+    end
+
+    # Required of the controller (generated): the class attribute.
+    def _wrapper_options(c) = raise(NotImplementedError)
+
+    # Ruby's private process_action(*): wraps the parameters, then super (the block).
+    def params_wrapper_process_action(c, method_name)
+      _perform_parameter_wrapping(c) if _wrapper_enabled?(c)
+      yield
+    end
+
+    def _wrapper_key(c) = Options.name(_wrapper_options(c))
+    def _wrapper_formats(c) = Options.format(_wrapper_options(c))
+
+    def _wrap_parameters(c, parameters) = Hash.of(_wrapper_key(c) => _extract_parameters(c, parameters))
+
+    def _extract_parameters(c, parameters)
+      opts = _wrapper_options(c)
+      include_only = Options.include(opts)
+      exclude = Options.exclude(opts)
+      if include_only
+        Hash.slice(parameters, *include_only)
+      elsif exclude
+        Hash.except(parameters, *(exclude + ParamsWrapper.EXCLUDE_PARAMETERS))
+      else
+        Hash.except(parameters, *ParamsWrapper.EXCLUDE_PARAMETERS)
+      end
+    end
+
+    def _wrapper_enabled?(c)
+      req = request(c)
+      return false unless ActionDispatch::Request.has_content_type?(req)
+      mt = ActionDispatch::Request.content_mime_type(req)
+      ref = mt ? Mime::Type.ref(mt) : nil
+      ref != nil && Array.include?(_wrapper_formats(c), ref) && !Hash.key?(ActionDispatch::Request.parameters(req), _wrapper_key(c))
+    rescue ActionDispatch::Http::Parameters::ParseError
+      false
+    end
+
+    def _perform_parameter_wrapping(c)
+      req = request(c)
+      wrapped_hash = _wrap_parameters(c, ActionDispatch::Request.request_parameters(req))
+      wrapped_keys = Hash.keys(ActionDispatch::Request.request_parameters(req))
+      wrapped_filtered_hash = _wrap_parameters(c, Hash.slice(ActionDispatch::Request.filtered_parameters(req), *wrapped_keys))
+      Hash.merge!(ActionDispatch::Request.parameters(req), wrapped_hash)
+      Hash.merge!(ActionDispatch::Request.request_parameters(req), wrapped_hash)
+      Hash.merge!(ActionDispatch::Request.filtered_parameters(req), wrapped_filtered_hash)
+      nil
+    end
+  end
+end

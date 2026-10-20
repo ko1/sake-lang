@@ -1,0 +1,73 @@
+require "rails/actionpack/action_controller/base"
+
+# redirect_to with a URL, a path, url_for options (through the routes), status options, a protocol-relative URL;
+# redirect_back and redirect_back_or_to with and without a referer; the open-redirect, path-relative and
+# header-safety checks and their messages; url_from.
+class GoController < ActionController::Base
+  def show(c) = render c, plain: "show #{params(c)[:id]}"
+  def to_url(c) = redirect_to c, "http://www.example.com/elsewhere"
+  def to_path(c) = redirect_to c, "/posts/1", status: :see_other
+  def to_options(c) = redirect_to c, Hash.of(action: "show", id: 5)
+  def to_options_status(c) = redirect_to c, Hash.of(controller: "go", action: "show", id: 6, status: 301)
+  def to_other_host(c) = redirect_to c, "http://evil.example.org/x"
+  def to_other_host_denied(c) = redirect_to c, "http://evil.example.org/x", allow_other_host: false
+  def to_other_host_allowed(c) = redirect_to c, "http://evil.example.org/x", allow_other_host: true
+  def protocol_relative(c) = redirect_to c, "//evil.example.org/y", allow_other_host: false
+  def relative(c) = redirect_to c, "posts"
+  def unsafe(c) = redirect_to c, "/posts/\u0001x"
+  def stripped(c) = redirect_to c, "/posts\r\n/1"
+  def to_nil(c) = redirect_to c, nil
+  def back(c) = redirect_back c, fallback_location: "/fallback"
+  def back_or(c) = redirect_back_or_to c, "/fallback", allow_other_host: false
+  def from(c) = render c, plain: "#{Kernel.inspect(url_from(c, "/inside"))} #{Kernel.inspect(url_from(c, "http://evil.example.org/"))} #{Kernel.inspect(url_from(c, "http://www.example.com/ok"))} #{Kernel.inspect(url_from(c, ""))}"
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_redirecting.sake"
+
+class ActionDispatch::Routing::Mapper
+  def go_routes(map)
+    get map, "go/show/:id", to: "go#show"
+    Array.each(String["to_url", "to_path", "to_options", "to_options_status", "to_other_host", "to_other_host_denied",
+      "to_other_host_allowed", "protocol_relative", "relative", "unsafe", "stripped", "to_nil", "back", "back_or", "from"]) { |a| get map, "go/#{a}", to: "go##{a}" }
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.go_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+def send_request(set, path, referer = nil)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}")
+  env["HTTP_REFERER"] = referer if referer
+  begin
+    status, hs, body = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+    out = ""
+    Array.each(body) { |s| out += s }
+    puts("#{path}#{referer ? " (from #{referer})" : ""} -> #{status} #{Kernel.inspect(hs["location"])} #{Kernel.inspect(out)}")
+  rescue => e
+    puts("#{path} -> error: #{Exception.message(e)}")
+  end
+end
+
+send_request(set, "/go/to_url")
+send_request(set, "/go/to_path")
+send_request(set, "/go/to_options")
+send_request(set, "/go/to_options_status")
+send_request(set, "/go/to_other_host")
+send_request(set, "/go/to_other_host_denied")
+send_request(set, "/go/to_other_host_allowed")
+send_request(set, "/go/protocol_relative")
+send_request(set, "/go/relative")
+send_request(set, "/go/unsafe")
+send_request(set, "/go/stripped")
+send_request(set, "/go/to_nil")
+send_request(set, "/go/back")
+send_request(set, "/go/back", "http://www.example.com/came/from")
+send_request(set, "/go/back", "http://evil.example.org/came/from")
+send_request(set, "/go/back_or", "http://evil.example.org/came/from")
+send_request(set, "/go/back_or", "http://www.example.com/came/from")
+send_request(set, "/go/from")
+puts("raise_on_open_redirects = true, action_on_path_relative_redirect = :raise:")
+ActionController::Redirecting.set_raise_on_open_redirects(true)
+ActionController::Redirecting.set_action_on_path_relative_redirect(:raise)
+send_request(set, "/go/to_other_host")
+send_request(set, "/go/back", "http://evil.example.org/came/from")
+send_request(set, "/go/relative")

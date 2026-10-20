@@ -1,0 +1,169 @@
+require "rails/actionpack/action_controller/metal/strong_parameters"
+
+P = ActionController::Parameters
+
+def show(label, x)
+  puts("#{label}: #{Kernel.inspect(x)}")
+end
+
+def check(label)
+  show(label, yield)
+rescue ActionController::ParameterMissing => e
+  puts("#{label}: ActionController::ParameterMissing: #{Exception.message(e)} keys=#{Kernel.inspect(ActionController::ParameterMissing.keys(e))}")
+rescue ActionController::ExpectedParameterMissing => e
+  puts("#{label}: ActionController::ExpectedParameterMissing: #{Exception.message(e)} keys=#{Kernel.inspect(ActionController::ExpectedParameterMissing.keys(e))}")
+rescue ActionController::UnpermittedParameters => e
+  puts("#{label}: ActionController::UnpermittedParameters: #{Exception.message(e)} params=#{Kernel.inspect(ActionController::UnpermittedParameters.params(e))}")
+rescue ActionController::UnfilteredParameters => e
+  puts("#{label}: ActionController::UnfilteredParameters: #{Exception.message(e)}")
+rescue ActionController::InvalidParameterKey => e
+  puts("#{label}: ActionController::InvalidParameterKey: #{Exception.message(e)}")
+end
+
+def class_name(v)
+  case v
+  in String then "String"
+  in nil then "NilClass"
+  in ActionController::Parameters then "ActionController::Parameters"
+  else "Object"
+  end
+end
+
+# params as a request gives them (String keys), plus a Symbol-keyed Hash
+raw = Hash.of(
+  "controller" => "posts", "action" => "create",
+  "post" => Hash.of("title" => "Hello", "body" => "World", "admin" => "1", "tags" => Any["a", "b"],
+                    "prefs" => Hash.of("theme" => "dark", "size" => 3, "deep" => Hash.of("x" => "1")),
+                    "comments" => Any[Hash.of("text" => "c1", "spam" => "x"), Hash.of("text" => "c2")],
+                    "authors_attributes" => Hash.of("0" => Hash.of("name" => "ann", "age" => "3"), "1" => Hash.of("name" => "bob")),
+                    "published_at(1i)" => "2026", "published_at(2i)" => "10"),
+  "id" => "42", "empty" => "", "flag" => false, "list" => Any[]
+)
+params = P.new(raw)
+show("new", params)
+show("permitted?", P.permitted?(params))
+show("[] symbol", params[:id])
+show("[] string", params["id"])
+ps = params[:post]
+ps => P
+show("nested", ps[:title])
+show("after access", params)
+show("keys", P.keys(params))
+show("key?", [P.key?(params, :post), P.has_key?(params, "post"), P.include?(params, :nope)])
+show("dig", P.dig(params, :post, :prefs, :theme))
+show("dig array", P.dig(params, :post, :comments, 0, :text))
+show("fetch", P.fetch(params, :id))
+show("fetch default", P.fetch(params, :none, "dflt"))
+show("fetch block", P.fetch(params, :none) { "blk" })
+check("fetch missing") { P.fetch(params, :none) }
+
+# require / permit
+check("require") { P.require(params, :post) }
+check("require missing") { P.require(params, :nope) }
+check("require empty") { P.require(params, :empty) }
+check("require false") { P.require(params, :flag) }
+check("require list") { P.require(params, Any[:id, :flag]) }
+post = P.require(params, :post)
+post => P
+check("permit scalars") { P.permit(post, :title, :body) }
+check("permit array") { P.permit(post, :title, tags: Any[]) }
+check("permit hash any") { P.permit(post, prefs: Hash.new) }
+check("permit hash keys") { P.permit(post, prefs: Any[:theme]) }
+check("permit array of hashes") { P.permit(post, comments: Any[:text]) }
+check("permit explicit array of hashes") { P.permit(post, comments: Any[Any[:text]]) }
+check("permit nested attributes") { P.permit(post, authors_attributes: Any[:name]) }
+check("permit multi-parameter") { P.permit(post, :published_at) }
+check("permit scalar not hash") { P.permit(post, :prefs, :tags) }
+check("permit string keys") { P.permit(post, "title", Hash.of("tags" => Any[])) }
+check("permit to_h") { P.permit(post, :title, tags: Any[]).P.to_h }
+check("to_h unpermitted") { P.to_h(post) }
+check("to_unsafe_h") { P.slice(post, :title, :prefs).P.to_unsafe_h }
+check("to_hash") { P.permit(post, :title, prefs: Hash.new).P.to_hash }
+check("to_query") { P.permit(post, :title, tags: Any[]).P.to_query }
+check("to_query ns") { P.permit(post, :title).P.to_query("p") }
+
+# expect
+check("expect") { P.expect(params, post: Any[:title, :body]) }
+check("expect scalar") { P.expect(params, :id) }
+check("expect two") { P.expect(params, :id, post: Any[:title]) }
+check("expect array of hashes") { P.expect(post, comments: Any[Any[:text]]) }
+check("expect missing") { P.expect(params, user: Any[:name]) }
+check("expect wrong shape") { P.expect(params, id: Any[:x]) }
+check("expect!") { P.expect!(params, user: Any[:name]) }
+
+# action_on_unpermitted_parameters
+P.set_action_on_unpermitted_parameters(:raise)
+check("raise one") { P.permit(post, :title, :body, :admin, :tags, :prefs, :comments, :authors_attributes, "published_at(1i)") }
+check("raise many") { P.permit(post, :title) }
+check("raise top keeps controller/action") { P.permit(params, :id, :empty, :flag, :list, post: Hash.new) }
+check("expect does not raise") { P.expect(params, :id) }
+class Logged
+  attr_reader x
+  include ActiveSupport::Notifications::Listener
+  def listener_kind(l) = :timed
+  def call_timed(l, name, start, finish, id, payload)
+    puts("#{name}: #{Kernel.inspect(payload[:keys])} #{Kernel.inspect(payload[:context])}")
+  end
+end
+ActiveSupport::Notifications.subscribe("unpermitted_parameters.action_controller", Logged.new(nil))
+P.set_action_on_unpermitted_parameters(:log)
+check("log") { P.new(Hash.of("a" => "1", "b" => "2"), Hash.of(action: "create")).P.permit(:a) }
+P.set_action_on_unpermitted_parameters(false)
+P.set_permit_all_parameters(true)
+check("permit_all") { P.new(Hash.of("a" => "1")) }
+P.set_permit_all_parameters(false)
+
+# permit! and the other Hash-like methods
+check("permit!") { P.new(Hash.of("a" => Hash.of("b" => Any[Hash.of("c" => 1)]))).P.permit! }
+check("permit! nested") do
+  a = P.new(Hash.of("a" => Hash.of("b" => "1"))).P.permit![:a]
+  a => P
+  P.permitted?(a)
+end
+q = P.new(Hash.of("a" => "1", "b" => nil, "c" => "", "d" => Hash.of("e" => "2")))
+check("slice") { P.slice(q, :a, "d") }
+check("except") { P.except(q, :a) }
+check("without") { P.without(q, :a, :b) }
+check("compact") { P.compact(q) }
+check("compact_blank") { P.compact_blank(q) }
+check("select") { P.select(q) { |k, v| k == "a" || k == "c" } }
+check("reject") { P.reject(q) { |k, v| v == nil } }
+check("transform_values") { P.slice(q, :a, :c).P.transform_values { |v| "#{v}!" } }
+check("transform_keys") { P.slice(q, :a, :c).P.transform_keys { |k| String.upcase(Kernel.to_s(k)) } }
+check("merge") { P.slice(q, :a).P.merge(Hash.of(z: "26")) }
+check("merge params") { P.slice(q, :a).P.merge(P.new(Hash.of(b: "2")).P.permit!) }
+check("reverse_merge") { P.slice(q, :a).P.reverse_merge(Hash.of(a: "0", y: "25")) }
+check("values") { P.values(q) }
+check("each_pair") do
+  r = Any[]
+  P.each_pair(q) { |k, v| Array.push(r, [k, class_name(v)]) }
+  r
+end
+check("each_value") do
+  r = Any[]
+  P.each_value(q) { |v| Array.push(r, class_name(v)) }
+  r
+end
+check("has_value?") { [P.has_value?(q, "1"), P.has_value?(q, Hash.of("e" => "2")), P.value?(q, "9")] }
+check("values_at") { P.values_at(q, :a, :d) }
+check("empty?") { [P.empty?(q), P.empty?(P.make)] }
+check("==") { [P.new(Hash.of(a: "1")) == P.new(Hash.of("a" => "1")), P.new(Hash.of(a: "1")) == P.new(Hash.of(a: "1")).P.permit!, P.new(Hash.of(a: "1")) == Hash.of("a" => "1")] }
+r = P.new(Hash.of("a" => "1", "b" => "2", "c" => "3"))
+check("extract!") { P.extract!(r, :a, :b) }
+check("after extract!") { r }
+check("delete") { [P.delete(r, :c), P.delete(r, :zz), P.delete(r, :zz) { |k| "no #{k}" }] }
+d = P.new(Hash.of("a" => Hash.of("b" => "1")))
+e = P.deep_dup(d)
+ea = e[:a]
+ea => P
+ea[:b] = "2"
+check("deep_dup") { [d, e] }
+check("[]=") do
+  s = P.make
+  s[:k] = "v"
+  s["h"] = Hash.of(x: 1)
+  s
+end
+check("to_s") { P.to_s(P.new(Hash.of(a: 1))) }
+check("extract_value") { P.extract_value(P.new(Hash.of(tags: "a_b__c")), :tags) }
+check("invalid key") { P.new(Hash.of(1 => "x")) }

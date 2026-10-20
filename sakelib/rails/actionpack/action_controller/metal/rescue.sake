@@ -1,0 +1,39 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/rescue.rb
+#
+# `rescue_from E, with: :h` lines of the class body become generated `__rescue_handlers`, `__rescue_match?` and
+# `__rescue_call` (ActiveSupport::Rescuable::Generate, called by action_controller/generate/controllers.sake).
+
+require "rails/activesupport/active_support/rescuable"
+require "rails/activesupport/active_support/notifications"
+
+module ActionController
+  module Rescue
+    include ActiveSupport::Rescuable
+
+    # ClassMethods#handler_for_rescue: instruments rescue_from_callback.action_controller when a handler is found.
+    def handler_for_rescue(c, exception)
+      handler = find_rescue_handler(c, exception)
+      if handler
+        ActiveSupport::Notifications.instrument("rescue_from_callback.action_controller", Hash.of(exception: [ActiveSupport::Notifications.class_name(exception), Exception.message(exception)])) { nil }
+      end
+      handler
+    end
+
+    # payload[:exception] is [class name, message], as Rails' instrumenter writes for a raised exception.
+    def exception_pair(e) = Any[ActiveSupport::Notifications.class_name(e), Exception.message(e)]
+    module_function :exception_pair
+
+    def show_detailed_exceptions?(c) = false
+
+    # Ruby's private process_action(*): super, rescue Exception => e: rescue_with_handler(e) || raise.
+    def rescue_process_action(c, method_name)
+      yield
+    rescue => exception
+      req = request(c)
+      config = ActionDispatch::Request.env_config(req)
+      config["action_dispatch.show_detailed_exceptions"] = show_detailed_exceptions?(c) if config["action_dispatch.show_detailed_exceptions"] == nil
+      raise exception unless rescue_with_handler(c, exception)
+      nil
+    end
+  end
+end

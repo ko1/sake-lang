@@ -1,0 +1,97 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/rendering.rb (partial: no class-level renderer (ActionController::Renderer); no to_text objects)
+#
+# The overrides call AbstractController::Rendering's bodies by their `abstract_` names (Ruby's super).
+
+require "rails/actionpack/abstract_controller/rendering"
+require "rails/activesupport/active_support/core_ext/erb/util"
+
+module ActionController
+  module Rendering
+    def render_formats_in_priority = Symbol[:body, :plain, :html]
+    module_function :render_formats_in_priority
+
+    # Raises DoubleRenderError when a body is already set, then AbstractController's render.
+    def rendering_render(c, action, options)
+      raise ::AbstractController::DoubleRenderError.build if response_body(c)
+      abstract_render(c, action, options)
+    end
+    # The top of the render chain, with the options as a Hash (Instrumentation's measures it); `render` and the
+    # callers that build options (send_data) go through it.
+    def render_with_options(c, action, options) = rendering_render(c, action, options)
+    def render(c, action = nil, **options) = render_with_options(c, action, options)
+
+    def render_to_string(c, action = nil, **options)
+      result = abstract_render_to_string(c, action, options)
+      Kernel.to_s(result)
+    end
+
+    # Ruby: super || _render_in_priorities(options) || " "; super is ActionView's when the controller renders
+    # templates (view_render_to_body), AbstractController's otherwise.
+    def rendering_render_to_body(c, options) = view_render_to_body(c, options) || _render_in_priorities(c, options) || " "
+    def render_to_body(c, options) = rendering_render_to_body(c, options)
+
+    # The template step below this module (ActionView::Rendering#render_to_body in Base); API has none.
+    def view_render_to_body(c, options) = abstract_render_to_body(c, options)
+
+    # Ruby's private process_action(*): self.formats = request.formats.filter_map(&:ref); super
+    def rendering_process_action(c, method_name)
+      set_formats(c, Array.filter_map(ActionDispatch::Request.formats(request(c))) { |f| Mime::Type.symbol(f) })
+      yield
+    end
+
+    def _process_variant(c, options)
+      req = @_request
+      v = req ? ActionDispatch::Request.variant(req) : Symbol[]
+      options[:variant] = v if !Array.empty?(v)
+      nil
+    end
+
+    def _render_in_priorities(c, options)
+      Array.each(Rendering.render_formats_in_priority) do |format|
+        return Kernel.to_s(options[format]) if Hash.key?(options, format)
+      end
+      nil
+    end
+
+    def _set_html_content_type(c) = set_content_type(c, :html)
+
+    def _set_rendered_content_type(c, format)
+      set_content_type(c, Kernel.to_s(format)) if format && media_type(c) == nil
+      nil
+    end
+
+    def _set_vary_header(c)
+      res = response(c)
+      vary = ActionDispatch::Response.get_header(res, "Vary")
+      if (vary == nil || vary == "") && ActionDispatch::Request.should_apply_vary_header?(request(c))
+        ActionDispatch::Response.set_header(res, "Vary", "Accept")
+      end
+      nil
+    end
+
+    # Normalize both text and status options.
+    def rendering_normalize_options(c, options)
+      html = options[:html]
+      options[:html] = ERB::Util.html_escape(Kernel.to_s(html)) if html
+      status = options[:status]
+      case status
+      in Symbol | Integer then options[:status] = ActionDispatch::Response.rack_status_code(status)
+      else nil
+      end
+      abstract_normalize_options(c, options)
+    end
+    def _normalize_options(c, options) = rendering_normalize_options(c, options)
+
+    # Process controller specific options, as status, content-type and location.
+    def rendering_process_options(c, options)
+      status = options[:status]
+      content_type = options[:content_type]
+      location = options[:location]
+      set_status(c, status) if (status in Symbol | Integer)
+      set_content_type(c, Kernel.to_s(content_type)) if content_type
+      ActionDispatch::Response.set_header(response(c), "Location", url_for(c, location)) if location
+      abstract_process_options(c, options)
+    end
+    def _process_options(c, options) = rendering_process_options(c, options)
+  end
+end

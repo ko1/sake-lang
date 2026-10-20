@@ -1,0 +1,61 @@
+require "rails/actionpack/action_controller/base"
+
+# HTTP Basic and Token authentication: http_basic_authenticate_with (a before_action), authenticate_or_request_with_http_basic
+# with a block, authenticate_with_http_token and request_http_token_authentication, with Rails' headers and bodies.
+class AdminController < ActionController::Base
+  def index(c) = render c, plain: "admin index"
+  def open(c) = render c, plain: "open to all"
+end
+
+class ReportsController < ActionController::Base
+  def basic(c)
+    user = authenticate_or_request_with_http_basic(c, "Reports") { |name, password| name == "ann" && password == "pw" ? name : nil }
+    render c, plain: "hello #{user}" unless performed?(c)
+  end
+  def token(c)
+    found = authenticate_with_http_token(c) { |token, options| token == "abc" ? "#{token} #{Kernel.inspect(options[:scope])}" : nil }
+    if found
+      render c, plain: "token #{found}"
+    else
+      request_http_token_authentication(c, "API \"v1\"")
+    end
+  end
+end
+generate "rails/actionpack/action_controller/generate/controllers", "controller_http_authentication_decl.rb", "controller_http_authentication.sake"
+
+class ActionDispatch::Routing::Mapper
+  def auth_routes(map)
+    get map, "admin", to: "admin#index"
+    get map, "open", to: "admin#open"
+    get map, "basic", to: "reports#basic"
+    get map, "token", to: "reports#token"
+  end
+end
+set = ActionDispatch::Routing::RouteSet.make
+ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.auth_routes(map) }
+set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new
+
+def request(set, path, authorization)
+  env = Rack::MockRequest.env_for("http://www.example.com#{path}")
+  env["HTTP_AUTHORIZATION"] = authorization if authorization
+  status, headers, body = ActionDispatch::App.call(set, ActionDispatch::Request.new(env))
+  out = ""
+  Array.each(body) { |s| out += s }
+  puts("#{path} #{Kernel.inspect(authorization)} -> #{status} #{Kernel.inspect(headers["www-authenticate"])} #{Kernel.inspect(headers["content-type"])} #{Kernel.inspect(out)}")
+end
+
+Basic = ActionController::HttpAuthentication::Basic
+Token = ActionController::HttpAuthentication::Token
+request(set, "/admin", nil)
+request(set, "/admin", Basic.encode_credentials("dhh", "wrong"))
+request(set, "/admin", Basic.encode_credentials("dhh", "secret"))
+request(set, "/open", nil)
+request(set, "/basic", nil)
+request(set, "/basic", Basic.encode_credentials("ann", "pw"))
+request(set, "/basic", "Bearer abc")
+request(set, "/token", nil)
+request(set, "/token", Token.encode_credentials("abc", Hash.of(scope: "read")))
+request(set, "/token", "Bearer abc")
+request(set, "/token", "Token token=\"zzz\"")
+p(Token.encode_credentials("abc", Hash.of(scope: "read", n: 1)))
+p(Basic.encode_credentials("a:b", "p w"))

@@ -1,0 +1,104 @@
+# Port of actionpack-8.1.3/lib/action_controller/base.rb (partial: the modules not ported are listed in sakelib/notes/rails_actioncontroller.md)
+#
+# Ruby's `class ActionController::Base < Metal` includes 35 modules whose overrides of process_action, render,
+# render_to_body, redirect_to, send_action reach each other through `super`, in the ancestors' order. Sake has
+# the same includes, in Rails' order (the last included wins, as in Ruby), and no super: each override calls the
+# layer below by name. process_action, whose layers wrap each other, is written here as Ruby's ancestors run it:
+#
+#   ParamsWrapper#process_action > Instrumentation > Rescue > AbstractController::Callbacks > Rendering > AbstractController::Base
+#
+# An app's `class ApplicationController < ActionController::Base` pastes all of it; what Ruby finds by reflection
+# (actions, the class body's before_action/rescue_from lines, the class name) is generated per controller.
+
+require "metal"
+require "../abstract_controller/callbacks"
+require "../abstract_controller/rendering"
+require "../abstract_controller/translation"
+require "metal/url_for"
+require "metal/redirecting"
+require "metal/rendering"
+require "metal/renderers"
+require "metal/head"
+require "metal/conditional_get"
+require "metal/mime_responds"
+require "metal/implicit_render"
+require "metal/strong_parameters"
+require "metal/view_rendering"
+require "metal/cookies"
+require "metal/flash"
+require "metal/data_streaming"
+require "metal/default_headers"
+require "metal/rescue"
+require "metal/instrumentation"
+require "metal/request_forgery_protection"
+require "metal/http_authentication"
+require "metal/params_wrapper"
+
+module ActionController
+  class Base < Metal
+    private attr_accessor _marked_for_same_origin_verification
+    include AbstractController::Rendering
+    include AbstractController::Translation
+    include ActionDispatch::Routing::UrlFor
+    include UrlFor
+    include Redirecting
+    include Rendering
+    include Renderers
+    include Head
+    include ConditionalGet
+    include MimeResponds
+    include BasicImplicitRender
+    include ImplicitRender
+    include StrongParameters
+    include ViewRendering
+    include Cookies
+    include Flash
+    include RequestForgeryProtection
+    include DataStreaming
+    include HttpAuthentication::Basic::ControllerMethods
+    include HttpAuthentication::Token::ControllerMethods
+    include AbstractController::Callbacks
+    include Rescue
+    include Instrumentation
+    include ParamsWrapper
+
+    def make_response!(request) = DefaultHeaders.make_response!(request)
+
+
+    def process_action(c, method_name)
+      params_wrapper_process_action(c, method_name) do
+        instrumentation_process_action(c, method_name) do
+          rescue_process_action(c, method_name) do
+            callbacks_process_action(c, method_name) do
+              rendering_process_action(c, method_name) { send_action(c, method_name) }
+            end
+          end
+        end
+      end
+    end
+
+    # Metal#dispatch, and RequestForgeryProtection#commit_csrf_token, which Ruby's session middleware calls at the
+    # end through request.controller_instance (Sake's Request has no controller instance).
+    def dispatch(c, name, request, response)
+      set_request!(c, request)
+      set_response!(c, response)
+      process(c, name)
+      commit_csrf_token(c, request)
+      ActionDispatch::Request.commit_flash(request)
+      to_a(c)
+    end
+
+    # Metal#reset_session; Ruby's Request#reset_session also calls the controller's reset_csrf_token.
+    def reset_session(c)
+      req = request(c)
+      ActionDispatch::Request.reset_session(req)
+      reset_csrf_token(c, req)
+    end
+
+
+    def _protected_ivars(c) = AbstractController::Rendering.default_protected_instance_variables +
+      Symbol[:@_params, :@_response, :@_request, :@_config, :@_url_options, :@_action_has_layout, :@_view_context_class,
+        :@_view_renderer, :@_lookup_context, :@_routes, :@_view_runtime, :@_db_runtime, :@_helper_proxy,
+        :@_marked_for_same_origin_verification, :@_rendered_format]
+  end
+end

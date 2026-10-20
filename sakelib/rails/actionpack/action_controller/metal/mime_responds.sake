@@ -1,0 +1,71 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/mime_responds.rb and abstract_controller/collector.rb (partial: no variants (VariantCollector), no custom formats registered after load)
+#
+# Ruby's collector stores a block per format and calls the negotiated one:
+#
+#   Ruby                                            Sake
+#   respond_to do |format|                          respond_to(c, :html, :json) do |format|
+#     format.html { redirect_to post }                case format
+#     format.json { render json: post }               in :html then redirect_to c, post_url(c, post)
+#   end                                               in :json then render c, json: post
+#                                                     end
+#                                                   end
+#
+# The formats are listed in the call (Collector's `format.html`, `format.json` in order) and the block is
+# called once, with the negotiated format's Symbol: a block is not a value, so it cannot be stored per format.
+# `format.any` is the Symbol :any in the list.
+
+require "exceptions"
+
+module ActionController
+  module MimeResponds
+    def respond_to(c, *mimes)
+      collector = Collector.build(mimes)
+      format = Collector.negotiate_format(collector, request(c))
+      if format
+        mt = media_type(c)
+        raise RespondToMismatchError, "ActionController::RespondToMismatchError" if mt && mt != Mime::Type.to_s(format)
+        _process_format(c, format)
+        _set_rendered_content_type(c, format) unless Collector.any_response?(collector)
+        yield(Collector.response(collector)) if block_given?
+      else
+        raise UnknownFormat, "ActionController::UnknownFormat"
+      end
+      nil
+    end
+
+    class Collector
+      attr_reader responses
+      private attr_accessor format_
+
+      # Ruby: @responses[Mime[mime]] = nil for each listed mime (here the list of [Mime::Type, Symbol] pairs).
+      def build(mimes)
+        responses = Any[]
+        Array.each(mimes) do |m|
+          t = m == :any || m == :all ? Mime.ALL : Mime.fetch(m)
+          raise NoMethodError, "To respond to a custom format, register it as a MIME type first: https://guides.rubyonrails.org/action_controller_advanced_topics.html#restful-downloads. If you meant to respond to a variant like :tablet or :phone, not a custom format, be sure to nest your variant response within a format response: format.html { |html| html.tablet { ... } }" if t == nil
+          Array.push(responses, [t, m])
+        end
+        Collector.new(responses, nil)
+      end
+
+      def any_response?(col)
+        f = @format_
+        f != nil && !Array.any?(@responses) { |t, _| Mime::Type.==(t, f) } && Array.any?(@responses) { |t, _| Mime::Type.==(t, Mime.ALL) }
+      end
+
+      # The Symbol of the listed format that answers the negotiated one (`format.any` answers any).
+      def response(col)
+        f = @format_
+        pair = f ? Array.find(@responses) { |t, _| Mime::Type.==(t, f) } : nil
+        pair = Array.find(@responses) { |t, _| Mime::Type.==(t, Mime.ALL) } if pair == nil
+        pair ? Mime::Type.symbol(pair[0]) || :any : :any
+      end
+
+      def negotiate_format(col, request)
+        f = ActionDispatch::Request.negotiate_mime(request, Array.map(@responses) { |t, _| t })
+        @format_ = f
+        f
+      end
+    end
+  end
+end

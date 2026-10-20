@@ -1,0 +1,115 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal.rb (partial: no per-controller MiddlewareStack (`use`); `action(name)` and the class-level `dispatch` are generated per controller)
+#
+# Ruby's Metal < AbstractController::Base is a paste here; its attr_internal state (@_request, @_response, @_params,
+# @_routes, @_url_options) are private fields, read through request(c), response(c)... An app's controller
+# declares its own fields after them (`attr_reader posts, post`).
+#
+#   Ruby                                             Sake
+#   PostsController.action(:index).call(env)         Rack::App.call(PostsController.action(:index), env)   (generated)
+#   PostsController.dispatch(action, req, res)       ActionController::Generated::Controllers dispatch     (generated)
+#   new.dispatch(name, req, res)                     PostsController.dispatch(PostsController.new, name, req, res)
+
+require "../abstract_controller/base"
+require "../abstract_controller/logger"
+require "rails/actionpack/action_dispatch/http/request"
+require "rails/actionpack/action_dispatch/http/response"
+require "rails/actionpack/action_dispatch/middleware/session/abstract_store"
+require "rails/actionpack/action_dispatch/middleware/flash"
+require "rails/actionpack/action_dispatch/request/session"
+require "metal/exceptions"
+
+module ActionController
+  class Metal < AbstractController::Base
+    private attr_accessor _request, _response, _params, _routes_set, _url_options, _view_runtime   # _routes_set: a field `_routes` would make a reader that silently wins over UrlFor#_routes
+    include AbstractController::Logger
+
+    def initialize(c) = @_response_body = nil
+
+    # Required of each controller (generated): Ruby's self.class.controller_name.
+    def controller_name(c) = raise(NotImplementedError)
+
+    # Ruby's self.make_response!(request); DefaultHeaders' replaces it in Base and API.
+    def make_response!(request)
+      res = ActionDispatch::Response.new(200, Hash.new, String[])
+      ActionDispatch::Response.set_request(res, request)
+      res
+    end
+
+    # Ruby's self.action_encoding_template(action)
+    def action_encoding_template(action) = false
+
+    def request(c) = @_request || raise(ArgumentError, "#{_class_name(c)} has no request (dispatch it first)")
+    def set_request(c, request) = @_request = request
+    def response(c) = @_response || raise(ArgumentError, "#{_class_name(c)} has no response (dispatch it first)")
+
+    # delegate :session, to: "@_request"; :headers, :status, :location, :content_type, :media_type (and writers) to "@_response"
+    def session(c) = ActionDispatch::Request.session(request(c))
+    def headers(c) = ActionDispatch::Response.headers(response(c))
+    def status(c) = ActionDispatch::Response.status(response(c))
+    def set_status(c, status) = ActionDispatch::Response.set_status(response(c), status)
+    def location(c) = ActionDispatch::Response.location(response(c))
+    def set_location(c, location) = ActionDispatch::Response.set_location(response(c), location)
+    def content_type(c) = ActionDispatch::Response.content_type(response(c))
+    def set_content_type(c, content_type) = ActionDispatch::Response.set_content_type(response(c), content_type)
+    def media_type(c) = ActionDispatch::Response.media_type(response(c))
+    def response_code(c) = ActionDispatch::Response.status(response(c))
+
+    # Ruby's params: @_params ||= request.parameters (StrongParameters wraps it in ActionController::Parameters).
+    def params(c) = ActionDispatch::Request.parameters(request(c))
+
+    # Basic url_for that can be overridden for more robust functionality.
+    def url_for(c, string) = Kernel.to_s(string)
+
+    # Ruby's response_body=(body): a String becomes [body]; nil resets the response's body.
+    def set_response_body(c, body)
+      if body
+        list = (body in String) ? String[body] : body
+        ActionDispatch::Response.set_body(response(c), list)
+        @_response_body = list
+      else
+        ActionDispatch::Response.reset_body!(response(c))
+      end
+      nil
+    end
+
+    # Tests if render or redirect has already happened.
+    def performed?(c) = @_response_body != nil || ActionDispatch::Response.committed?(response(c))
+
+    # Ruby's dispatch(name, request, response): the Rack triple.
+    def dispatch(c, name, request, response)
+      set_request!(c, request)
+      set_response!(c, response)
+      process(c, name)
+      ActionDispatch::Request.commit_flash(request)
+      to_a(c)
+    end
+
+    def set_response!(c, response) = @_response = response
+
+    def set_response(c, response)
+      set_response!(c, response)
+      @_response_body = String[]
+    end
+
+    def set_request!(c, request) = @_request = request
+
+    def to_a(c) = ActionDispatch::Response.to_a(response(c))
+
+    def reset_session(c) = ActionDispatch::Request.reset_session(request(c))
+  end
+
+  # Ruby's Metal.action(name): a Rack app (lambda) that makes the Request and dispatches. `controllers` is the
+  # app's generated ActionDispatch::Routing::Controllers; ActionDispatch's stack passes the Request (App), Rack the env.
+  class ActionEndpoint
+    attr_reader controllers, controller, action
+    include ActionDispatch::App
+    include Rack::App
+    def call(e, req_or_env)
+      req = case req_or_env
+            in ActionDispatch::Request then req_or_env
+            else ActionDispatch::Request.new(req_or_env)
+            end
+      ActionDispatch::Routing::Controllers.dispatch(@controllers, @controller, @action, req)
+    end
+  end
+end

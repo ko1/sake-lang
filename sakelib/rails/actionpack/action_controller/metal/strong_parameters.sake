@@ -1,0 +1,610 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/strong_parameters.rb (partial: no DeepMergeable (deep_merge), no deep_transform_keys, no YAML hooks, no Date/IO/UploadedFile scalars, no DidYouMean corrections; the StrongParameters module is `Parameters.for_request`, which the controller's `params` calls)
+#
+# Ruby's Parameters wraps a HashWithIndifferentAccess and converts a nested Hash into a Parameters when it is
+# read (convert_hashes_to_parameters writes it back). Here `parameters` is the Hash with String keys that the
+# HashWithIndifferentAccess holds (keys converted on the way in, as its convert_key does), and the same lazy
+# conversion runs on reads, so `inspect` shows what Rails shows. to_h / to_unsafe_h return an
+# ActiveSupport::HashWithIndifferentAccess, as Rails' do.
+#
+#   Ruby                                          Sake
+#   params.require(:post).permit(:title, tags: [])  P.permit(P.require(params, :post), :title, tags: Any[])
+#   params.expect(post: [:title, :body])            P.expect(params, post: Any[:title, :body])
+#   params.permit(prefs: {}, comments: [[:text]])   P.permit(params, prefs: Hash.new, comments: Any[Any[:text]])
+#   params[:post][:title]                           params[:post] (Indexable), then Parameters.[](post, :title)
+#
+# Rails' `permit(*filters)` receives the trailing `key: filter` pairs as a Hash; Sake's `**nested` collects them,
+# and a Hash may also be given positionally (`P.permit(params, :title, Hash.of("tags" => Any[]))`).
+# ExpectedParameterMissing is a copy of ParameterMissing (no inheritance): `rescue ParameterMissing` does not catch
+# it (Rails' does); both are KeyErrors, as in Rails.
+
+require "rails/activesupport/active_support/hash_with_indifferent_access"
+require "rails/activesupport/active_support/core_ext/object/blank"
+require "rails/activesupport/active_support/core_ext/object/to_query"
+require "rails/activesupport/active_support/core_ext/object/deep_dup"
+require "rails/activesupport/active_support/notifications"
+require "../../action_dispatch/http/filter_parameters"
+
+module ActionController
+  class ParameterMissing < KeyError
+    attr_reader param, keys
+    def build(param, keys = nil) = ParameterMissing.new("param is missing or the value is empty or invalid: #{param}", param, keys)
+  end
+
+  class ExpectedParameterMissing < KeyError
+    attr_reader param, keys
+    def build(param, keys = nil) = ExpectedParameterMissing.new("param is missing or the value is empty or invalid: #{param}", param, keys)
+  end
+
+  class UnpermittedParameters < IndexError
+    attr_reader params
+    def build(params)
+      s = Array.size(params) > 1 ? "s" : ""
+      UnpermittedParameters.new("found unpermitted parameter#{s}: #{Array.map(params) { |e| ":#{e}" }.Array.join(", ")}", params)
+    end
+  end
+
+  class UnfilteredParameters < ArgumentError
+    def build = UnfilteredParameters.new("unable to convert unpermitted parameters to hash")
+  end
+
+  class InvalidParameterKey < ArgumentError
+  end
+
+  class Parameters
+    attr_reader parameters                    # Ruby's @parameters (protected): String keys
+    attr_reader logging_context
+    attr_accessor permitted                   # Ruby's @permitted (protected attr_writer)
+    private attr_reader converted_arrays      # Ruby's Set of converted Arrays; here by identity
+    include Indexable
+
+    # Ruby's Parameters.new(parameters = {}, logging_context = {}): Parameters.new(hash) or new(hash, context).
+    def initialize(p)
+      Hash.each_key(@parameters) do |key|
+        raise InvalidParameterKey, "all keys must be Strings or Symbols, got: #{Parameters.class_name(key)}" unless key in String | Symbol
+      end
+      @parameters = Parameters.indifferent(@parameters)
+      @logging_context ||= Hash.new
+      @permitted = Parameters.permit_all_parameters if @permitted == nil
+      @converted_arrays = Any[]
+    end
+
+    def make = Parameters.new(Hash.new)
+
+    # cattr_accessor :permit_all_parameters, :action_on_unpermitted_parameters, :always_permitted_parameters
+    def config = once { Hash.of(permit_all_parameters: false, action_on_unpermitted_parameters: nil, always_permitted_parameters: String["controller", "action"]) }
+    def permit_all_parameters = Parameters.config[:permit_all_parameters] == true
+    def set_permit_all_parameters(v) = Parameters.config[:permit_all_parameters] = v
+    def action_on_unpermitted_parameters
+      v = Parameters.config[:action_on_unpermitted_parameters]
+      (v in Symbol) ? v : nil
+    end
+    def set_action_on_unpermitted_parameters(v) = Parameters.config[:action_on_unpermitted_parameters] = v
+    def always_permitted_parameters
+      v = Parameters.config[:always_permitted_parameters]
+      (v in Array) ? v : String[]
+    end
+    def set_always_permitted_parameters(v) = Parameters.config[:always_permitted_parameters] = v
+
+    def nested_attribute?(key, value) = Regexp.match?(/\A-?\d+\z/, Kernel.to_s(key)) && ((value in Hash) || (value in Parameters))
+
+    # HashWithIndifferentAccess's convert_key / convert_value over a whole Hash: String keys all the way down.
+    def indifferent(h)
+      out = Hash.new
+      Hash.each(h) { |k, v| out[Parameters.convert_key(k)] = Parameters.indifferent_value(v) }
+      out
+    end
+    def indifferent_value(v)
+      case v
+      in Hash then Parameters.indifferent(v)
+      in Array then Array.map(v) { |e| Parameters.indifferent_value(e) }
+      else v
+      end
+    end
+    def convert_key(k) = (k in Symbol) ? Symbol.name(k) : k
+
+    def class_name(x)
+      case x
+      in Integer then "Integer"
+      in Float then "Float"
+      in nil then "NilClass"
+      in true then "TrueClass"
+      in false then "FalseClass"
+      in Array then "Array"
+      in Hash then "Hash"
+      else "Object"
+      end
+    end
+
+    def keys(p) = Hash.keys(@parameters)
+    def empty?(p) = Hash.empty?(@parameters)
+    def include?(p, key) = Hash.key?(@parameters, Parameters.convert_key(key))
+    def exclude?(p, key) = !include?(p, key)
+    def has_key?(p, key) = include?(p, key)
+    def key?(p, key) = include?(p, key)
+    def member?(p, key) = include?(p, key)
+    def each_key(p)
+      Hash.each_key(@parameters) { |k| yield(k) }
+      p
+    end
+    def to_s(p) = Kernel.inspect(@parameters)
+    def as_json(p) = ActiveSupport::HashWithIndifferentAccess.as_json(ActiveSupport::HashWithIndifferentAccess.make(@parameters))
+
+    # Rails compares the permitted flag and the parameters; anything else is not equal.
+    def ==(p, other)
+      case other
+      in Parameters then @permitted == Parameters.permitted(other) && @parameters == Parameters.parameters(other)
+      else false
+      end
+    end
+    def eql?(p, other) = p == other
+
+    def to_h(p)
+      raise UnfilteredParameters.build unless @permitted
+      ActiveSupport::HashWithIndifferentAccess.make(Parameters.convert_parameters_to_hashes(@parameters, true))
+    end
+    def to_hash(p) = ActiveSupport::HashWithIndifferentAccess.to_hash(to_h(p))
+    def to_query(p, namespace = nil) = Hash.to_query(to_hash(p), namespace)
+    def to_param(p, namespace = nil) = to_query(p, namespace)
+    def to_unsafe_h(p) = ActiveSupport::HashWithIndifferentAccess.make(Parameters.convert_parameters_to_hashes(@parameters, false))
+    def to_unsafe_hash(p) = to_unsafe_h(p)
+
+    def each_pair(p)
+      Array.each(Hash.keys(@parameters)) { |key| yield(key, convert_hashes_to_parameters(p, key, @parameters[key])) }
+      p
+    end
+    def each(p, &b) = each_pair(p, &b)
+
+    def each_value(p)
+      Array.each(Hash.keys(@parameters)) { |key| yield(convert_hashes_to_parameters(p, key, @parameters[key])) }
+      p
+    end
+
+    def values(p) = Array.map(Hash.keys(@parameters)) { |key| convert_hashes_to_parameters(p, key, @parameters[key]) }
+
+    def permitted?(p) = @permitted == true
+
+    def permit!(p)
+      each_pair(p) do |key, value|
+        list = (value in Array) ? Array.flatten(value) : Any[value]
+        Array.each(list) { |v| Parameters.permit!(v) if v in Parameters }
+      end
+      @permitted = true
+      p
+    end
+
+    # Ruby's require(key): an Array of keys gives an Array of values.
+    def require(p, key)
+      return Array.map(key) { |k| Parameters.require(p, k) } if key in Array
+      value = p[key]
+      if Parameters.present_value?(value) || value == false
+        value
+      else
+        raise ParameterMissing.build(key, Hash.keys(@parameters))
+      end
+    end
+    def required(p, key) = Parameters.require(p, key)
+
+    # Object#present? as Rails sees a value: a Parameters is blank when it is empty.
+    def present_value?(v)
+      case v
+      in Parameters then !Parameters.empty?(v)
+      else Object.present?(v)
+      end
+    end
+
+    def permit(p, *filters, **nested)
+      permit_filters(p, Parameters.filter_list(filters, nested), on_unpermitted: Parameters.action_on_unpermitted_parameters, explicit_arrays: false)
+    end
+
+    def expect(p, *filters, **nested) = expect_filters(p, Parameters.filter_list(filters, nested))
+
+    def expect_filters(p, list)
+      params = permit_filters(p, list)
+      keys = Array.flat_map(Array.flatten(list)) { |f| (f in Hash) ? Hash.keys(f) : Any[f] }
+      values = Parameters.require(params, keys)
+      values => Array
+      Array.size(values) == 1 ? Array.first(values) : values
+    end
+
+    # (`expect(p, *filters, **nested)` here would pass both splats on: bugs/actionpack_controller_splat_and_double_splat.sake)
+    def expect!(p, *filters, **nested)
+      begin
+        expect_filters(p, Parameters.filter_list(filters, nested))
+      rescue ParameterMissing => e
+        raise ExpectedParameterMissing.build(ParameterMissing.param(e), ParameterMissing.keys(e))
+      end
+    end
+
+    # Rails' filters Array: the positional ones, then the keyword pairs as one Hash.
+    def filter_list(filters, nested)
+      list = Any[]
+      Array.each(filters) { |f| Array.push(list, f) }
+      if !Hash.empty?(nested)
+        h = Hash.new
+        Hash.each(nested) { |k, v| h[k] = v }
+        Array.push(list, h)
+      end
+      list
+    end
+
+    def [](p, key)
+      k = Parameters.convert_key(key)
+      convert_hashes_to_parameters(p, k, @parameters[k])
+    end
+
+    def []=(p, key, value)
+      @parameters[Parameters.convert_key(key)] = Parameters.indifferent_value(value)
+    end
+
+    def fetch(p, key, *args)
+      k = Parameters.convert_key(key)
+      v = if Hash.key?(@parameters, k)
+            @parameters[k]
+          elsif block_given?
+            yield
+          elsif Array.empty?(args)
+            raise ParameterMissing.build(key, Hash.keys(@parameters))
+          else
+            Array.first(args)
+          end
+      convert_value_to_parameters(p, Parameters.indifferent_value(v))
+    end
+
+    # Ruby's @parameters.dig(*keys) after converting the first: each step is the value's own dig.
+    def dig(p, *keys)
+      first = Array.first(keys)
+      return nil if first == nil
+      v = p[first]
+      rest = Array.drop(keys, 1)
+      return v if Array.empty?(rest)
+      Parameters.dig_value(v, rest)
+    end
+    def dig_value(v, keys)
+      case v
+      in Parameters then Parameters.dig(v, *keys)
+      in Array
+        i = Array.first(keys)
+        return nil unless i in Integer
+        e = Array.at(v, i)
+        Array.size(keys) == 1 ? e : Parameters.dig_value(e, Array.drop(keys, 1))
+      in Hash
+        e = v[Parameters.convert_key(Array.first(keys))]
+        Array.size(keys) == 1 ? e : Parameters.dig_value(e, Array.drop(keys, 1))
+      in nil then nil
+      else raise TypeError, "#{Parameters.class_name(v)} does not have #dig method"
+      end
+    end
+
+    def slice(p, *keys) = new_instance_with_inherited_permitted_status(p, Hash.slice(@parameters, *Array.map(keys) { |k| Parameters.convert_key(k) }))
+
+    def slice!(p, *keys)
+      ks = Array.map(keys) { |k| Parameters.convert_key(k) }
+      Hash.select!(@parameters) { |k, _| Array.include?(ks, k) }
+      p
+    end
+
+    def except(p, *keys) = new_instance_with_inherited_permitted_status(p, Hash.except(@parameters, *Array.map(keys) { |k| Parameters.convert_key(k) }))
+    def without(p, *keys) = except(p, *keys)
+
+    def extract!(p, *keys)
+      out = Hash.new
+      Array.each(keys) do |key|
+        k = Parameters.convert_key(key)
+        out[k] = Hash.delete(@parameters, k) if Hash.key?(@parameters, k)
+      end
+      new_instance_with_inherited_permitted_status(p, out)
+    end
+
+    def transform_values(p)
+      new_instance_with_inherited_permitted_status(p, Hash.transform_values(@parameters) { |v| yield(convert_value_to_parameters(p, v)) })
+    end
+
+    def transform_values!(p)
+      Hash.transform_values!(@parameters) { |v| Parameters.indifferent_value(yield(convert_value_to_parameters(p, v))) }
+      p
+    end
+
+    def transform_keys(p)
+      out = Hash.new
+      Hash.each(@parameters) { |k, v| out[yield(k)] = v }
+      new_instance_with_inherited_permitted_status(p, out)
+    end
+
+    def transform_keys!(p)
+      out = Hash.new
+      Hash.each(@parameters) { |k, v| out[Parameters.convert_key(yield(k))] = v }
+      Hash.replace(@parameters, out)
+      p
+    end
+
+    def delete(p, key)
+      k = Parameters.convert_key(key)
+      if Hash.key?(@parameters, k)
+        convert_value_to_parameters(p, Hash.delete(@parameters, k))
+      elsif block_given?
+        convert_value_to_parameters(p, yield(key))
+      end
+    end
+
+    def select(p) = new_instance_with_inherited_permitted_status(p, Hash.select(@parameters) { |k, v| yield(k, v) })
+    def select!(p)
+      Hash.select!(@parameters) { |k, v| yield(k, v) }
+      p
+    end
+    def keep_if(p, &b) = select!(p, &b)
+    def reject(p) = new_instance_with_inherited_permitted_status(p, Hash.reject(@parameters) { |k, v| yield(k, v) })
+    def reject!(p)
+      Hash.reject!(@parameters) { |k, v| yield(k, v) }
+      p
+    end
+    def delete_if(p, &b) = reject!(p, &b)
+    def compact(p) = new_instance_with_inherited_permitted_status(p, Hash.compact(@parameters))
+    def compact!(p)
+      before = Hash.size(@parameters)
+      Hash.compact!(@parameters)
+      before == Hash.size(@parameters) ? nil : p
+    end
+    def compact_blank(p) = reject(p) { |_k, v| Parameters.blank_value?(v) }
+    def compact_blank!(p) = reject!(p) { |_k, v| Parameters.blank_value?(v) }
+    def blank_value?(v) = !Parameters.present_value?(v)
+
+    def has_value?(p, value)
+      v = convert_value_to_parameters(p, Parameters.indifferent_value(value))
+      Array.include?(values(p), v)
+    end
+    def value?(p, value) = has_value?(p, value)
+
+    def values_at(p, *keys) = convert_value_to_parameters(p, Array.map(keys) { |k| @parameters[Parameters.convert_key(k)] })
+
+    # Rails' merge(other_hash) takes other_hash.to_h: a Hash or a permitted Parameters.
+    def merge(p, other) = new_instance_with_inherited_permitted_status(p, Hash.merge(@parameters, Parameters.other_hash(other)))
+    def merge!(p, other)
+      Hash.merge!(@parameters, Parameters.other_hash(other))
+      p
+    end
+    def reverse_merge(p, other) = new_instance_with_inherited_permitted_status(p, Hash.merge(Parameters.other_hash(other), @parameters))
+    def with_defaults(p, other) = reverse_merge(p, other)
+    def reverse_merge!(p, other)
+      Hash.each(Parameters.other_hash(other)) { |k, v| @parameters[k] = v unless Hash.key?(@parameters, k) }
+      p
+    end
+    def with_defaults!(p, other) = reverse_merge!(p, other)
+    def other_hash(other)
+      case other
+      in Parameters then ActiveSupport::HashWithIndifferentAccess.to_hash(Parameters.to_h(other))
+      in Hash then Parameters.indifferent(other)
+      end
+    end
+
+    def stringify_keys(p) = dup(p)
+    def dup(p) = Parameters.new(Hash.dup(@parameters), @logging_context, @permitted)
+
+    def inspect(p) = "#<ActionController::Parameters #{Kernel.inspect(@parameters)} permitted: #{@permitted}>"
+
+    def deep_dup(p) = Parameters.new(Hash.deep_dup(@parameters), @logging_context, @permitted)
+
+    def extract_value(p, key, delimiter: "_")
+      v = @parameters[Parameters.convert_key(key)]
+      v == nil ? nil : String.split(Kernel.to_s(v), delimiter, -1)
+    end
+
+    # protected
+    def nested_attributes?(p) = Hash.any?(@parameters) { |k, v| Parameters.nested_attribute?(k, v) }
+
+    def each_nested_attribute(p)
+      hash = Parameters.make
+      each_pair(p) { |k, v| hash[k] = yield(v) if (v in Parameters) && Parameters.nested_attribute?(k, v) }
+      hash
+    end
+
+    def permit_filters(p, filters, on_unpermitted: nil, explicit_arrays: true)
+      params = Parameters.make
+      Array.each(Array.flatten(filters)) do |filter|
+        case filter
+        in Symbol | String then permitted_scalar_filter(p, params, filter)
+        in Hash then hash_filter(p, params, filter, on_unpermitted: on_unpermitted, explicit_arrays: explicit_arrays)
+        else nil
+        end
+      end
+      unpermitted_parameters!(p, params, on_unpermitted)
+      Parameters.permit!(params)
+    end
+
+    # private
+    def new_instance_with_inherited_permitted_status(p, hash) = Parameters.new(hash, @logging_context, @permitted)
+
+    # Ruby's convert_parameters_to_hashes(value, using): `using` is :to_h (true) or :to_unsafe_h (false).
+    def convert_parameters_to_hashes(value, safe)
+      case value
+      in Array then Array.map(value) { |v| Parameters.convert_parameters_to_hashes(v, safe) }
+      in Hash then Hash.transform_values(value) { |v| Parameters.convert_parameters_to_hashes(v, safe) }
+      in Parameters then safe ? Parameters.to_h(value) : Parameters.to_unsafe_h(value)
+      else value
+      end
+    end
+
+    def convert_hashes_to_parameters(p, key, value)
+      converted = convert_value_to_parameters(p, value)
+      @parameters[key] = converted unless Kernel.equal?(converted, value)
+      converted
+    end
+
+    def convert_value_to_parameters(p, value)
+      case value
+      in Array
+        return value if Array.any?(@converted_arrays) { |a| Kernel.equal?(a, value) }
+        converted = Array.map(value) { |e| convert_value_to_parameters(p, e) }
+        Array.push(@converted_arrays, converted)
+        converted
+      in Hash then Parameters.new(value, @logging_context)
+      else value
+      end
+    end
+
+    def specify_numeric_keys?(filter)
+      case filter
+      in Hash then Array.any?(Hash.keys(filter)) { |key| Regexp.match?(/\A-?\d+\z/, Kernel.to_s(key)) }
+      else false
+      end
+    end
+
+    def array_filter?(filter) = (filter in Array) && Array.size(filter) == 1 && (Array.first(filter) in Array)
+
+    # Ruby's each_array_element(object, filter, &block): the Parameters elements of an Array, or the nested
+    # attributes ("0" => {...}) of a Parameters, each through the block.
+    def each_array_element(object, filter)
+      case object
+      in Array
+        out = Any[]
+        Array.each(object) do |e|
+          next unless e in Parameters
+          r = yield(e)
+          Array.push(out, r) if r
+        end
+        out
+      in Parameters
+        Parameters.nested_attributes?(object) && !Parameters.specify_numeric_keys?(filter) ? Parameters.each_nested_attribute(object) { |e| yield(e) } : nil
+      else nil
+      end
+    end
+
+    def unpermitted_parameters!(p, params, on_unpermitted)
+      return nil unless on_unpermitted
+      unpermitted = unpermitted_keys(p, params)
+      if !Array.empty?(unpermitted)
+        case on_unpermitted
+        in :log
+          ActiveSupport::Notifications.instrument("unpermitted_parameters.action_controller", Hash.of(keys: unpermitted, context: @logging_context))
+        in :raise
+          raise UnpermittedParameters.build(unpermitted)
+        else nil
+        end
+      end
+      nil
+    end
+
+    def unpermitted_keys(p, params) = keys(p) - Parameters.keys(params) - Parameters.always_permitted_parameters
+
+    # PERMITTED_SCALAR_TYPES (String, Symbol, NilClass, Numeric, TrueClass, FalseClass, Date, Time, ...)
+    def permitted_scalar?(value)
+      case value
+      in String | Symbol | nil | Integer | Float | Rational | true | false | Time then true
+      else false
+      end
+    end
+
+    def permitted_scalar_filter(p, params, permitted_key)
+      key = Kernel.to_s(permitted_key)
+      params[key] = p[key] if has_key?(p, key) && Parameters.permitted_scalar?(p[key])
+      Array.each(keys(p)) do |k|
+        m = Regexp.match(/\(\d+[if]?\)\z/, Kernel.to_s(k))
+        next unless m
+        next unless MatchData.pre_match(m) == key
+        params[k] = p[k] if Parameters.permitted_scalar?(p[k])
+      end
+    end
+
+    def non_scalar?(value) = (value in Array) || (value in Parameters)
+
+    def hash_filter(p, params, filter, on_unpermitted: nil, explicit_arrays: false)
+      f = Parameters.indifferent(filter)
+      Parameters.each_pair(slice(p, *Hash.keys(f))) do |key, value|
+        next unless value
+        next unless has_key?(p, key)
+        result = permit_value(p, value, f[key], on_unpermitted, explicit_arrays)
+        params[key] = result unless result == nil
+      end
+    end
+
+    def permit_value(p, value, filter, on_unpermitted, explicit_arrays)
+      if (filter in Array) && Array.empty?(filter)          # Declaration { comment_ids: [] }.
+        Parameters.permit_array_of_scalars(value)
+      elsif (filter in Hash) && Hash.empty?(filter)         # Declaration { preferences: {} }.
+        Parameters.permit_hash(value, filter, on_unpermitted, explicit_arrays)
+      elsif Parameters.array_filter?(filter)                # Declaration { comments: [[:text]] }
+        filter => Array
+        Parameters.permit_array_of_hashes(value, Array.first(filter), on_unpermitted, explicit_arrays)
+      elsif explicit_arrays                                 # { user: { address: ... } } or { user: [:name, ...] } (only a hash)
+        Parameters.permit_hash(value, filter, on_unpermitted, explicit_arrays)
+      elsif Parameters.non_scalar?(value)                   # { user: { address: ... } } or { user: [:name, ...] }
+        Parameters.permit_hash_or_array(value, filter, on_unpermitted, explicit_arrays)
+      end
+    end
+
+    def permit_array_of_scalars(value)
+      (value in Array) && Array.all?(value) { |e| Parameters.permitted_scalar?(e) } ? value : nil
+    end
+
+    def permit_array_of_hashes(value, filter, on_unpermitted, explicit_arrays)
+      Parameters.each_array_element(value, filter) do |element|
+        Parameters.permit_filters(element, Parameters.wrap(filter), on_unpermitted: on_unpermitted, explicit_arrays: explicit_arrays)
+      end
+    end
+
+    def permit_hash(value, filter, on_unpermitted, explicit_arrays)
+      return nil unless value in Parameters
+      if (filter in Hash) && Hash.empty?(filter)
+        Parameters.permit_any_in_parameters(value)
+      else
+        Parameters.permit_filters(value, Parameters.wrap(filter), on_unpermitted: on_unpermitted, explicit_arrays: explicit_arrays)
+      end
+    end
+
+    def permit_hash_or_array(value, filter, on_unpermitted, explicit_arrays)
+      Parameters.permit_array_of_hashes(value, filter, on_unpermitted, explicit_arrays) ||
+        Parameters.permit_hash(value, filter, on_unpermitted, explicit_arrays)
+    end
+
+    def wrap(x) = (x in Array) ? x : Any[x]   # Array.wrap
+
+    def permit_any_in_parameters(params)
+      sanitized = Parameters.make
+      Parameters.each_pair(params) do |key, value|
+        if Parameters.permitted_scalar?(value)
+          sanitized[key] = value
+        elsif value in Array
+          sanitized[key] = Parameters.permit_any_in_array(value)
+        elsif value in Parameters
+          sanitized[key] = Parameters.permit_any_in_parameters(value)
+        end
+      end
+      sanitized
+    end
+
+    def permit_any_in_array(array)
+      sanitized = Any[]
+      Array.each(array) do |element|
+        if Parameters.permitted_scalar?(element)
+          Array.push(sanitized, element)
+        elsif element in Array
+          Array.push(sanitized, Parameters.permit_any_in_array(element))
+        elsif element in Parameters
+          Array.push(sanitized, Parameters.permit_any_in_parameters(element))
+        end
+      end
+      sanitized
+    end
+
+    # The StrongParameters module's `params`: the request's parameters with Rails' logging context.
+    def for_request(req, controller_class_name, action_name)
+      context = Hash.of(controller: controller_class_name, action: action_name, request: req, params: ActionDispatch::Request.filtered_parameters(req))
+      Parameters.new(ActionDispatch::Request.parameters(req), context)
+    end
+
+    # The StrongParameters module's `params=`: a Hash becomes a Parameters.
+    def coerce(value)
+      case value
+      in Hash then Parameters.new(value)
+      else value
+      end
+    end
+  end
+end
+
+module ActionController
+  # Ruby's StrongParameters module: `params` returns the request's parameters as a Parameters (memoized).
+  module StrongParameters
+    def params(c) = @_params ||= Parameters.for_request(request(c), _class_name(c), action_name(c))
+    def set_params(c, value) = @_params = Parameters.coerce(value)
+  end
+end

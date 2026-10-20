@@ -1,0 +1,292 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/request_forgery_protection.rb (partial: no custom protection or storage classes, no CookieStore token storage (it needs the encrypted cookie jar); the NullSession's cookie jar is an empty jar, whose writes still reach the response; the config is module-wide, not per class)
+#
+# Ruby's class body `protect_from_forgery with: :exception` sets the class's config (forgery_protection_strategy =
+# ProtectionMethods::Exception, a class) and adds `before_action :verify_authenticity_token` and
+# `append_after_action :verify_same_origin_request`. Here the generator (generate/settings.sake) writes the
+# strategy as a Symbol function of the controller and adds the two callbacks to its chain:
+#
+#   Ruby                                            Sake (generated)
+#   protect_from_forgery with: :exception           def PostsController.__forgery_protection_strategy = :exception
+#                                                   ...before_action(c, :verify_authenticity_token, {prepend: false})
+#                                                   ...append_after_action(c, :verify_same_origin_request)
+#   forgery_protection_strategy.new(self)           handle_unverified_request(c): a `case` over :null_session,
+#     .handle_unverified_request                      :reset_session, :exception (the ProtectionMethods classes)
+#
+# Ruby keeps the unmasked token in the env ("action_controller.csrf_token") and the session middleware commits it
+# to the session at the end (Request#commit_csrf_token through request.controller_instance). Sake's Request has no
+# controller instance: Base#dispatch calls commit_csrf_token after the action, before the middleware writes the session.
+
+require "base64"
+require "securerandom"
+require "openssl"
+require "uri"
+require "rails/activesupport/active_support/security_utils"
+require "exceptions"
+
+module ActionController
+  class InvalidAuthenticityToken < StandardError
+    include ActionControllerError
+  end
+  class InvalidCrossOriginRequest < StandardError
+    include ActionControllerError
+  end
+
+  module RequestForgeryProtection
+    def CSRF_TOKEN = "action_controller.csrf_token"
+    def AUTHENTICITY_TOKEN_LENGTH = 32
+    def GLOBAL_CSRF_TOKEN_IDENTIFIER = "!real_csrf_token"
+    def CROSS_ORIGIN_JAVASCRIPT_WARNING = "Security warning: an embedded " +
+      "<script> tag on another site requested protected JavaScript. " +
+      "If you know what you're doing, go ahead and disable forgery " +
+      "protection on this action to permit cross-origin JavaScript embedding."
+    def NULL_ORIGIN_MESSAGE = "The browser returned a 'null' origin for a request with origin-based forgery protection turned on. This usually\n" +
+      "means you have the 'no-referrer' Referrer-Policy header enabled, or that the request came from a site that\n" +
+      "refused to give its origin. This makes it impossible for Rails to verify the source of the requests. Likely the\n" +
+      "best solution is to change your referrer policy to something less strict like same-origin or strict-origin.\n" +
+      "If you cannot change the referrer policy, you can disable origin checking with the\n" +
+      "Rails.application.config.action_controller.forgery_protection_origin_check setting.\n"
+
+    # The config Ruby delegates to (`config.allow_forgery_protection`, ...), with its defaults.
+    def _forgery_config = once do
+      Hash.of(:allow_forgery_protection => true, :log_warning_on_csrf_failure => true, :forgery_protection_origin_check => false,
+        :per_form_csrf_tokens => false)
+    end
+    def allow_forgery_protection = _forgery_config[:allow_forgery_protection] == true
+    def set_allow_forgery_protection(v) = _forgery_config[:allow_forgery_protection] = v
+    def log_warning_on_csrf_failure = _forgery_config[:log_warning_on_csrf_failure] == true
+    def set_log_warning_on_csrf_failure(v) = _forgery_config[:log_warning_on_csrf_failure] = v
+    def forgery_protection_origin_check = _forgery_config[:forgery_protection_origin_check] == true
+    def set_forgery_protection_origin_check(v) = _forgery_config[:forgery_protection_origin_check] = v
+    def per_form_csrf_tokens = _forgery_config[:per_form_csrf_tokens] == true
+    def set_per_form_csrf_tokens(v) = _forgery_config[:per_form_csrf_tokens] = v
+    def request_forgery_protection_token = :authenticity_token
+    module_function :CSRF_TOKEN, :AUTHENTICITY_TOKEN_LENGTH, :GLOBAL_CSRF_TOKEN_IDENTIFIER, :CROSS_ORIGIN_JAVASCRIPT_WARNING,
+      :NULL_ORIGIN_MESSAGE, :_forgery_config, :allow_forgery_protection, :set_allow_forgery_protection,
+      :log_warning_on_csrf_failure, :set_log_warning_on_csrf_failure, :forgery_protection_origin_check,
+      :set_forgery_protection_origin_check, :per_form_csrf_tokens, :set_per_form_csrf_tokens, :request_forgery_protection_token
+
+    # Ruby's protection_method_class(name), checked when the class body is read.
+    def protection_method(name)
+      case name
+      in :null_session | :reset_session | :exception then name
+      else raise ArgumentError, "Invalid request forgery protection method, use :null_session, :exception, :reset_session, or a custom forgery protection class."
+      end
+    end
+    # Ruby's storage_strategy(name): SessionStore only.
+    def storage_strategy(name)
+      case name
+      in :session then name
+      in :cookie then raise ArgumentError, "the :cookie CSRF token storage needs the encrypted cookie jar, which is not ported"
+      else raise ArgumentError, "Invalid CSRF token storage strategy, use :session, :cookie, or a custom CSRF token storage class."
+      end
+    end
+    module_function :protection_method, :storage_strategy
+
+    # Required of the controller (generated from protect_from_forgery): the strategy, nil when not protected.
+    def forgery_protection_strategy(c) = raise(NotImplementedError)
+
+    # SessionStore's fetch/store/reset
+    def csrf_token_fetch(c, request)
+      v = ActionDispatch::Request::Session.[](ActionDispatch::Request.session(request), :_csrf_token)
+      (v in String) ? v : nil
+    end
+    def csrf_token_store(c, request, csrf_token) = ActionDispatch::Request::Session.[]=(ActionDispatch::Request.session(request), :_csrf_token, csrf_token)
+    def csrf_token_reset(c, request) = ActionDispatch::Request::Session.delete(ActionDispatch::Request.session(request), :_csrf_token)
+
+    def reset_csrf_token(c, request)
+      ActionDispatch::Request.delete_header(request, RequestForgeryProtection.CSRF_TOKEN)
+      csrf_token_reset(c, request)
+    end
+
+    def commit_csrf_token(c, request)
+      csrf_token = ActionDispatch::Request.get_header(request, RequestForgeryProtection.CSRF_TOKEN)
+      csrf_token_store(c, request, csrf_token) unless csrf_token == nil
+      nil
+    end
+
+    # The before_action: raises, resets the session or nullifies it when the request is not verified.
+    def verify_authenticity_token(c)
+      mark_for_same_origin_verification!(c)
+      if !verified_request?(c)
+        l = logger(c)
+        ActiveSupport::Logger.warn(l, unverified_request_warning_message(c)) if l && RequestForgeryProtection.log_warning_on_csrf_failure
+        handle_unverified_request(c)
+      end
+      nil
+    end
+
+    # Ruby: forgery_protection_strategy.new(self).handle_unverified_request
+    def handle_unverified_request(c)
+      case forgery_protection_strategy(c)
+      in :exception then raise InvalidAuthenticityToken, unverified_request_warning_message(c)
+      in :reset_session then reset_session(c)
+      else null_session_handle_unverified_request(c)
+      end
+      nil
+    end
+
+    # ProtectionMethods::NullSession#handle_unverified_request: an empty session for the rest of the request.
+    def null_session_handle_unverified_request(c)
+      request = request(c)
+      ActionDispatch::Request.set_session(request, ActionDispatch::Request::Session.new(nil, request, delegate: Hash.new, loaded: true, exists: true, enabled: true))
+      ActionDispatch::Request.set_flash(request, nil)
+      ActionDispatch::Request::Session::Options.set(request, ActionDispatch::Request::Session::Options.new(nil, Hash.of(skip: true)))
+      ActionDispatch::Request.set_cookie_jar(request, ActionDispatch::Cookies::CookieJar.build(request, Hash.new))
+      nil
+    end
+
+    def unverified_request_warning_message(c)
+      if valid_request_origin?(c)
+        "Can't verify CSRF token authenticity."
+      else
+        req = request(c)
+        "HTTP Origin header (#{ActionDispatch::Request.origin(req)}) didn't match request.base_url (#{ActionDispatch::Request.base_url(req)})"
+      end
+    end
+
+    # The after_action: GET requests for JavaScript must come from XHR.
+    def verify_same_origin_request(c)
+      if marked_for_same_origin_verification?(c) && non_xhr_javascript_response?(c)
+        l = logger(c)
+        ActiveSupport::Logger.warn(l, RequestForgeryProtection.CROSS_ORIGIN_JAVASCRIPT_WARNING) if l && RequestForgeryProtection.log_warning_on_csrf_failure
+        raise InvalidCrossOriginRequest, RequestForgeryProtection.CROSS_ORIGIN_JAVASCRIPT_WARNING
+      end
+      nil
+    end
+
+    def mark_for_same_origin_verification!(c) = @_marked_for_same_origin_verification = ActionDispatch::Request.get?(request(c))
+    def marked_for_same_origin_verification?(c) = @_marked_for_same_origin_verification == true
+
+    def non_xhr_javascript_response?(c)
+      Regexp.match?(/\A(?:text|application)\/javascript/, media_type(c) || "") && !ActionDispatch::Request.xhr?(request(c))
+    end
+
+    def verified_request?(c)
+      req = request(c)
+      ActionDispatch::Request.get?(req) || ActionDispatch::Request.head?(req) || !protect_against_forgery?(c) ||
+        (valid_request_origin?(c) && any_authenticity_token_valid?(c))
+    end
+
+    def any_authenticity_token_valid?(c)
+      Array.any?(request_authenticity_tokens(c)) { |token| valid_authenticity_token?(c, session(c), token) }
+    end
+
+    def request_authenticity_tokens(c) = Any[form_authenticity_param(c), ActionDispatch::Request.x_csrf_token(request(c))]
+
+    # The masked token for a form (or the meta tag).
+    def form_authenticity_token(c, form_options: nil) = masked_authenticity_token(c, form_options: form_options)
+
+    def masked_authenticity_token(c, form_options: nil)
+      fo = form_options || Hash.new
+      action = fo[:action]
+      method = fo[:method]
+      raw_token = if RequestForgeryProtection.per_form_csrf_tokens && action && method
+                    per_form_csrf_token(c, nil, normalize_action_path(c, Kernel.to_s(action)), Kernel.to_s(method))
+                  else
+                    global_csrf_token(c)
+                  end
+      mask_token(c, raw_token)
+    end
+
+    def valid_authenticity_token?(c, session, encoded_masked_token)
+      return false unless (encoded_masked_token in String)
+      return false if String.empty?(encoded_masked_token)
+      masked_token = begin
+        decode_csrf_token(c, encoded_masked_token)
+      rescue ArgumentError
+        return false
+      end
+      len = RequestForgeryProtection.AUTHENTICITY_TOKEN_LENGTH
+      if String.bytesize(masked_token) == len
+        compare_with_real_token(c, masked_token)
+      elsif String.bytesize(masked_token) == len * 2
+        csrf_token = unmask_token(c, masked_token)
+        compare_with_global_token(c, csrf_token) || compare_with_real_token(c, csrf_token) || valid_per_form_csrf_token?(c, csrf_token)
+      else
+        false
+      end
+    end
+
+    def unmask_token(c, masked_token)
+      len = RequestForgeryProtection.AUTHENTICITY_TOKEN_LENGTH
+      xor_byte_strings(c, String.byteslice(masked_token, 0, len) || "", String.byteslice(masked_token, len, len) || "")
+    end
+
+    def mask_token(c, raw_token)
+      one_time_pad = SecureRandom.random_bytes(RequestForgeryProtection.AUTHENTICITY_TOKEN_LENGTH)
+      encrypted_csrf_token = xor_byte_strings(c, one_time_pad, raw_token)
+      encode_csrf_token(c, one_time_pad + encrypted_csrf_token)
+    end
+
+    def compare_with_real_token(c, token) = ActiveSupport::SecurityUtils.fixed_length_secure_compare(token, real_csrf_token(c))
+    def compare_with_global_token(c, token) = ActiveSupport::SecurityUtils.fixed_length_secure_compare(token, global_csrf_token(c))
+
+    def valid_per_form_csrf_token?(c, token)
+      return false unless RequestForgeryProtection.per_form_csrf_tokens
+      req = request(c)
+      correct_token = per_form_csrf_token(c, nil, String.chomp(ActionDispatch::Request.path(req), "/"), ActionDispatch::Request.request_method(req))
+      ActiveSupport::SecurityUtils.fixed_length_secure_compare(token, correct_token)
+    end
+
+    def real_csrf_token(c)
+      req = request(c)
+      csrf_token = ActionDispatch::Request.get_header(req, RequestForgeryProtection.CSRF_TOKEN)
+      if csrf_token == nil
+        csrf_token = csrf_token_fetch(c, req) || generate_csrf_token(c)
+        ActionDispatch::Request.set_header(req, RequestForgeryProtection.CSRF_TOKEN, csrf_token)
+      end
+      decode_csrf_token(c, csrf_token)
+    end
+
+    def per_form_csrf_token(c, session, action_path, method) = csrf_token_hmac(c, "#{action_path}##{String.downcase(method)}")
+
+    def global_csrf_token(c) = csrf_token_hmac(c, RequestForgeryProtection.GLOBAL_CSRF_TOKEN_IDENTIFIER)
+
+    def csrf_token_hmac(c, identifier) = OpenSSL::HMAC.digest("SHA256", real_csrf_token(c), identifier)
+
+    def xor_byte_strings(c, s1, s2)
+      out = String.b(s2)
+      size = String.bytesize(s1)
+      i = 0
+      while i < size
+        String.setbyte(out, i, (String.getbyte(s1, i) || 0) ^ (String.getbyte(out, i) || 0))
+        i += 1
+      end
+      out
+    end
+
+    # The token in the params (params[:authenticity_token]).
+    def form_authenticity_param(c)
+      v = ActionDispatch::Request.parameters(request(c))[Symbol.to_s(RequestForgeryProtection.request_forgery_protection_token)]
+      (v in String) ? v : nil
+    end
+
+    def protect_against_forgery?(c) = RequestForgeryProtection.allow_forgery_protection && ActionDispatch::Request::Session.enabled?(session(c))
+
+    def valid_request_origin?(c)
+      return true unless RequestForgeryProtection.forgery_protection_origin_check
+      req = request(c)
+      origin = ActionDispatch::Request.origin(req)
+      raise InvalidAuthenticityToken, RequestForgeryProtection.NULL_ORIGIN_MESSAGE if origin == "null"
+      origin == nil || origin == ActionDispatch::Request.base_url(req)
+    end
+
+    def normalize_action_path(c, action_path)
+      uri = URI.parse(action_path)
+      if URI.relative?(uri) && (String.strip(action_path) == "" || !String.start_with?(action_path, "/"))
+        normalize_relative_action_path(c, URI.path(uri) || "")
+      else
+        String.chomp(URI.path(uri) || "", "/")
+      end
+    end
+
+    def normalize_relative_action_path(c, rel_action_path)
+      path = "#{URI.path(URI.parse(ActionDispatch::Request.path(request(c)))) || ""}/#{rel_action_path}"
+      String.chomp(String.gsub(path, "/./", "/"), "/")
+    end
+
+    def generate_csrf_token(c) = SecureRandom.urlsafe_base64(RequestForgeryProtection.AUTHENTICITY_TOKEN_LENGTH)
+    def encode_csrf_token(c, csrf_token) = Base64.urlsafe_encode64(csrf_token, padding: false)
+    def decode_csrf_token(c, encoded_csrf_token) = Base64.urlsafe_decode64(encoded_csrf_token)
+  end
+end

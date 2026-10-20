@@ -1,0 +1,149 @@
+# Port of actionpack-8.1.3/lib/action_controller/metal/http_authentication.rb (partial: no Digest)
+#
+# Ruby's login procedures are blocks (`authenticate_or_request_with_http_basic { |name, password| ... }`); here they
+# are the blocks of the same functions, which yield. `http_basic_authenticate_with name:, password:` in the class
+# body is a `before_action` with a block in Ruby; the generator (generate/settings.sake) writes the block as a
+# controller function and registers it with before_action:
+#
+#   Ruby (class body)                                    Sake (generated)
+#   http_basic_authenticate_with name: "dhh",            def PostsController._http_basic_authenticate_3(c) =
+#     password: "secret", except: :index                   http_basic_authenticate_or_request_with(c, name: "dhh", password: "secret", realm: nil)
+#                                                        ...before_action(c, :_http_basic_authenticate_3, {except: :index})
+#
+# Basic.authentication_request(controller, realm, message) and Token's, which Ruby calls with the controller, are
+# controller functions here (`basic_authentication_request(c, ...)`): a module function cannot call the
+# controller's headers/status without dispatch on a module every controller includes.
+
+require "base64"
+require "rails/activesupport/active_support/security_utils"
+require "rails/activesupport/active_support/hash_with_indifferent_access"
+
+module ActionController
+  module HttpAuthentication
+    module Basic
+      module_function
+
+      # Yields the name and the password when the request has Basic credentials (nil otherwise).
+      def authenticate(request)
+        return nil unless has_basic_credentials?(request)
+        name, password = user_name_and_password(request)
+        yield(name, password)
+      end
+
+      def has_basic_credentials?(request)
+        a = ActionDispatch::Request.authorization(request)
+        a != nil && a != "" && String.downcase(auth_scheme(request)) == "basic"
+      end
+
+      def user_name_and_password(request)
+        parts = String.split(decode_credentials(request), ":", 2)
+        [parts[0], parts[1]]
+      end
+
+      def decode_credentials(request) = Base64.decode64(auth_param(request) || "")
+      def auth_scheme(request) = String.split(Kernel.to_s(ActionDispatch::Request.authorization(request)), " ", 2)[0] || ""
+      def auth_param(request) = String.split(Kernel.to_s(ActionDispatch::Request.authorization(request)), " ", 2)[1]
+
+      def encode_credentials(user_name, password) = "Basic #{Base64.strict_encode64("#{user_name}:#{password}")}"
+
+      # Ruby's ControllerMethods, included in ActionController::Base.
+      module ControllerMethods
+        def http_basic_authenticate_or_request_with(c, name:, password:, realm: nil, message: nil)
+          authenticate_or_request_with_http_basic(c, realm, message) do |given_name, given_password|
+            # Ruby's `&`: both comparisons run
+            a = ActiveSupport::SecurityUtils.secure_compare(Kernel.to_s(given_name), name)
+            b = ActiveSupport::SecurityUtils.secure_compare(Kernel.to_s(given_password), password)
+            a && b
+          end
+        end
+
+        def authenticate_or_request_with_http_basic(c, realm = nil, message = nil)
+          authenticate_with_http_basic(c) { |n, p| yield(n, p) } || request_http_basic_authentication(c, realm || "Application", message)
+        end
+
+        def authenticate_with_http_basic(c) = Basic.authenticate(request(c)) { |n, p| yield(n, p) }
+
+        def request_http_basic_authentication(c, realm = "Application", message = nil) = basic_authentication_request(c, realm, message)
+
+        # Ruby's Basic.authentication_request(controller, realm, message)
+        def basic_authentication_request(c, realm, message)
+          message ||= "HTTP Basic: Access denied.\n"
+          ActionDispatch::Response.set_header(response(c), "WWW-Authenticate", "Basic realm=\"#{String.delete(realm, "\"")}\"")
+          set_status(c, 401)
+          set_response_body(c, message)
+        end
+      end
+    end
+
+    module Token
+      module_function
+
+      def TOKEN_KEY = "token="
+      def TOKEN_REGEX = /^(Token|Bearer)\s+/
+      def AUTHN_PAIR_DELIMITERS = /(?:,|;|\t)/
+
+      # Yields the token and its options (a HashWithIndifferentAccess) when the request has one (nil otherwise).
+      def authenticate(request)
+        pair = token_and_options(request)
+        return nil if pair == nil
+        token, options = pair
+        return nil if token == nil || String.strip(token) == ""
+        yield(token, options)
+      end
+
+      def token_and_options(request)
+        authorization_request = Kernel.to_s(ActionDispatch::Request.authorization(request))
+        return nil unless String.match?(authorization_request, Token.TOKEN_REGEX)
+        params = token_params_from(authorization_request)
+        first = Array.shift(params)
+        options = ActiveSupport::HashWithIndifferentAccess.make
+        Array.each(params) { |kv| options[kv[0] || ""] = kv[1] || "" }
+        [first ? first[1] : nil, options]
+      end
+
+      def token_params_from(auth) = rewrite_param_values(params_array_from(raw_params(auth)))
+
+      def params_array_from(raw_params) = Array.map(raw_params) { |param| String.split(param, /=(.+)?/) }
+
+      def rewrite_param_values(array_params)
+        Array.map(array_params) { |param| String[param[0] || "", String.gsub(param[1] || "", /^"|"$/, "")] }
+      end
+
+      def raw_params(auth)
+        rp = Array.map(String.split(String.sub(auth, Token.TOKEN_REGEX, ""), Token.AUTHN_PAIR_DELIMITERS)) { |s| String.strip(s) }
+        Array.reject!(rp) { |s| String.empty?(s) }
+        first = Array.first(rp)
+        if first == nil || !String.start_with?(first, Token.TOKEN_KEY)
+          if first == nil
+            Array.push(rp, Token.TOKEN_KEY)
+          else
+            rp[0] = "#{Token.TOKEN_KEY}#{first}"
+          end
+        end
+        rp
+      end
+
+      def encode_credentials(token, options = Hash.new)
+        values = String["#{Token.TOKEN_KEY}#{Kernel.inspect(Kernel.to_s(token))}"] + Hash.map(options) { |key, value| "#{key}=#{Kernel.inspect(Kernel.to_s(value))}" }
+        "Token #{Array.join(values, ", ")}"
+      end
+
+      module ControllerMethods
+        def authenticate_or_request_with_http_token(c, realm = "Application", message = nil)
+          authenticate_with_http_token(c) { |t, o| yield(t, o) } || request_http_token_authentication(c, realm, message)
+        end
+
+        def authenticate_with_http_token(c) = Token.authenticate(request(c)) { |t, o| yield(t, o) }
+
+        def request_http_token_authentication(c, realm = "Application", message = nil) = token_authentication_request(c, realm, message)
+
+        # Ruby's Token.authentication_request(controller, realm, message)
+        def token_authentication_request(c, realm, message = nil)
+          message ||= "HTTP Token: Access denied.\n"
+          ActionDispatch::Response.set_header(response(c), "WWW-Authenticate", "Token realm=\"#{String.delete(realm, "\"")}\"")
+          rendering_render(c, nil, Hash.of(plain: message, status: :unauthorized))
+        end
+      end
+    end
+  end
+end
