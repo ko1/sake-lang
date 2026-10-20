@@ -53,3 +53,18 @@ Rails の移植で同じ形が出るかを見ることにした。
 
 第 1 段（2026-10-20 開始、並行 5 体）: activesupport A・B、arel と SQLite のアダプタ、ActionDispatch、SQLite3 の組み込み
 （インタプリタ）。第 2 段: activemodel、activerecord のモデル層、actionview、actioncontroller、railties。
+
+### 解析時間について第 1 段で分かったこと
+
+- **Rails の形のブロックの再帰で、検査が 3 乗に伸びていた。** ActionDispatch の担当が Mapper を Rails と同じ形（scope の補助関数が
+  ブロックを取り、`resources_` が `apply_common_behavior_for(...) { yield }` → `public_send_resource { yield }` を通って自分を
+  呼び直す）で書くと、31 本のルートの検査に 82〜125 秒かかった（形を変えると 2.7 秒、出力は同じ）。型の検査器は yield する
+  関数を呼び出しごとに本体ごと評価し、自分への再帰を 3 段まで展開していたので、S か所から `{ yield }` で自分を呼ぶと 1 パスに
+  本体を約 2·S² 回評価する（本体も S 行なので時間は S³）。ブロック無しの呼び出し（`resources :posts`）も共有されず、
+  `resources` 1 本で `resources_` を 916 回評価していた。**直した**（d2a1beb8）: 引数を渡すだけのブロック（`{ yield }`）を
+  渡し先のブロックと同一視し、同じ引数の型・同じブロック（または無し）の呼び出しは 1 パスに 1 回だけ本体を評価する。
+  同じ鍵の再帰はそれまでの結果を読み、結果が増えなくなるまで評価し直す。遅い形の 31 本は 91.7 → 3.7 秒、出力は同じ
+  （`bugs/actionpack_dispatch_slow_check_nested_yield/README.md`）。Rails のコードはこの形（ブロックを取る DSL、
+  ブロックを渡し回す補助関数）でできているので、Rails 規模の解析時間を決めるのはここだった可能性が高い。
+- 各 gem のテストの検査時間（担当の報告、ローカル、1 回）: activesupport 0.95〜2.03 秒、ActionDispatch 1.4〜8.3 秒
+  （生成器ごと検査する routing_generate が最大）、Arel とアダプタ 1.2〜3.4 秒。
