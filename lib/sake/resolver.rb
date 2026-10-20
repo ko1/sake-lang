@@ -191,6 +191,8 @@ module Sake
     # pasted ones (Ruby's ancestors: B, B's modules, A).
     def apply_pastes
       done = {}
+      @include_owner = {}.compare_by_identity # include node => the class or module whose body has it
+      @includes.each { |ns, l| l.each { |_, node| @include_owner[node] ||= ns if node } }
       paste = lambda do |name|
         next if done[name]
         done[name] = true
@@ -198,9 +200,9 @@ module Sake
         paste.(parent)
         (@functions[parent] || {}).each do |fname, fn|
           next if fn.origin || @functions.dig(name, fname)
-          (@functions[name] ||= {})[fname] = fn.dup.tap { _1.namespace = name; _1.pasted = true }
+          # pasted: the class that defines it (A for `C < B < A`), to place it among C's ancestors
+          (@functions[name] ||= {})[fname] = fn.dup.tap { _1.pasted = fn.pasted || fn.namespace; _1.namespace = name }
         end
-        (@own_includes ||= {})[name] = @includes.fetch(name, []).map(&:first)
         @includes[name] = [*@includes.fetch(parent, []), *@includes.fetch(name, [])] if @includes.key?(parent)
       end
       @class_specs.each_key { paste.(_1) }
@@ -231,7 +233,7 @@ module Sake
             next if fn.origin
             # As Ruby's ancestors (B, B's modules, A): a module B includes itself wins over what `B < A` pasted.
             have = lookup(ns, name)
-            next if have && !(have.is_a?(UserFunction) && have.pasted && @own_includes&.dig(ns)&.include?(mod))
+            next if have && !(have.is_a?(UserFunction) && have.pasted && nearer?(ns, @include_owner[node], have.pasted))
             # A module function stays M's (Ruby runs it with M as self): its unqualified calls mean M's names.
             next (@functions[ns] ||= {})[name] = fn if fn.module_function
             (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
@@ -242,6 +244,14 @@ module Sake
           end
         end
       end
+    end
+
+    # Whether class a comes before class b among ns's classes (ns, its `<` parent, ...): Ruby's ancestors put the
+    # modules a class includes right after it, so they win over what a farther class defines.
+    def nearer?(ns, a, b)
+      chain = [ns]
+      chain << @class_specs.dig(chain.last, :parent) while @class_specs.dig(chain.last, :parent) && chain.size < 64
+      (i = chain.index(a)) && (j = chain.index(b)) && i < j
     end
 
     # `M[a, b]` for a module M: an Array of values whose types include M (checked on every write, as T[...]),
@@ -643,6 +653,10 @@ module Sake
           end
           error(st, "only `def`, `include`, a nested `class`/`module`, `Name = Struct.new(...)`, and (in a class) `attr_reader`/`attr_accessor`/`attr_writer` are allowed in a class/module body", hint)
         elsif st.receiver
+          # `def PostsC.f` inside `module Admin` is Admin::PostsC.f, as Ruby finds the constant (generated code adds
+          # functions to a namespaced class this way); `def Admin.f` there is Admin's own `def f`.
+          target = constant?(st.receiver) && lexical_namespace(const_text(st.receiver), ns)
+          next collect_def(st, ns, receiver_ns: target) if target && target != ns
           error(st, "`def #{st.receiver.slice}.#{st.name}` inside `#{cp.slice}`: write `def #{st.name}` (it defines #{ns}.#{st.name})")
         else
           collect_def(st, ns)
@@ -657,11 +671,18 @@ module Sake
       st.is_a?(Prism::CallNode) && st.receiver.nil? && st.name == :include && st.arguments && !st.block
     end
 
-    def collect_def(node, ns)
+    # The namespace a constant written inside ns names: ns::Name, then each enclosing one's, then Name.
+    def lexical_namespace(name, ns)
+      parts = ns.to_s.split("::")
+      cands = parts.size.downto(0).map { |i| [*parts.take(i), name].join("::") }
+      cands.find { |c| @class_nodes.key?(c) || @module_names.include?(c) || @struct_types.key?(c) || BUILTIN_TYPES.include?(c) }
+    end
+
+    def collect_def(node, ns, receiver_ns: nil)
       case node.receiver
       when nil then nil
       when Prism::ConstantReadNode, Prism::ConstantPathNode
-        ns = unalias(const_text(node.receiver)) # `def Client.f` defines f of the type Client names
+        ns = receiver_ns || unalias(const_text(node.receiver)) # `def Client.f` defines f of the type Client names
         @registry.add_namespace(ns)
       when Prism::SelfNode
         return error(node, "Sake has no `self`; inside `class Foo`, `def #{node.name}` defines Foo.#{node.name}")

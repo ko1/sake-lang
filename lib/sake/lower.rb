@@ -373,7 +373,8 @@ module Sake
         temps << LVarSet.new(slot: tmp, value: x, origin: o)
         get(tmp, o)
       end
-      xs = xs.map { |x| [Lit, Str].include?(x.class) ? x : temp.(x, x.origin) } unless in_order
+      # `*xs` is evaluated here too, and spread where it stands
+      xs = xs.map { |x| [Lit, Str].include?(x.class) ? x : x.is_a?(Splat) ? Splat.new(value: temp.(x.value, x.origin), origin: x.origin) : temp.(x, x.origin) } unless in_order
       # In written order; opts is copied where `**opts` stands (as Ruby's), so a later keyword's value that changes it is not seen.
       vals = {}
       splat_hash = nil
