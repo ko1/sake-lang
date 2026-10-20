@@ -1,0 +1,83 @@
+# Port of activerecord-8.1.3/lib/active_record/store.rb (partial: the JSON coder only, no
+# IndifferentCoder's HashWithIndifferentAccess (keys are Strings), no store_accessor prefix:/suffix:)
+#
+# Ruby: `store :settings, accessors: [:color], coder: JSON` serializes the column (a Serialized type with the
+# coder) and defines color/color= (read_store_attribute/write_store_attribute through a HashAccessor); the
+# accessors are generated (generate/features.sake), the type is JsonCoderType.
+
+require "json"
+
+module ActiveRecord
+  module Store
+    # Ruby's ActiveRecord::Type::Serialized with the JSON coder: a String column holding a Hash
+    class JsonCoderType
+      attr_reader precision, scale, limit
+      include ActiveModel::Type::Value
+
+      def initialize(t) = nil
+      def type(t) = :text
+      def mutable?(t) = true
+
+      def deserialize(t, value)
+        case value
+        in nil then nil
+        in ::String
+          v = JSON.parse(value)
+          (v in Hash) ? v : nil
+        in Hash then value
+        else nil
+        end
+      end
+
+      def cast(t, value)
+        case value
+        in Hash then value
+        in ::String then deserialize(t, value)
+        else nil
+        end
+      end
+
+      def serialize(t, value)
+        case value
+        in nil then nil
+        in Hash then JSON.generate(value)
+        else nil
+        end
+      end
+      def serialize_cast_value_compatible?(t) = false
+
+      def changed_in_place?(t, raw_old_value, new_value)
+        !ActiveModel::Type.same_value?(raw_old_value, serialize(t, new_value))
+      end
+    end
+
+    def stored_attributes = ActiveRecord::ModelClass.stored_attributes(__model)
+
+    # Ruby: read_store_attribute(store_attribute, key) through HashAccessor.read
+    def read_store_attribute(r, store_attribute, key)
+      h = _read_attribute(r, store_attribute)
+      (h in Hash) ? h[key] : nil
+    end
+
+    # Ruby: HashAccessor.write: prepare (an empty Hash when nil), then object.public_send(attribute)[key] = value
+    def write_store_attribute(r, store_attribute, key, value)
+      h = _read_attribute(r, store_attribute)
+      unless h in Hash
+        _write_attribute(r, store_attribute, Hash.new)
+        h = _read_attribute(r, store_attribute)
+      end
+      h[key] = value if h in Hash
+      value
+    end
+
+    def store_key_changed?(r, store_attribute, key)
+      change = attribute_change(r, store_attribute)
+      return false unless change
+      before = change[0]
+      after = change[1]
+      b = (before in Hash) ? before[key] : nil
+      a = (after in Hash) ? after[key] : nil
+      !ActiveModel::Type.same_value?(b, a)
+    end
+  end
+end

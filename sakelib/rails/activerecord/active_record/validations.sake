@@ -1,0 +1,65 @@
+# Port of activerecord-8.1.3/lib/active_record/validations.rb and activemodel-8.1.3/lib/active_model/validations.rb's
+# valid?/validate/run_validations! (partial: no validate!, no :strict)
+#
+# Ruby's Validations#save (perform_validations ? super : false), save!, valid?(context) and the default context
+# (:create for a new record, :update otherwise). The validators run in the :validate callback chain (the
+# generator adds each `validates` line's validators to it, in order with `validate :method` lines), inside the
+# :validation chain (before_validation/after_validation).
+
+require "validations/uniqueness"
+
+module ActiveRecord
+  class RecordInvalid < StandardError
+    attr_reader record
+    include ActiveRecordError
+  end
+
+  module Validations
+    # Ruby's Validations#save, under Transactions#save
+    def validations_save(r, validate, context)
+      perform_validations(r, validate, context) ? persistence_save(r) : false
+    end
+
+    def validations_save!(r, validate, context)
+      perform_validations(r, validate, context) ? persistence_save!(r) : raise_validation_error(r)
+    end
+
+    def raise_validation_error(r)
+      raise RecordInvalid.new("Validation failed: #{Array.join(ActiveModel::Errors.full_messages(errors(r)), ", ")}", r)
+    end
+
+    def perform_validations(r, validate = true, context = nil) = validate == false || valid?(r, context)
+
+    def default_validation_context(r) = new_record?(r) ? :create : :update
+
+    # Ruby: valid?(context = nil) (ActiveRecord's over ActiveModel's)
+    def valid?(r, context = nil)
+      current_context = @validation_context
+      @validation_context = context || default_validation_context(r)
+      ActiveModel::Errors.clear(errors(r))
+      output = _run_validation_callbacks(r) { run_validations!(r) }
+      @validation_context = current_context
+      ActiveModel::Errors.empty?(errors(r)) && output != false
+    end
+    def validate(r, context = nil) = valid?(r, context)
+    def invalid?(r, context = nil) = !valid?(r, context)
+
+    def run_validations!(r)
+      _run_validate_callbacks(r) { nil }
+      ActiveModel::Errors.empty?(errors(r))
+    end
+
+    def errors(r)
+      e = @errors_or_nil
+      return e if e
+      e = ActiveModel::Errors.new(r)
+      @errors_or_nil = e
+      e
+    end
+    def validation_context(r) = @validation_context
+    def read_attribute_for_validation(r, attribute) = read_attribute(r, attribute)
+
+    # Ruby's validates_with: one validator object of the class body (generated: `Post.__validator_0(r)`)
+    def run_validator(r, v) = ActiveModel::Validations::EachValidator.validate(v, r)
+  end
+end

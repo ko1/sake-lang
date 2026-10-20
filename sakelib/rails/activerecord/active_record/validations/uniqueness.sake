@@ -1,0 +1,36 @@
+# Port of activerecord-8.1.3/lib/active_record/validations/uniqueness.rb (partial: no case_sensitive: false
+# (lower()), no conditions:, no composite scope through associations)
+#
+# Ruby's validate_each builds `record.class.unscoped.where(attribute => value)` (minus the record itself) and asks
+# exists?. The record's class is not a value here, so the query is the mixin function
+# `uniqueness_taken?(record, ...)` of ActiveRecord::Validations, which the record's own model runs (dispatch).
+
+module ActiveRecord
+  module Validations
+    class UniquenessValidator
+      attr_reader attributes, options
+      include ActiveModel::Validations::EachValidator
+
+      def validate_each(v, record, attribute, value)
+        scope = options(v)[:scope]
+        scopes = case scope
+                 in Symbol then Symbol[scope]
+                 in Array then Array.map(scope) { |s| String.to_sym(Kernel.to_s(s)) }
+                 else Symbol[]
+                 end
+        if ActiveRecord::Validations.uniqueness_taken?(record, attribute, value, scopes)
+          ActiveModel::Errors.add_with(ActiveModel::Validations.errors(record), attribute, :taken, error_options(v))
+        end
+      end
+    end
+
+    # Ruby: relation = build_relation(finder_class, attribute, value); relation = relation.where.not(pk => id) if
+    # persisted; scope_relation; relation.exists?
+    def uniqueness_taken?(r, attribute, value, scopes)
+      rel = Relation.where(unscoped, Hash.of(attribute => value))
+      rel = Relation.where_not(rel, Hash.of(String.to_sym(primary_key || "id") => id_in_database(r))) if persisted?(r)
+      Array.each(scopes) { |s| rel = Relation.where(rel, Hash.of(s => read_attribute(r, s))) }
+      Relation.exists?(rel)
+    end
+  end
+end

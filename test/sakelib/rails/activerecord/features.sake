@@ -1,0 +1,130 @@
+require "rails/activerecord/active_record"
+
+# enum, store, has_secure_token, attr_readonly, the attributes API, readonly records, optimistic locking,
+# pessimistic locking, timestamps and touch, counters, update_columns, and transactions
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Migration.set_verbose(false)
+generate "rails/activerecord/active_record/generate/active_record", "features_schema.rb", "features_models.rb"
+FeaturesSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+
+puts("-- enum")
+order = Order.create(code: "A1", color: "red")
+p([Order.status(order), Order.pending?(order), Order.shipped?(order)])
+Order.shipped!(order)
+p([Order.status(order), Order.shipped?(order), Order.statuses, Order.shipped.ActiveRecord::Relation.count, Order.not_shipped.ActiveRecord::Relation.count])
+order.Order.priority = :high
+p([Order.priority(order), Order.priority_high?(order), Order.priority_low?(order), Order.priorities])
+p(Order.where(status: :shipped).ActiveRecord::Relation.pluck(:code))
+begin
+  order.Order.status = :lost
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+show_sql
+
+puts("-- store")
+p([Order.color(order), Order.gift_note(order), Order.settings(order)])
+order.Order.gift_note = "happy"
+Order.save(order)
+p(Order.find(Order.id(order)).Order.settings)
+show_sql
+
+puts("-- secure token")
+token = Order.token(order) || ""
+p([String.size(token), String.match?(token, /\A[0-9a-zA-Z]{24}\z/)])
+old = Order.token(order)
+Order.regenerate_token(order)
+p(Order.token(order) != old)
+show_sql
+
+puts("-- attr_readonly and the attributes API")
+Order.update(order, code: "B2")
+p([Order.code(order), Order.find(Order.id(order)).Order.code, Order.discount(order), Order.build.Order.discount])
+begin
+  Order.update_column(order, :code, "C3")
+rescue ActiveRecord::ActiveRecordError => e
+  puts("ActiveRecordError: #{Exception.message(e)}")
+end
+show_sql
+
+puts("-- readonly")
+ro = Order.find(Order.id(order))
+Order.readonly!(ro)
+begin
+  Order.save(ro)
+rescue ActiveRecord::ReadOnlyRecord => e
+  puts("ReadOnlyRecord: #{Exception.message(e)}")
+end
+p((f = Order.readonly.ActiveRecord::Relation.first) ? Order.readonly?(f) : nil)
+show_sql
+
+puts("-- optimistic locking")
+doc = Doc.create(title: "v1")
+a = Doc.find(Doc.id(doc))
+b = Doc.find(Doc.id(doc))
+a.Doc.title = "v2"
+p([Doc.save(a), Doc.lock_version(a)])
+b.Doc.title = "v3"
+begin
+  Doc.save(b)
+rescue ActiveRecord::StaleObjectError => e
+  puts("StaleObjectError: #{Exception.message(e)}")
+end
+Doc.destroy(a)
+p(Doc.destroyed?(a))
+show_sql
+
+puts("-- pessimistic locking")
+c = Order.find(Order.id(order))
+Order.lock!(c)
+Order.with_lock(c) { Order.update(c, paid: false) }
+show_sql
+
+puts("-- counters")
+Order.increment!(c, :items_count)
+Order.increment!(c, :items_count, 2)
+Order.decrement!(c, :items_count)
+Order.toggle!(c, :paid)
+p([Order.items_count(c), Order.paid(c), Order.find(Order.id(c)).Order.items_count])
+show_sql
+
+puts("-- timestamps")
+note = Note.create(body: "x")
+p([Note.created_at(note), Note.updated_at(note)])
+Order.reload(c)
+Order.touch(c)
+p((Order.updated_at(c) in Time) ? "Time" : "nil")
+p(Order.update_columns(c, paid: true, items_count: 0))
+show_sql
+
+puts("-- transactions")
+Order.transaction do
+  Order.create(code: "T1")
+  Order.transaction(requires_new: true) do
+    Order.create(code: "T2")
+    raise ActiveRecord::Rollback
+  end
+end
+p(Order.pluck(:code))
+t3 = Order.build(code: "T3")
+Order.transaction do
+  Order.save(t3)
+  raise ActiveRecord::Rollback
+end
+p([Order.new_record?(t3), Order.id(t3), Order.count])
+show_sql

@@ -1,0 +1,159 @@
+# Port of activerecord-8.1.3/lib/active_record/model_schema.rb (partial: no table_name_prefix/suffix, no
+# ignored_columns, no sequence names, no implicit_order_column, no schema cache: columns are read once per model)
+#
+# Ruby keeps a model's class-level state in the class object (@table_name, @columns_hash, @attribute_types,
+# @default_attributes, @arel_table, reflections, ...). Sake has no class objects, so each model has one value of
+# ActiveRecord::ModelClass (Sake only), made by the generated `Post.__model` (once), and the class methods of
+# ModelSchema are mixin functions without an instance (`Post.table_name`), copied into each model, which call
+# the model's own `__model`. A Relation keeps the same value as its `klass`.
+
+module ActiveRecord
+  # The class object's state (Sake only). Fields after the first two are set by initialize and filled lazily.
+  class ModelClass
+    attr_reader name, table_name
+    attr_accessor primary_key, abstract_class, columns_or_nil, attribute_types_or_nil, default_attributes_or_nil
+    attr_accessor arel_table_or_nil, model_name_or_nil, record_timestamps, partial_updates, partial_inserts
+    attr_accessor attribute_names_declared, declared_types, declared_defaults
+    attr_accessor reflections, defined_enums, stored_attributes, readonly_attributes, locking_column
+    attr_accessor default_scopes, counter_cached_names, inheritance_column
+    def initialize(m)
+      @primary_key = "id" if @primary_key == nil
+      @abstract_class = false
+      @record_timestamps = true
+      @partial_updates = true
+      @partial_inserts = true
+      @attribute_names_declared = String[]
+      @declared_types = Hash.new
+      @declared_defaults = Hash.new
+      @reflections = Hash.new
+      @defined_enums = Hash.new
+      @stored_attributes = Hash.new
+      @readonly_attributes = String[]
+      @locking_column = "lock_version"
+      @default_scopes = Symbol[]
+      @counter_cached_names = String[]
+      @inheritance_column = "type"
+    end
+
+    def connection(k) = ActiveRecord::Base.connection
+
+    # Ruby: load_schema! (columns_hash from the connection, the attribute types and defaults from them)
+    def columns(k)
+      cs = @columns_or_nil
+      return cs if cs
+      cs = ConnectionAdapters::SQLite3Adapter.columns(connection(k), @table_name)
+      @columns_or_nil = cs
+      cs
+    end
+
+    def column_names(k) = Array.map(columns(k)) { |c| ConnectionAdapters::Column.name(c) }
+    def columns_hash(k)
+      h = Hash.new
+      Array.each(columns(k)) { |c| h[ConnectionAdapters::Column.name(c)] = c }
+      h
+    end
+
+    def attribute_types(k)
+      ts = @attribute_types_or_nil
+      return ts if ts
+      ts = Hash.new
+      conn = connection(k)
+      Array.each(columns(k)) { |c| ts[ConnectionAdapters::Column.name(c)] = ConnectionAdapters::SQLite3Adapter.lookup_cast_type_from_column(conn, c) }
+      Hash.each(@declared_types) { |name, t| ts[name] = t }
+      @attribute_types_or_nil = ts
+      ts
+    end
+
+    def type_for_attribute(k, name) = attribute_types(k)[name] || ActiveModel::Type.default_value
+
+    # Ruby: _default_attributes (from the columns' defaults, then the attribute API's)
+    def default_attributes(k)
+      d = @default_attributes_or_nil
+      return d if d
+      types = attribute_types(k)
+      attrs = Hash.new
+      Array.each(columns(k)) do |c|
+        name = ConnectionAdapters::Column.name(c)
+        attrs[name] = ActiveModel::Attribute.from_database(name, ConnectionAdapters::SQLite3::Column.raw_default_value(c), types[name] || ActiveModel::Type.default_value)
+      end
+      Hash.each(@declared_defaults) do |name, v|
+        attrs[name] = ActiveModel::Attribute.from_database(name, v, types[name] || ActiveModel::Type.default_value)
+      end
+      Array.each(@attribute_names_declared) do |name|
+        attrs[name] = ActiveModel::Attribute.from_database(name, nil, types[name] || ActiveModel::Type.default_value) unless Hash.key?(attrs, name)
+      end
+      d = ActiveModel::AttributeSet.new(attrs)
+      @default_attributes_or_nil = d
+      d
+    end
+
+    def attributes_builder(k) = ActiveModel::AttributeSet::Builder.new(attribute_types(k), ActiveModel::AttributeSet.attributes(default_attributes(k)))
+
+    def arel_table(k)
+      t = @arel_table_or_nil
+      return t if t
+      t = Arel::Table.new(@table_name)
+      @arel_table_or_nil = t
+      t
+    end
+
+    def model_name(k)
+      n = @model_name_or_nil
+      return n if n
+      n = ActiveModel::Name.new(@name)
+      @model_name_or_nil = n
+      n
+    end
+
+    def reset_column_information(k)
+      @columns_or_nil = nil
+      @attribute_types_or_nil = nil
+      @default_attributes_or_nil = nil
+      @arel_table_or_nil = nil
+    end
+
+    # Ruby: PredicateBuilder#[](key, value) after expand_from_hash's checks for associations
+    def build_predicate(k, key, value)
+      ap = association_predicate(k, key, value)
+      return ap if ap
+      PredicateBuilder.build_bind(k, key, value)
+    end
+
+    # Ruby's expand_from_hash for an association key (`where(author: record)`, `where(comments: {...})`): the
+    # associations' part (associations/) answers; nil for a column
+    def association_predicate(k, key, value)
+      return nil if Array.include?(column_names(k), key) && !(value in Hash)
+      Associations.association_where(k, key, value)
+    end
+
+    def inspect(k) = @name
+    def to_s(k) = @name
+  end
+
+  module ModelSchema
+    # Required of the model: its class state (generated: `def Post.__model = once { ModelClass.new("Post", "posts") }`).
+    def __model = raise(NotImplementedError)
+
+    def table_name = ModelClass.table_name(__model)
+    def primary_key = ModelClass.primary_key(__model)
+    def abstract_class? = ModelClass.abstract_class(__model)
+    def columns = ModelClass.columns(__model)
+    def columns_hash = ModelClass.columns_hash(__model)
+    def column_names = ModelClass.column_names(__model)
+    def attribute_types = ModelClass.attribute_types(__model)
+    def attribute_names = Hash.keys(ModelClass.attribute_types(__model))
+    def type_for_attribute(name) = ModelClass.type_for_attribute(__model, name)
+    def _default_attributes = ModelClass.default_attributes(__model)
+    def attributes_builder = ModelClass.attributes_builder(__model)
+    def arel_table = ModelClass.arel_table(__model)
+    def model_name = ModelClass.model_name(__model)
+    def reset_column_information = ModelClass.reset_column_information(__model)
+    def table_exists? = ConnectionAdapters::SQLite3Adapter.table_exists?(ActiveRecord::Base.connection, table_name)
+    def content_columns
+      Array.reject(columns) do |c|
+        n = ConnectionAdapters::Column.name(c)
+        n == primary_key || String.end_with?(n, "_id") || n == "created_at" || n == "updated_at"
+      end
+    end
+  end
+end

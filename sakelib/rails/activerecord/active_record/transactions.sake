@@ -1,0 +1,145 @@
+# Port of activerecord-8.1.3/lib/active_record/transactions.rb (partial: no after_commit on: with several
+# actions as Procs, no transaction isolation per pool, no ActiveRecord::Transaction callbacks object; the
+# records of a transaction are kept by the model layer (the adapter's Transaction has no records here))
+#
+# Ruby's TransactionManager keeps the records saved in each transaction and calls committed!/rolledback! on
+# them when the outermost transaction ends. Here ActiveRecord::Transactions keeps that list (one per program,
+# as the one connection): with_transaction_returning_status adds the record, and the outermost model-level
+# transaction runs the records' commit or rollback callbacks and restores their state on rollback.
+
+module ActiveRecord
+  # A record's state when it joined the transaction (Ruby's @_start_transaction_state).
+  class TransactionState
+    attr_reader new_record, destroyed, attribute_set, frozen
+  end
+
+  module Transactions
+    module_function :transaction_records, :transaction_depth, :run_transaction, :finish_transaction
+
+    def transaction_records = once { Any[] }
+    def transaction_depth = once { Integer[0] }
+
+    # The model-level transaction: the adapter's, then the records' commit or rollback callbacks when it is the
+    # outermost one. Ruby: Post.transaction { } and post.transaction { } (ActiveRecord::Base.transaction).
+    def run_transaction(requires_new = nil)
+      conn = ActiveRecord::Base.connection
+      depth = transaction_depth
+      outermost = depth[0] == 0
+      depth[0] += 1
+      committed = false
+      result = nil
+      begin
+        ConnectionAdapters::SQLite3Adapter.transaction(conn, {requires_new: requires_new, isolation: nil, joinable: true}) do |t|
+          result = yield
+          committed = true
+        end
+      rescue => e
+        depth[0] -= 1
+        finish_transaction(outermost, false)
+        raise e
+      end
+      depth[0] -= 1
+      finish_transaction(outermost, committed)
+      result
+    end
+
+    # The outermost transaction's end: the records' committed! or rolledback!
+    def finish_transaction(outermost, committed)
+      if outermost
+        records = Array.dup(transaction_records)
+        Array.clear(transaction_records)
+        if committed
+          Array.each(records) { |rec| ActiveRecord::Transactions.committed!(rec) }
+        else
+          Array.each(records) { |rec| ActiveRecord::Transactions.rolledback!(rec) }
+        end
+      end
+      nil
+    end
+
+    # Ruby: Post.transaction(requires_new: nil) { }
+    def transaction(requires_new: nil, &b) = Transactions.run_transaction(requires_new, &b)
+
+    # Ruby: with_transaction_returning_status { status = yield; raise ActiveRecord::Rollback unless status }
+    def with_transaction_returning_status(r)
+      status = nil
+      Transactions.run_transaction do
+        add_to_transaction(r)
+        status = yield
+        raise ActiveRecord::Rollback unless status
+      end
+      status
+    end
+
+    def add_to_transaction(r)
+      @start_transaction_state = TransactionState.new(@new_record, @destroyed, @attribute_set, @frozen) if @start_transaction_state == nil
+      Array.push(Transactions.transaction_records, r) unless Array.any?(Transactions.transaction_records) { |x| Kernel.equal?(x, r) }
+      nil
+    end
+
+    # Ruby: committed! (after_commit callbacks when the record was created, updated or destroyed)
+    def committed!(r)
+      if trigger_transactional_callbacks?(r)
+        _run_commit_callbacks(r) { nil }
+      end
+      @start_transaction_state = nil
+      @trigger_update_callback = false
+      @trigger_destroy_callback = false
+      @new_record_before_last_commit = false
+      nil
+    end
+
+    # Ruby: rolledback! (restore the state the record had when the transaction began, then after_rollback)
+    def rolledback!(r)
+      _run_rollback_callbacks(r) { nil } if trigger_transactional_callbacks?(r)
+      s = @start_transaction_state
+      if s
+        @new_record = TransactionState.new_record(s)
+        @destroyed = TransactionState.destroyed(s)
+        @frozen = TransactionState.frozen(s)
+        if @new_record
+          pk = primary_key
+          ActiveModel::AttributeSet.write_from_user(@attribute_set, pk, nil) if pk
+        end
+      end
+      @start_transaction_state = nil
+      @trigger_update_callback = false
+      @trigger_destroy_callback = false
+      nil
+    end
+
+    def trigger_transactional_callbacks?(r)
+      ((@new_record_before_last_commit == true || @trigger_update_callback) && persisted?(r)) || (@trigger_destroy_callback && destroyed?(r))
+    end
+
+    # Ruby's Transactions#save / save! / destroy: the outermost of the super chain
+    def save(r, validate: true, context: nil) = save_with(r, validate, context)
+    def save!(r, validate: true, context: nil) = save_with!(r, validate, context)
+
+    # save's options positional (Sake only: the modules call it, and a mixin passes no keywords to its includer)
+    def save_with(r, validate, context)
+      @new_record_before_last_commit = @new_record if @start_transaction_state == nil
+      with_transaction_returning_status(r) { validations_save(r, validate, context) } == true
+    end
+
+    def save_with!(r, validate, context)
+      @new_record_before_last_commit = @new_record if @start_transaction_state == nil
+      with_transaction_returning_status(r) { validations_save!(r, validate, context) }
+      true
+    end
+
+    def destroy(r)
+      with_transaction_returning_status(r) { callbacks_destroy(r) }
+    end
+
+    # Ruby: after_commit on: :create / :update / :destroy (the condition of the generated callback)
+    def transaction_include_any_action?(r, action)
+      case action
+      in :create then @new_record_before_last_commit == true
+      in :update then !(@new_record_before_last_commit == true || destroyed?(r)) && @trigger_update_callback
+      in :destroy then @trigger_destroy_callback
+      else false
+      end
+    end
+  end
+end

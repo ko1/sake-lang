@@ -1,0 +1,171 @@
+# Port of activerecord-8.1.3/lib/active_record/migration.rb's Migrator and MigrationContext (partial: no
+# migration files (MigrationContext takes the migrations as a list), no advisory lock, no up/down of one
+# version through run, no pending_migration_connections)
+#
+# Ruby: MigrationContext.new("db/migrate") reads the files and makes MigrationProxy objects that load them;
+# Sake has no load, so the context is given the migration objects (Ruby's tests do the same by overriding
+# `migrations`). A list holds migrations of several classes; Migration's functions dispatch on each.
+
+require "../schema_migration"
+require "../internal_metadata"
+
+module ActiveRecord
+  class Migrator
+    attr_reader direction, migrations_, schema_migration, internal_metadata, target_version
+    private attr_accessor migrated_versions
+
+    def initialize(mg)
+      @migrated_versions = nil
+      SchemaMigration.create_table(@schema_migration)
+      InternalMetadata.create_table_and_set_flags(@internal_metadata, "default_env")
+    end
+
+    def up?(mg) = @direction == :up
+    def down?(mg) = @direction == :down
+
+    def migrated(mg)
+      v = @migrated_versions
+      return v if v
+      v = Set.new(SchemaMigration.integer_versions(@schema_migration))
+      @migrated_versions = v
+      v
+    end
+
+    def current_version(mg) = Set.max(migrated(mg)) || 0
+
+    def migrations(mg)
+      sorted = Array.sort_by(@migrations_) { |x| ActiveRecord::Migration.version(x) }
+      down?(mg) ? Array.reverse(sorted) : sorted
+    end
+
+    def ran?(mg, migration) = Set.include?(migrated(mg), ActiveRecord::Migration.version(migration))
+
+    def target(mg) = Array.find(migrations(mg)) { |x| ActiveRecord::Migration.version(x) == @target_version }
+    def current_migration(mg) = Array.find(migrations(mg)) { |x| ActiveRecord::Migration.version(x) == current_version(mg) }
+
+    def runnable(mg)
+      ms = migrations(mg)
+      t = target(mg)
+      finish = t ? (Array.index(ms, t) || Array.size(ms) - 1) : Array.size(ms) - 1
+      cur = current_migration(mg)
+      start = up?(mg) ? 0 : (cur ? (Array.index(ms, cur) || 0) : 0)
+      list = Array.slice(ms, start..finish) || Any[]
+      if up?(mg)
+        Array.reject(list) { |x| ran?(mg, x) }
+      else
+        Array.pop(list) if t
+        Array.select(list) { |x| ran?(mg, x) }
+      end
+    end
+
+    def pending_migrations(mg) = Array.reject(Array.sort_by(@migrations_) { |x| ActiveRecord::Migration.version(x) }) { |x| ran?(mg, x) }
+
+    def invalid_target?(mg)
+      tv = @target_version
+      tv != nil && tv != 0 && target(mg) == nil
+    end
+
+    # Ruby: migrate (migrate_without_lock)
+    def migrate(mg)
+      raise UnknownMigrationVersionError, "\n\nNo migration with version number #{@target_version}.\n\n" if invalid_target?(mg)
+      Array.each(runnable(mg)) { |x| execute_migration_in_transaction(mg, x) }
+      nil
+    end
+
+    def execute_migration_in_transaction(mg, migration)
+      version = ActiveRecord::Migration.version(migration)
+      return nil if down?(mg) && !Set.include?(migrated(mg), version)
+      return nil if up?(mg) && Set.include?(migrated(mg), version)
+      begin
+        ddl_transaction(mg, migration) do
+          ActiveRecord::Migration.migrate(migration, @direction)
+          record_version_state_after_migrating(mg, version)
+        end
+      rescue => e
+        msg = "An error has occurred, "
+        msg += "this and " if use_transaction?(mg, migration)
+        msg += "all later migrations canceled:\n\n#{Exception.message(e)}"
+        raise MigrationError_, msg
+      end
+      nil
+    end
+
+    def ddl_transaction(mg, migration)
+      if use_transaction?(mg, migration)
+        ConnectionAdapters::SQLite3Adapter.joining_transaction(ActiveRecord::Base.connection) { yield }
+      else
+        yield
+      end
+    end
+
+    def use_transaction?(mg, migration)
+      !ActiveRecord::Migration.disable_ddl_transaction(migration) && ConnectionAdapters::SQLite3Adapter.supports_ddl_transactions?(ActiveRecord::Base.connection)
+    end
+
+    def record_version_state_after_migrating(mg, version)
+      if down?(mg)
+        Set.delete(migrated(mg), version)
+        SchemaMigration.delete_version(@schema_migration, Integer.to_s(version))
+      else
+        Set.add(migrated(mg), version)
+        SchemaMigration.create_version(@schema_migration, Integer.to_s(version))
+      end
+    end
+  end
+
+  class MigrationContext
+    attr_reader migrations, schema_migration, internal_metadata
+
+    def initialize(c)
+      @schema_migration ||= SchemaMigration.new(ActiveRecord::Base.connection)
+      @internal_metadata ||= InternalMetadata.new(ActiveRecord::Base.connection)
+    end
+
+    def migrator(c, direction, target_version = nil) = Migrator.new(direction, @migrations, @schema_migration, @internal_metadata, target_version)
+
+    # Ruby: migrate(target_version = nil)
+    def migrate(c, target_version = nil)
+      if target_version == nil
+        up(c)
+      elsif current_version(c) == 0 && target_version == 0
+        nil
+      elsif current_version(c) > target_version
+        down(c, target_version)
+      else
+        up(c, target_version)
+      end
+    end
+
+    def up(c, target_version = nil) = Migrator.migrate(migrator(c, :up, target_version))
+    def down(c, target_version = nil) = Migrator.migrate(migrator(c, :down, target_version))
+    def rollback(c, steps = 1) = move(c, :down, steps)
+    def forward(c, steps = 1) = move(c, :up, steps)
+
+    def move(c, direction, steps)
+      mg = migrator(c, direction)
+      ms = Migrator.migrations(mg)
+      cur = Migrator.current_migration(mg)
+      raise UnknownMigrationVersionError, "\n\nNo migration with version number #{current_version(c)}.\n\n" if current_version(c) != 0 && cur == nil
+      start_index = current_version(c) == 0 || cur == nil ? 0 : (Array.index(ms, cur) || 0)
+      finish = Array.fetch(ms, start_index + steps, nil)
+      version = finish ? ActiveRecord::Migration.version(finish) : 0
+      direction == :down ? down(c, version) : up(c, version)
+    end
+
+    def get_all_versions(c) = SchemaMigration.table_exists?(@schema_migration) ? SchemaMigration.integer_versions(@schema_migration) : Integer[]
+    def current_version(c) = Array.max(get_all_versions(c)) || 0
+    def needs_migration?(c) = !Array.empty?(pending_migration_versions(c))
+    def pending_migration_versions(c)
+      done = get_all_versions(c)
+      Array.map(@migrations) { |x| ActiveRecord::Migration.version(x) }.Array.reject { |v| Array.include?(done, v) }
+    end
+    def any_migrations?(c) = !Array.empty?(@migrations)
+
+    # Ruby: migrations_status (no files here, so each version is "NO FILE", as Ruby without migration files)
+    def migrations_status(c)
+      db_list = SchemaMigration.normalized_versions(@schema_migration)
+      list = Array.map(db_list) { |v| ["up", v, "********** NO FILE **********"] }
+      Array.sort_by(list) { |x| String.to_i(x[1]) }
+    end
+  end
+end

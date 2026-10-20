@@ -1,0 +1,165 @@
+# Port of activerecord-8.1.3/lib/active_record/schema_dumper.rb, connection_adapters/abstract/schema_dumper.rb
+# and connection_adapters/sqlite3/schema_dumper.rb (one file: the SQLite form) (partial: no foreign keys,
+# check constraints, virtual tables, table options, composite primary keys, ignore_tables patterns)
+#
+# Ruby: ActiveRecord::SchemaDumper.dump(connection_pool, stream) writes db/schema.rb to an IO; here
+# `dump(connection)` returns the text.
+
+module ActiveRecord
+  class SchemaDumper
+    attr_reader connection, version
+    private attr_accessor table_name_
+
+    def HEADER_COMMENT
+      "# This file is auto-generated from the current state of the database. Instead\n" +
+        "# of editing this file, please use the migrations feature of Active Record to\n" +
+        "# incrementally modify your database, and then regenerate this schema definition.\n" +
+        "#\n" +
+        "# This file is the source Rails uses to define your schema when running `bin/rails\n" +
+        "# db:schema:load`. When creating a new database, `bin/rails db:schema:load` tends to\n" +
+        "# be faster and is potentially less error prone than running all of your\n" +
+        "# migrations from scratch. Old migrations may fail to apply correctly if those\n" +
+        "# migrations use external dependencies or application code.\n" +
+        "#\n" +
+        "# It's strongly recommended that you check this file into your version control system.\n"
+    end
+
+    def dump(conn)
+      ctx = MigrationContext.new(Any[])
+      d = SchemaDumper.new(conn, MigrationContext.current_version(ctx), nil)
+      header(d) + tables(d) + "end\n"
+    end
+
+    def ignored?(d, table_name) = table_name == "schema_migrations" || table_name == "ar_internal_metadata"
+
+    def formatted_version(d)
+      s = Integer.to_s(@version)
+      return s unless String.length(s) == 14
+      "#{String.slice(s, 0, 4)}_#{String.slice(s, 4, 2)}_#{String.slice(s, 6, 2)}_#{String.slice(s, 8, 6)}"
+    end
+
+    def header(d) = SchemaDumper.HEADER_COMMENT + "\nActiveRecord::Schema[8.1].define(version: #{formatted_version(d)}) do\n"
+
+    def tables(d)
+      names = Array.reject(Array.sort(Array.map(ConnectionAdapters::SQLite3Adapter.tables(@connection)) { |t| Kernel.to_s(t) })) { |t| ignored?(d, t) }
+      out = ""
+      Array.each_with_index(names) do |t, i|
+        out += table(d, t)
+        out += "\n" if i < Array.size(names) - 1
+      end
+      out
+    end
+
+    def table(d, table)
+      @table_name_ = table
+      columns = ConnectionAdapters::SQLite3Adapter.columns(@connection, table)
+      pk = ConnectionAdapters::SQLite3Adapter.primary_key(@connection, table)
+      tbl = "  create_table #{Kernel.inspect(table)}"
+      if pk
+        tbl += ", primary_key: #{Kernel.inspect(pk)}" unless pk == "id"
+        pkcol = Array.find(columns) { |c| ConnectionAdapters::Column.name(c) == pk }
+        spec = pkcol ? column_spec_for_primary_key(d, pkcol) : Any[]
+        tbl += ", #{format_colspec(spec)}" unless Array.empty?(spec)
+      else
+        tbl += ", id: false"
+      end
+      tbl += ", force: :cascade do |t|\n"
+      Array.each(Array.sort_by(columns) { |c| ConnectionAdapters::Column.name(c) }) do |column|
+        name = ConnectionAdapters::Column.name(column)
+        next if name == pk
+        tbl += "    t.#{schema_type(d, column)} #{Kernel.inspect(name)}"
+        spec = prepare_column_options(d, column)
+        tbl += ", #{format_colspec(spec)}" unless Array.empty?(spec)
+        tbl += "\n"
+      end
+      tbl += indexes_in_create(d, table)
+      tbl += "  end\n"
+      @table_name_ = nil
+      tbl
+    end
+
+    def indexes_in_create(d, table)
+      idx = ConnectionAdapters::SQLite3Adapter.indexes(@connection, table)
+      return "" if Array.empty?(idx)
+      statements = Array.map(idx) { |index| "    t.index #{Array.join(index_parts(d, index), ", ")}" }
+      Array.join(Array.sort(statements), "\n") + "\n"
+    end
+
+    def index_parts(d, index)
+      parts = String[Kernel.inspect(ConnectionAdapters::IndexDefinition.columns(index)), "name: #{Kernel.inspect(ConnectionAdapters::IndexDefinition.name(index))}"]
+      Array.push(parts, "unique: true") if ConnectionAdapters::IndexDefinition.unique(index)
+      orders = ConnectionAdapters::IndexDefinition.orders(index)
+      Array.push(parts, "order: #{format_index_orders(orders)}") if (orders in Hash) && !Hash.empty?(orders)
+      where = ConnectionAdapters::IndexDefinition.where(index)
+      Array.push(parts, "where: #{Kernel.inspect(where)}") if where
+      parts
+    end
+
+    def format_index_orders(orders)
+      "{ #{Array.join(Hash.map(orders) { |k, v| "#{k}: #{Kernel.inspect(v)}" }, ", ")} }"
+    end
+
+    def format_colspec(spec) = Array.join(Array.map(spec) { |kv| "#{kv[0]}: #{kv[1]}" }, ", ")
+
+    def schema_type(d, column) = ConnectionAdapters::Column.bigint?(column) ? :bigint : (ConnectionAdapters::Column.type(column) || :string)
+
+    # [key, value as Ruby source] pairs, in Ruby's order (limit, precision, scale, default, null, collation)
+    def prepare_column_options(d, column)
+      spec = Any[]
+      limit = ConnectionAdapters::Column.bigint?(column) ? nil : ConnectionAdapters::Column.limit(column)
+      Array.push(spec, ["limit", Kernel.inspect(limit)]) if limit
+      if ConnectionAdapters::Column.type(column) == :datetime
+        precision = ConnectionAdapters::Column.precision(column)
+        if precision in nil
+          Array.push(spec, ["precision", "nil"])
+        elsif precision != 6
+          Array.push(spec, ["precision", Kernel.inspect(precision)])
+        end
+      else
+        precision = ConnectionAdapters::Column.precision(column)
+        Array.push(spec, ["precision", Kernel.inspect(precision)]) if precision
+      end
+      scale = ConnectionAdapters::Column.scale(column)
+      Array.push(spec, ["scale", Kernel.inspect(scale)]) if scale
+      default = schema_default(d, column)
+      Array.push(spec, ["default", default]) if default
+      Array.push(spec, ["null", "false"]) unless ConnectionAdapters::Column.null(column)
+      collation = ConnectionAdapters::Column.collation(column)
+      Array.push(spec, ["collation", Kernel.inspect(collation)]) if collation
+      spec
+    end
+
+    def column_spec_for_primary_key(d, column)
+      spec = Any[]
+      Array.push(spec, ["id", Kernel.inspect(schema_type(d, column))]) unless default_primary_key?(d, column)
+      Array.each(prepare_column_options(d, column)) { |kv| Array.push(spec, kv) unless kv[0] == "null" }
+      if explicit_primary_key_default?(d, column) && !Array.any?(spec) { |kv| kv[0] == "default" }
+        Array.push(spec, ["default", "nil"])
+      end
+      spec
+    end
+
+    def default_primary_key?(d, column) = schema_type(d, column) == :integer && primary_key_has_autoincrement?(d)
+    def explicit_primary_key_default?(d, column)
+      ConnectionAdapters::Column.bigint?(column) || (ConnectionAdapters::Column.type(column) == :integer && !primary_key_has_autoincrement?(d))
+    end
+
+    def primary_key_has_autoincrement?(d)
+      t = @table_name_
+      return false unless t
+      sql = ConnectionAdapters::SQLite3Adapter.query_value(@connection, "SELECT sql FROM sqlite_master WHERE name = #{ConnectionAdapters::SQLite3Adapter.quote(@connection, t)} AND type = 'table'\nUNION ALL\nSELECT sql FROM sqlite_temp_master WHERE name = #{ConnectionAdapters::SQLite3Adapter.quote(@connection, t)} AND type = 'table'\n", "SCHEMA")
+      String.match?(Kernel.to_s(sql), /\bAUTOINCREMENT\b/i)
+    end
+
+    def schema_default(d, column)
+      return nil unless ConnectionAdapters::Column.has_default?(column)
+      default = ConnectionAdapters::Column.default(column)
+      if default in nil
+        f = ConnectionAdapters::Column.default_function(column)
+        f ? "-> { #{Kernel.inspect(f)} }" : nil
+      else
+        ActiveModel::Type::Value.type_cast_for_schema(ConnectionAdapters::Column.fetch_cast_type(column, @connection), default)
+      end
+    end
+  end
+end

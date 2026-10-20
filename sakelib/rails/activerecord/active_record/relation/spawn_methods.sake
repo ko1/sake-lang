@@ -1,0 +1,50 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/spawn_methods.rb and relation/merger.rb (partial: no
+# merge of a Hash or an Array, no merge of association joins across models)
+#
+# Ruby's merge(other) copies other's values into a spawn (Merger#merge: where clauses joined, order appended,
+# limit/offset/... taken from other when set).
+
+module ActiveRecord
+  module SpawnMethods
+    def merge(rel, other)
+      r = QueryMethods.spawn(rel)
+      merge!(r, other)
+    end
+
+    def merge!(rel, other)
+      v = Relation.values(rel)
+      o = Relation.values(other)
+      Relation::Values.set_where_clause(v, Relation::WhereClause.merge(Relation::Values.where_clause(v), Relation::Values.where_clause(o)))
+      Relation::Values.set_having_clause(v, Relation::WhereClause.merge(Relation::Values.having_clause(v), Relation::Values.having_clause(o)))
+      if Relation::Values.reordering_value(o)
+        Relation::Values.set_order_values(v, Array.dup(Relation::Values.order_values(o)))
+      else
+        Array.each(Relation::Values.order_values(o)) { |x| Array.push(Relation::Values.order_values(v), x) }
+      end
+      Array.each(Relation::Values.select_values(o)) { |x| Array.push(Relation::Values.select_values(v), x) }
+      Array.each(Relation::Values.group_values(o)) { |x| Array.push(Relation::Values.group_values(v), x) }
+      Array.each(Relation::Values.joins_values(o)) { |x| Array.push(Relation::Values.joins_values(v), x) }
+      Array.each(Relation::Values.left_outer_joins_values(o)) { |x| Array.push(Relation::Values.left_outer_joins_values(v), x) }
+      Array.each(Relation::Values.includes_values(o)) { |x| Array.push(Relation::Values.includes_values(v), x) }
+      Array.each(Relation::Values.preload_values(o)) { |x| Array.push(Relation::Values.preload_values(v), x) }
+      Array.each(Relation::Values.eager_load_values(o)) { |x| Array.push(Relation::Values.eager_load_values(v), x) }
+      lv = Relation::Values.limit_value(o)
+      Relation::Values.set_limit_value(v, lv) if lv != nil
+      ov = Relation::Values.offset_value(o)
+      Relation::Values.set_offset_value(v, ov) if ov != nil
+      Relation::Values.set_distinct_value(v, true) if Relation::Values.distinct_value(o)
+      Relation::Values.set_readonly_value(v, true) if Relation::Values.readonly_value(o)
+      Relation::Values.set_none_value(v, true) if Relation::Values.none_value(o)
+      Relation::Values.set_reverse_order_value(v, true) if Relation::Values.reverse_order_value(o)
+      rel
+    end
+
+    # Ruby: except(*skips) / only(*onlies)
+    def except(rel, *skips) = Relation.unscope(rel, *skips)
+
+    def only(rel, *onlies)
+      all = Symbol[:where, :order, :limit, :offset, :select, :group, :having, :joins, :left_outer_joins, :includes, :readonly, :distinct, :lock]
+      Relation.unscope(rel, *Array.reject(all) { |s| Array.include?(onlies, s) })
+    end
+  end
+end

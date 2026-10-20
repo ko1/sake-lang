@@ -1,0 +1,48 @@
+# Port of activerecord-8.1.3/lib/active_record/connection_handling.rb (partial: one connection for the program,
+# no pool, no handler, no connects_to/connected_to roles and shards)
+#
+# Ruby: ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:") gives the class a
+# pool; here a holder (once) keeps the one adapter, made from the config as Ruby's resolver does.
+
+module ActiveRecord
+  module ConnectionHandling
+    module_function
+
+    def connection_holder = once { ConnectionAdapters::SQLite3Adapter[] }
+
+    def establish_connection(**config)
+      cfg = Hash.new
+      Hash.each(config) { |k, v| cfg[k] = v }
+      adapter = Kernel.to_s(cfg[:adapter])
+      raise AdapterNotSpecified, "database configuration does not specify adapter" if adapter == ""
+      raise AdapterNotFound, "database configuration specifies nonexistent '#{adapter}' adapter. Available adapters are: sqlite3." if adapter != "sqlite3"
+      remove_connection
+      Array.push(connection_holder, ConnectionAdapters::SQLite3Adapter.new(cfg))
+      nil
+    end
+
+    def connection
+      c = Array.first(connection_holder)
+      raise ConnectionNotEstablished, "No connection pool for 'ActiveRecord::Base' found." unless c
+      c
+    end
+    def lease_connection = connection
+    def with_connection = yield(connection)
+    def connected? = !Array.empty?(connection_holder) && ConnectionAdapters::SQLite3Adapter.connected?(connection)
+
+    def remove_connection
+      c = Array.first(connection_holder)
+      ConnectionAdapters::SQLite3Adapter.disconnect!(c) if c
+      Array.clear(connection_holder)
+      nil
+    end
+  end
+
+  class AdapterNotSpecified < StandardError
+    include ActiveRecordError
+  end
+
+  class AdapterNotFound < StandardError
+    include ActiveRecordError
+  end
+end

@@ -1,0 +1,270 @@
+# Port of activerecord-8.1.3/lib/active_record/associations.rb, associations/{association,singular_association,
+# collection_association,belongs_to_association,has_one_association,has_many_association,
+# has_many_through_association,association_scope,collection_proxy,join_dependency,preloader}.rb, reflection.rb,
+# autosave_association.rb and the dependent/counter-cache parts of associations/builder/*.rb, in one file because
+# they are one data shape here (partial: no polymorphic or self-referential through chains beyond one through
+# table, no scopes on associations (the `-> { }` argument), no has_one :through, no disable_joins, no
+# strict_loading violations, no extending, no validates_associated, no `comments=` writer, no delete/clear/
+# concat on has_many :through; eager_load loads like preload (a second query); through and habtm preload one
+# query per owner)
+#
+# Ruby's `has_many :comments` (Builder::HasMany.build) defines `comments`, `comments=`, `comment_ids` with
+# define_method on a generated module, adds the reflection to the class, and registers callbacks (dependent,
+# autosave, counter cache). Here the generator (generate/associations.sake) writes the readers and writers as
+# functions of the model from the class body, the reflection as data (AssociationReflection, kept in
+# ModelClass.reflections by the model's `__model`), and the callbacks as lines of the model's callback chains.
+# What a Ruby Association object keeps (target, loaded?) is two fields of the owner per association
+# (assoc_NAME, assoc_NAME_loaded) for a singular one, and the CollectionProxy (one class per target model,
+# `Comment::ActiveRecord_Associations_CollectionProxy`) for a collection. The owner's association_cache marks
+# which are valid: Ruby's reload drops @association_cache, and with it every target here.
+
+module ActiveRecord
+  class DeleteRestrictionError < StandardError
+    include ActiveRecordError
+  end
+
+  module Reflection
+    # Ruby's AssociationReflection (BelongsToReflection, HasManyReflection, ThroughReflection, ...): its options and
+    # what Ruby derives from them (foreign_key, klass's table, the through and join tables), resolved by the generator.
+    class AssociationReflection
+      attr_reader macro, name, class_name, table_name, foreign_key, active_record_primary_key, association_primary_key
+      attr_reader options, through_table, through_owner_key, through_target_key, join_table, inverse_name
+      attr_reader counter_cache_column, owner_table
+
+      def collection?(r) = @macro == :has_many || @macro == :has_and_belongs_to_many
+      def belongs_to?(r) = @macro == :belongs_to
+      def has_one?(r) = @macro == :has_one
+      def through_reflection?(r) = @through_table != nil
+      def klass_name(r) = @class_name
+      def dependent(r) = @options[:dependent]
+      def autosave(r) = @options[:autosave] == true
+      def optional?(r) = @options[:optional] == true
+      def inspect(r) = "#<ActiveRecord::Reflection::AssociationReflection #{@macro} #{Kernel.inspect(@name)}>"
+    end
+
+    module ClassMethods
+      def reflections_of = ModelClass.reflections(__model)
+      def reflect_on_association(name) = ModelClass.reflections(__model)[Kernel.to_s(name)]
+      def reflect_on_all_associations(macro = nil)
+        all = Hash.values(ModelClass.reflections(__model))
+        macro == nil ? all : Array.select(all) { |r| AssociationReflection.macro(r) == macro }
+      end
+    end
+  end
+
+  module Associations
+    module_function :build_join, :record_id, :join_on, :reflection_of, :update_counter, :insert_join_row, :association_where, :truthy?
+    Refl = ActiveRecord::Reflection::AssociationReflection
+
+    # Ruby's association_cache: which association targets of the record are current
+    def association_cached?(r, name)
+      c = @association_cache
+      c != nil && Hash.key?(c, name)
+    end
+    def mark_association_cached(r, name)
+      @association_cache = Hash.new if @association_cache == nil
+      c = @association_cache
+      c[name] = true if c
+      nil
+    end
+    def unmark_association_cached(r, name)
+      c = @association_cache
+      Hash.delete(c, name) if c
+      nil
+    end
+
+    # Ruby's ActiveModel::Type::Boolean cast of _destroy ("1", "true", true)
+    def truthy?(v) = v == true || v == 1 || v == "1" || v == "true"
+
+    # Required of the model (generated, all Sake only): mark a child's belongs_to target as the owner (Ruby's
+    # set_inverse_instance), the records of an association for validates_associated.
+    def set_inverse_instance_of(r, name, owner) = nil
+    def destroy_associations(r) = nil
+    def each_counter_cached_association_change(r, delta) = nil
+
+    def reflection_of(klass, name)
+      refl = ModelClass.reflections(klass)[Kernel.to_s(name)]
+      raise ArgumentError, "Can't join '#{ModelClass.name(klass)}' to association named '#{name}'; perhaps you misspelled it?" if refl == nil
+      refl
+    end
+
+    def table(name) = Arel::Table.new(name)
+
+    def join_on(left_table, left_col, right_table, right_col)
+      Arel::Attributes::Attribute.eq(table(left_table)[left_col], table(right_table)[right_col])
+    end
+
+    # Ruby's JoinDependency for joins(:name) / left_joins(:name): the association's tables joined ON its keys
+    def build_join(klass, manager, name, kind)
+      refl = reflection_of(klass, name)
+      owner = ModelClass.table_name(klass)
+      target = Refl.table_name(refl)
+      through = Refl.through_table(refl) || Refl.join_table(refl)
+      if through
+        Arel::SelectManager.join(manager, table(through), kind)
+        Arel::SelectManager.on(manager, join_on(through, Kernel.to_s(Refl.through_owner_key(refl)), owner, Refl.active_record_primary_key(refl)))
+        Arel::SelectManager.join(manager, table(target), kind)
+        Arel::SelectManager.on(manager, join_on(target, Refl.association_primary_key(refl), through, Kernel.to_s(Refl.through_target_key(refl))))
+      elsif Refl.belongs_to?(refl)
+        Arel::SelectManager.join(manager, table(target), kind)
+        Arel::SelectManager.on(manager, join_on(target, Refl.association_primary_key(refl), owner, Refl.foreign_key(refl)))
+      else
+        Arel::SelectManager.join(manager, table(target), kind)
+        Arel::SelectManager.on(manager, join_on(target, Refl.foreign_key(refl), owner, Refl.active_record_primary_key(refl)))
+      end
+      manager
+    end
+
+    # A record's id for where(author: record) (Ruby: AssociationQueryValue#ids)
+    def record_id(value)
+      case value
+      in ActiveRecord::Core then ActiveRecord::AttributeMethods.id(value)
+      else value
+      end
+    end
+
+    def bind(name, value) = Arel::Nodes::BindParam.new(Relation::QueryAttribute.new(name, value, ActiveModel::Type.default_value))
+
+    # Ruby's expand_from_hash for an association or table key: where(author: record), where(comments: {body: "x"})
+    def association_where(klass, key, value)
+      refl = ModelClass.reflections(klass)[key]
+      if value in Hash
+        tname = refl ? Refl.table_name(refl) : key
+        t = table(tname)
+        preds = Array.map(Hash.to_a(value)) do |kv|
+          col = Kernel.to_s(kv[0])
+          v = kv[1]
+          case v
+          in nil then Arel::Attributes::Attribute.eq(t[col], nil)
+          in Array then Arel::Attributes::Attribute.in(t[col], Array.map(v) { |x| bind(col, x) })
+          else Arel::Attributes::Attribute.eq(t[col], bind(col, v))
+          end
+        end
+        return Array.size(preds) == 1 ? Array.fetch(preds, 0) : Arel::Nodes::And.new(preds)
+      end
+      return nil if refl == nil || !Refl.belongs_to?(refl)
+      fk = Refl.foreign_key(refl)
+      PredicateBuilder.build_bind(klass, fk, (value in Array) ? Array.map(value) { |x| record_id(x) } : record_id(value))
+    end
+
+    # Ruby's CounterCache update_counters for belongs_to counter_cache:
+    # UPDATE "posts" SET "comments_count" = COALESCE("posts"."comments_count", 0) + ? WHERE "posts"."id" = ?
+    def update_counter(target_klass, column, id, delta)
+      t = ModelClass.arel_table(target_klass)
+      um = Arel::UpdateManager.new(t)
+      col = t[column]
+      op = delta < 0 ? :- : :+
+      value = Arel::Nodes::BindParam.new(ActiveModel::Attribute.with_cast_value(column, Integer.abs(delta), ActiveModel::Type.default_value))
+      Arel::UpdateManager.set(um, Any[[col, Arel::Nodes::InfixOperation.new(Arel::Nodes::NamedFunction.new("COALESCE", Any[col, Arel::Nodes.build_quoted(0)]), value, op)]])
+      Arel::UpdateManager.set_wheres(um, Any[PredicateBuilder.build_bind(target_klass, ModelClass.primary_key(target_klass) || "id", id)])
+      ConnectionAdapters::SQLite3Adapter.update(ActiveRecord::Base.connection, um, "#{ModelClass.name(target_klass)} Update All")
+    end
+
+    # has_and_belongs_to_many's join row: INSERT INTO "categories_posts" ("category_id", "post_id") VALUES (?, ?)
+    def insert_join_row(join_table, target_key, target_id, owner_key, owner_id)
+      t = table(join_table)
+      im = Arel::InsertManager.new(t)
+      Arel::InsertManager.insert(im, Any[[t[target_key], Relation::QueryAttribute.new(target_key, target_id, ActiveModel::Type::Integer.new)],
+                                         [t[owner_key], Relation::QueryAttribute.new(owner_key, owner_id, ActiveModel::Type::Integer.new)]])
+      ConnectionAdapters::SQLite3Adapter.insert(ActiveRecord::Base.connection, im, "HABTM Create", false, nil, nil, Any[], Any[])
+    end
+
+    def delete_join_rows(join_table, owner_key, owner_id)
+      t = table(join_table)
+      dm = Arel::DeleteManager.new(t)
+      Arel::DeleteManager.set_wheres(dm, Any[Arel::Attributes::Attribute.eq(t[owner_key], Arel::Nodes::BindParam.new(Relation::QueryAttribute.new(owner_key, owner_id, ActiveModel::Type::Integer.new)))])
+      ConnectionAdapters::SQLite3Adapter.delete(ActiveRecord::Base.connection, dm, "HABTM Destroy")
+    end
+    module_function :delete_join_rows
+
+    # Ruby's CollectionProxy (< Relation): a relation of the association's records that knows its owner. The
+    # generated class per target model includes ActiveRecord::Relation and then this module, so its functions
+    # replace the Relation's where the proxy differs (records, build, create, reload).
+    module CollectionProxy
+      def owner(p) = raise(NotImplementedError)
+      def reflection(p) = raise(NotImplementedError)
+      def new_records(p) = raise(NotImplementedError)
+
+      # Ruby: load_target (the records from the database, then the ones built and not saved)
+      def records(p)
+        load(p) if ActiveRecord::Core.persisted?(@owner)
+        Array.dup(@records_) + Array.select(@new_records) { |r| ActiveRecord::Core.new_record?(r) }
+      end
+      def to_a(p) = records(p)
+      def each(p) = Array.each(records(p)) { |r| yield r }
+      def size(p) = (@loaded || !ActiveRecord::Core.persisted?(@owner)) ? Array.size(records(p)) : Relation.count(p) + Array.size(Array.select(@new_records) { |r| ActiveRecord::Core.new_record?(r) })
+      def length(p) = Array.size(records(p))
+      def empty?(p) = size(p) == 0
+      def target(p) = @records_
+
+      # Ruby: after the target is loaded each record's inverse is the owner, and the proxy's preloads run
+      def preload_associations(p, records)
+        name = Reflection::AssociationReflection.inverse_name(@reflection)
+        Array.each(records) { |r| ActiveRecord::Associations.set_inverse_instance_of(r, name, @owner) } if name
+        preload_records(p, records)
+      end
+
+      def build(p, **attributes) = build_with_hash(p, attributes)
+
+      # build with the attributes as a Hash (Sake only: nested attributes pass a Hash)
+      def build_with_hash(p, attributes)
+        refl = @reflection
+        attrs = Hash.new
+        Hash.each(attributes) { |k, v| attrs[k] = v }
+        fk = Reflection::AssociationReflection.foreign_key(refl)
+        attrs[String.to_sym(fk)] = ActiveRecord::AttributeMethods.id(@owner) if !Reflection::AssociationReflection.through_reflection?(refl) && Reflection::AssociationReflection.join_table(refl) == nil
+        rec = new_record_of(p, attrs)
+        name = Reflection::AssociationReflection.inverse_name(refl)
+        ActiveRecord::Associations.set_inverse_instance_of(rec, name, @owner) if name
+        Array.push(@new_records, rec)
+        rec
+      end
+      def new(p, **attributes) = build(p, **attributes)
+
+      def create(p, **attributes)
+        rec = build(p, **attributes)
+        if ActiveRecord::Core.persisted?(@owner) && ActiveRecord::Transactions.save_with(rec, true, nil)
+          Array.push(@records_, rec) if @loaded
+        end
+        rec
+      end
+
+      # Ruby: <<(*records) / concat: a has_many sets the foreign key and saves, a habtm inserts the join row
+      def concat(p, rec)
+        refl = @reflection
+        jt = Reflection::AssociationReflection.join_table(refl)
+        if jt
+          ActiveRecord::Transactions.save_with(rec, true, nil) if ActiveRecord::Core.new_record?(rec)
+          ActiveRecord::Associations.insert_join_row(jt, Kernel.to_s(Reflection::AssociationReflection.through_target_key(refl)), ActiveRecord::AttributeMethods.id(rec),
+                                                     Kernel.to_s(Reflection::AssociationReflection.through_owner_key(refl)), ActiveRecord::AttributeMethods.id(@owner))
+        else
+          ActiveRecord::AttributeMethods.write_attribute(rec, Reflection::AssociationReflection.foreign_key(refl), ActiveRecord::AttributeMethods.id(@owner))
+          ActiveRecord::Transactions.save_with(rec, true, nil) if ActiveRecord::Core.persisted?(@owner)
+        end
+        Array.push(@records_, rec) if @loaded
+        p
+      end
+      def <<(p, rec) = concat(p, rec)
+
+      def reload(p)
+        reset(p)
+        load(p)
+        p
+      end
+
+      def proxy_association_owner(p) = @owner
+    end
+  end
+
+  # Ruby's AutosaveAssociation: marked_for_destruction, and the save of an association's new or changed records
+  # (the generator adds autosave_associated_records_for_NAME to the save callbacks)
+  module AutosaveAssociation
+    def mark_for_destruction(r)
+      @marked_for_destruction = true
+      nil
+    end
+    def marked_for_destruction?(r) = @marked_for_destruction == true
+    def destroyed_by_association(r) = @destroyed_by_association
+    def changed_for_autosave?(r) = new_record?(r) || has_changes_to_save?(r) || marked_for_destruction?(r)
+  end
+end

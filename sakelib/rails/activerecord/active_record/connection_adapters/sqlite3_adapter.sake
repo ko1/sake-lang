@@ -1,6 +1,6 @@
-# Port of activerecord-8.1.3/lib/active_record/connection_adapters/sqlite3_adapter.rb (partial: no
-# alter_table-based schema changes (remove_column, change_column, rename_column, foreign keys, check
-# constraints), no virtual tables, no pragmas from the config, no statement pool, no dbconsole)
+# Port of activerecord-8.1.3/lib/active_record/connection_adapters/sqlite3_adapter.rb (partial: alter_table
+# copies columns and indexes but not foreign keys or check constraints; no virtual tables, no pragmas from
+# the config, no statement pool, no dbconsole)
 #
 # Ruby: SQLite3Adapter.new(adapter: "sqlite3", database: ":memory:"); here `new` takes the config Hash
 # (`SQLite3Adapter.new(Hash.of(adapter: "sqlite3", database: ":memory:"))`), and initialize sets what Ruby's
@@ -145,6 +145,146 @@ module ActiveRecord
       def add_reference(c, table_name, ref_name, options = Hash.new)
         add_column(c, table_name, "#{ref_name}_id", :integer, Hash.except(options, :index))
         add_index(c, table_name, "#{ref_name}_id") if Hash.fetch(options, :index, true)
+      end
+
+      # Ruby: remove_column(table_name, column_name, type = nil, **options), through alter_table's copy
+      def remove_column(c, table_name, column_name, type = nil, options = Hash.new)
+        alter_table(c, table_name) { |definition| TableDefinitionMethods.remove_column(definition, column_name) }
+      end
+
+      def remove_columns(c, table_name, *column_names)
+        alter_table(c, table_name) do |definition|
+          Array.each(column_names) { |n| TableDefinitionMethods.remove_column(definition, n) }
+        end
+      end
+
+      def change_column_default(c, table_name, column_name, default_or_changes)
+        default = (default_or_changes in Hash) && Hash.key?(default_or_changes, :to) ? default_or_changes[:to] : default_or_changes
+        alter_table(c, table_name) do |definition|
+          cd = TableDefinitionMethods.[](definition, column_name)
+          ColumnDefinition.options(cd)[:default] = default if cd
+        end
+      end
+
+      def change_column_null(c, table_name, column_name, null, default = nil)
+        unless null || (default in nil)
+          internal_exec_query(c, "UPDATE #{quote_table_name(c, table_name)} SET #{quote_column_name(c, Kernel.to_s(column_name))}=#{quote(c, default)} WHERE #{quote_column_name(c, Kernel.to_s(column_name))} IS NULL")
+        end
+        alter_table(c, table_name) do |definition|
+          cd = TableDefinitionMethods.[](definition, column_name)
+          ColumnDefinition.options(cd)[:null] = null if cd
+        end
+      end
+
+      def change_column(c, table_name, column_name, type, options = Hash.new)
+        alter_table(c, table_name) { |definition| SQLite3::TableDefinition.change_column(definition, column_name, type, options) }
+      end
+
+      def rename_column(c, table_name, column_name, new_column_name)
+        column = column_for(c, table_name, column_name)
+        alter_table(c, table_name, Hash.of(ConnectionAdapters::Column.name(column) => Kernel.to_s(new_column_name)))
+      end
+
+      def remove_reference(c, table_name, ref_name, options = Hash.new)
+        names = String["#{ref_name}_id"]
+        Array.push(names, "#{ref_name}_type") if options[:polymorphic] == true
+        remove_columns(c, table_name, *names)
+      end
+
+      def remove_timestamps(c, table_name, options = Hash.new) = remove_columns(c, table_name, "updated_at", "created_at")
+
+      # Ruby: disable_referential_integrity { }
+      def disable_referential_integrity(c)
+        old_foreign_keys = query_value(c, "PRAGMA foreign_keys")
+        old_defer_foreign_keys = query_value(c, "PRAGMA defer_foreign_keys")
+        begin
+          execute(c, "PRAGMA defer_foreign_keys = ON")
+          execute(c, "PRAGMA foreign_keys = OFF")
+          yield
+        ensure
+          execute(c, "PRAGMA defer_foreign_keys = #{old_defer_foreign_keys}")
+          execute(c, "PRAGMA foreign_keys = #{old_foreign_keys}")
+        end
+      end
+
+      # Ruby: alter_table(table_name, foreign_keys, check_constraints, **options) { |definition| }: copy the
+      # table to "a#{name}" and back, the block changing the definition on the way back
+      def alter_table(c, table_name, rename = Hash.new)
+        altered_table_name = "a#{table_name}"
+        disable_referential_integrity(c) do
+          joining_transaction(c) do
+            move_table(c, Kernel.to_s(table_name), altered_table_name, true, rename) { |d| nil }
+            move_table(c, altered_table_name, Kernel.to_s(table_name), false, Hash.new) { |d| yield d if block_given? }
+          end
+        end
+      end
+
+      # Ruby's transaction { } for a block that never raises ActiveRecord::Rollback (Sake only: transaction's
+      # rescue of it is reported unused where no caller raises it): join the open one or begin one
+      def joining_transaction(c)
+        return yield if transaction_open?(c)
+        TransactionManager.within_new_transaction(transaction_manager(c), nil, true) { |tx| yield }
+      end
+
+      def move_table(c, from, to, temporary, rename)
+        copy_table(c, from, to, temporary, rename) { |d| yield d }
+        drop_table(c, from)
+      end
+
+      def copy_table(c, from, to, temporary, rename)
+        from_primary_key = primary_key(c, from)
+        copied = String[]
+        create_table(c, to, Hash.of(id: false, temporary: temporary)) do |definition|
+          Array.each(columns(c, from)) do |column|
+            name = ConnectionAdapters::Column.name(column)
+            column_name = rename[name] || name
+            column_options = Hash.of(limit: ConnectionAdapters::Column.limit(column), precision: ConnectionAdapters::Column.precision(column),
+                                     scale: ConnectionAdapters::Column.scale(column), null: ConnectionAdapters::Column.null(column),
+                                     collation: ConnectionAdapters::Column.collation(column), primary_key: column_name == from_primary_key)
+            if ConnectionAdapters::Column.has_default?(column)
+              default = ConnectionAdapters::Column.default(column)
+              column_options[:default] = default unless SQLite3::Column.auto_increment?(column) || (default in nil)
+            end
+            column_type = ConnectionAdapters::Column.bigint?(column) ? :bigint : (ConnectionAdapters::Column.type(column) || :string)
+            TableDefinitionMethods.column(definition, column_name, column_type, column_options)
+          end
+          yield definition
+          Array.each(TableDefinitionMethods.columns(definition)) { |cd| Array.push(copied, ColumnDefinition.name(cd)) }
+        end
+        copy_table_indexes(c, from, to, rename)
+        copy_table_contents(c, from, to, copied, rename)
+      end
+
+      def copy_table_indexes(c, from, to, rename)
+        Array.each(indexes(c, from)) do |index|
+          name = IndexDefinition.name(index)
+          if to == "a#{from}"
+            name = "t#{name}"
+          elsif from == "a#{to}"
+            name = String.slice(name, 1..) || name
+          end
+          to_column_names = Array.map(columns(c, to)) { |col| ConnectionAdapters::Column.name(col) }
+          cols = Array.map(IndexDefinition.columns(index)) { |col| rename[col] || col }.Array.select { |col| Array.include?(to_column_names, col) }
+          unless Array.empty?(cols)
+            options = Hash.of(name: String.gsub(name, Regexp.new("(^|_)(#{Regexp.escape(from)})_"), "\\1#{to}_"), internal: true)
+            options[:unique] = true if IndexDefinition.unique(index)
+            where = IndexDefinition.where(index)
+            options[:where] = where if where
+            add_index(c, to, cols, options)
+          end
+        end
+      end
+
+      def copy_table_contents(c, from, to, columns, rename)
+        column_mappings = Hash.new
+        Array.each(columns) { |name| column_mappings[name] = name }
+        Hash.each(rename) { |a, b| column_mappings[b] = a }
+        from_columns = Array.map(columns(c, from)) { |col| ConnectionAdapters::Column.name(col) }
+        cols = Array.select(columns) { |col| Array.include?(from_columns, column_mappings[col] || col) }
+        from_columns_to_copy = Array.map(cols) { |col| column_mappings[col] || col }
+        quoted_columns = Array.join(Array.map(cols) { |col| quote_column_name(c, col) }, ",")
+        quoted_from_columns = Array.join(Array.map(from_columns_to_copy) { |col| quote_column_name(c, col) }, ",")
+        internal_exec_query(c, "INSERT INTO #{quote_table_name(c, to)} (#{quoted_columns})\n                     SELECT #{quoted_from_columns} FROM #{quote_table_name(c, from)}")
       end
 
       def get_database_version(c)

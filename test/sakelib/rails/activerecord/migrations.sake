@@ -1,0 +1,133 @@
+require "rails/activerecord/active_record"
+
+# Migrations: change (inverted by the CommandRecorder on the way down), up/down, reversible, the verbose
+# output, schema_migrations and ar_internal_metadata, MigrationContext migrate/rollback/status, and the SQL
+# that changes the database (SQLite's alter_table copies the table)
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql]))
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) do |sql|
+    next unless String.match?(sql, /\A\s*(CREATE|ALTER|DROP|INSERT|DELETE|UPDATE|PRAGMA (defer_)?foreign_keys =)/)
+    puts("  sql: #{String.gsub(sql, /'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+'/, "'TIME'")}")
+  end
+  Array.clear(SqlLog.sqls(sql_log))
+end
+# what migrations print, with the times made fixed (Ruby swaps $stdout; Sake's Migration captures)
+def quietly(&b)
+  out = ActiveRecord::Migration.capture_output(&b)
+  print(String.gsub(out, /\d+\.\d+s/, "0.0000s"))
+end
+
+class CreatePosts
+  attr_reader name, version
+  include ActiveRecord::Migration
+  def change(m)
+    create_table m, :posts do |t|
+      T.string(t, :title, Hash.of(null: false))
+      T.text(t, :body)
+      T.timestamps(t)
+    end
+    add_index m, :posts, :title, Hash.of(unique: true)
+  end
+end
+T = ActiveRecord::ConnectionAdapters::TableDefinitionMethods
+
+class AddViewsToPosts
+  attr_reader name, version
+  include ActiveRecord::Migration
+  def change(m)
+    add_column m, :posts, :views, :integer, Hash.of(default: 0)
+    rename_column m, :posts, :body, :content
+    reversible m do |dir|
+      ActiveRecord::MigrationParts::ReversibleBlockHelper.up(dir) { say m, "views start at 0" }
+      ActiveRecord::MigrationParts::ReversibleBlockHelper.down(dir) { say m, "views are gone" }
+    end
+  end
+end
+
+class CreateTags
+  attr_reader name, version
+  include ActiveRecord::Migration
+  def up(m)
+    create_table m, :tags do |t|
+      T.string(t, :name)
+    end
+    execute m, "INSERT INTO tags (name) VALUES ('ruby')"
+  end
+
+  def down(m)
+    drop_table m, :tags
+  end
+end
+
+class ChangeViews
+  attr_reader name, version
+  include ActiveRecord::Migration
+  def change(m)
+    change_column_default m, :posts, :views, Hash.of(from: 0, to: 1)
+    change_column_null m, :posts, :content, false, ""
+  end
+end
+
+class DropTags
+  attr_reader name, version
+  include ActiveRecord::Migration
+  def change(m)
+    drop_table m, :tags
+  end
+end
+
+# Ruby reads migration files; the list is given here
+list = Any[CreatePosts.new("CreatePosts", 20261020000001), AddViewsToPosts.new("AddViewsToPosts", 20261020000002),
+           CreateTags.new("CreateTags", 20261020000003), ChangeViews.new("ChangeViews", 20261020000004)]
+ctx = ActiveRecord::MigrationContext.new(list)
+Ctx = ActiveRecord::MigrationContext
+Conn = ActiveRecord::ConnectionAdapters::SQLite3Adapter
+Col = ActiveRecord::ConnectionAdapters::Column
+def show_columns(table) = p(Array.map(Conn.columns(ActiveRecord::Base.connection, table)) { |c| [Col.name(c), Col.sql_type(c), Col.null(c), Col.default(c)] })
+
+puts("-- migrate")
+p(Ctx.needs_migration?(ctx))
+quietly { Ctx.migrate(ctx) }
+show_sql
+p([Ctx.current_version(ctx), Ctx.needs_migration?(ctx)])
+p(Ctx.migrations_status(ctx))
+p(Conn.select_rows(ActiveRecord::Base.connection, "SELECT name FROM tags"))
+show_columns("posts")
+
+puts("-- rollback")
+quietly { Ctx.rollback(ctx, 2) }
+show_sql
+p(Ctx.current_version(ctx))
+p(Array.sort(Array.map(Conn.tables(ActiveRecord::Base.connection)) { |t| Kernel.to_s(t) }))
+show_columns("posts")
+
+puts("-- migrate to a version, and down")
+quietly { Ctx.migrate(ctx, 20261020000003) }
+show_sql
+quietly { Ctx.migrate(ctx, 20261020000001) }
+show_sql
+p(Ctx.current_version(ctx))
+p(Array.map(Conn.columns(ActiveRecord::Base.connection, "posts")) { |c| Col.name(c) })
+begin
+  Ctx.migrate(ctx, 20261020000009)
+rescue ActiveRecord::UnknownMigrationVersionError => e
+  puts("UnknownMigrationVersionError: #{String.strip(Exception.message(e))}")
+end
+
+puts("-- irreversible")
+begin
+  quietly { ActiveRecord::Migration.migrate(DropTags.new("DropTags", 20261020000005), :down) }
+rescue ActiveRecord::IrreversibleMigration => e
+  puts("IrreversibleMigration: #{String.strip(Exception.message(e))}")
+end
+Array.clear(SqlLog.sqls(sql_log))

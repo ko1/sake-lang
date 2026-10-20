@@ -1,0 +1,63 @@
+require "rails/activerecord/active_record"
+
+# default_scope and unscoped, named scopes chained both ways, readonly and strict loading relations,
+# sanitize_sql_like, where with LIKE, distinct counts, select of a String
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Migration.set_verbose(false)
+generate "rails/activerecord/active_record/generate/active_record", "scoping_schema.rb", "scoping_models.rb"
+ScopingSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA" || payload[:name] == "TRANSACTION"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+
+R = ActiveRecord::Relation
+# Ruby's default_scope block and scope lambdas: functions of the relation
+class Note
+  def default_scope(rel) = R.where(rel, archived: false)
+  def ranked(rel = Note.all) = R.where(rel, "rank > ?", 0).R.order(rank: :desc)
+  def titled(t, rel = Note.all) = R.where(rel, "title LIKE ?", "%#{ActiveRecord::Sanitization.sanitize_sql_like(t)}%")
+end
+def titles(rel) = Enum.map(rel) { |n| Note.title(n) }
+
+Array.each(Any[["first 100%", false, 3], ["second", false, 0], ["old", true, 5], ["third_x", false, 1]]) do |title, archived, rank|
+  R.create!(Note.unscoped, title: title, archived: archived, rank: rank)
+end
+Array.clear(SqlLog.sqls(sql_log))
+
+puts("-- default scope")
+p(titles(Note.all), Note.count)
+p(titles(Note.unscoped.R.order(:id)), Note.unscoped.R.count)
+p(titles(Note.unscoped.R.where(archived: true)))
+show_sql
+
+puts("-- named scopes")
+p(titles(Note.ranked))
+p(titles(Note.ranked(Note.where(rank: 1..))))
+p(titles(Note.titled("100%")), titles(Note.titled("_x")))
+p(titles(Note.titled("i", Note.ranked)))
+show_sql
+
+puts("-- readonly, distinct, select")
+note = Note.readonly.R.first!
+begin
+  Note.update(note, title: "changed")
+rescue ActiveRecord::ReadOnlyRecord => e
+  puts("ReadOnlyRecord: #{Exception.message(e)}")
+end
+p(Note.distinct.R.count(:archived), Note.unscoped.R.distinct.count(:archived))
+p(Note.title(Note.select("title, rank").R.order(rank: :desc).first!))
+p(Note.where(title: "nope").R.first, Note.where(title: "nope").R.pluck(:id))
+p(Note.order(:rank).R.pluck(:rank), Array.map(Note.order(:rank).R.last_n(2)) { |n| Note.rank(n) })
+show_sql

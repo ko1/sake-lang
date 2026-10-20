@@ -1,0 +1,81 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/where_clause.rb (partial: no or/and grouping of
+# contradictions, no to_h for scope_for_create beyond Equality nodes, no extract_attributes)
+
+module ActiveRecord
+  module Relation
+    class WhereClause
+      attr_reader predicates
+
+      def empty(_ = nil) = WhereClause.new(Any[])
+      def empty?(w) = Array.empty?(@predicates)
+      def +(a, b) = WhereClause.new(Array.dup(@predicates) + WhereClause.predicates(b))
+      def -(a, b) = WhereClause.new(Array.reject(@predicates) { |p| Array.any?(WhereClause.predicates(b)) { |q| Kernel.equal?(p, q) } })
+      def merge(a, b) = WhereClause.new(Array.dup(@predicates) + WhereClause.predicates(b))
+      def dup_clause(w) = WhereClause.new(Array.dup(@predicates))
+
+      # Ruby: or(other): (left) OR (right)
+      def or(a, b)
+        return a if WhereClause.empty?(b)
+        return b if empty?(a)
+        WhereClause.new(Any[Arel::Nodes::Grouping.new(Arel::Nodes::Or.new(Any[ast(a), WhereClause.ast(b)]))])
+      end
+
+      def ast(w)
+        ps = predicates_with_wrapped_sql_literals(w)
+        Array.size(ps) == 1 ? Array.fetch(ps, 0) : Arel::Nodes::And.new(ps)
+      end
+
+      def predicates_with_wrapped_sql_literals(w)
+        Array.map(@predicates) do |node|
+          case node
+          in Arel::Nodes::SqlLiteral then Arel::Nodes::Grouping.new(node)
+          in String then Arel::Nodes::Grouping.new(Arel::Nodes::SqlLiteral.new(node))
+          else node
+          end
+        end
+      end
+
+      # Ruby: invert (where.not): NOT (a AND b), or the inverse of a single predicate
+      def invert(w)
+        ps = @predicates
+        return WhereClause.new(Any[]) if Array.empty?(ps)
+        inverted = if Array.size(ps) == 1
+                     inverted_predicate(w, Array.fetch(ps, 0))
+                   else
+                     Arel::Nodes::Not.new(ast(w))
+                   end
+        WhereClause.new(Any[inverted])
+      end
+
+      def inverted_predicate(w, node)
+        case node
+        in Arel::Nodes::Equality | Arel::Nodes::NotEqual | Arel::Nodes::In | Arel::Nodes::NotIn | Arel::Nodes::HomogeneousIn | Arel::Nodes::GreaterThan | Arel::Nodes::LessThan | Arel::Nodes::GreaterThanOrEqual | Arel::Nodes::LessThanOrEqual
+          Arel::Nodes::Node.invert(node)
+        in Arel::Nodes::SqlLiteral then Arel::Nodes::Not.new(Arel::Nodes::Grouping.new(node))
+        else Arel::Nodes::Not.new(node)
+        end
+      end
+
+      # Ruby: to_h (the equalities, for scope_for_create: Post.where(published: true).build)
+      def to_h(w, table_name = nil)
+        h = Hash.new
+        Array.each(@predicates) do |node|
+          next unless node in Arel::Nodes::Equality
+          left = Arel::Nodes::Equality.left(node)
+          right = Arel::Nodes::Equality.right(node)
+          next unless left in Arel::Attributes::Attribute
+          value = case right
+                  in Arel::Nodes::BindParam then Arel::Nodes::BindParam.value_before_type_cast(right)
+                  in Arel::Nodes::Casted then Arel::Nodes::Casted.value_before_type_cast(right)
+                  in Arel::Nodes::Quoted then Arel::Nodes::Quoted.value_before_type_cast(right)
+                  else nil
+                  end
+          h[Kernel.to_s(Arel::Attributes::Attribute.name(left))] = value
+        end
+        h
+      end
+
+      def referenced_columns(w) = Hash.keys(to_h(w))
+    end
+  end
+end

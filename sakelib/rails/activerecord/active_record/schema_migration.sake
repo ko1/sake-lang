@@ -1,0 +1,53 @@
+# Port of activerecord-8.1.3/lib/active_record/schema_migration.rb (partial: no table name prefix/suffix)
+#
+# Ruby's SchemaMigration (a plain class since 7.1, with the pool) builds its statements with Arel.
+
+module ActiveRecord
+  class SchemaMigration
+    attr_reader connection
+
+    def table_name(s) = "schema_migrations"
+    def primary_key(s) = "version"
+    def arel_table(s) = Arel::Table.new(table_name(s))
+
+    def create_version(s, version)
+      t = arel_table(s)
+      im = Arel::InsertManager.new(t)
+      Arel::InsertManager.insert(im, Any[[t[primary_key(s)], version]])
+      ConnectionAdapters::SQLite3Adapter.insert(@connection, im, "ActiveRecord::SchemaMigration Create", primary_key(s), version)
+    end
+
+    def delete_version(s, version)
+      t = arel_table(s)
+      dm = Arel::DeleteManager.new(t)
+      Arel::DeleteManager.set_wheres(dm, Any[Arel::Attributes::Attribute.eq(t[primary_key(s)], version)])
+      ConnectionAdapters::SQLite3Adapter.delete(@connection, dm, "ActiveRecord::SchemaMigration Destroy")
+    end
+
+    def delete_all_versions(s) = Array.each(versions(s)) { |v| delete_version(s, v) }
+
+    def create_table(s)
+      return nil if ConnectionAdapters::SQLite3Adapter.table_exists?(@connection, table_name(s))
+      ConnectionAdapters::SQLite3Adapter.create_table(@connection, table_name(s), Hash.of(id: false)) do |t|
+        ConnectionAdapters::TableDefinitionMethods.string(t, :version, Hash.of(primary_key: true, null: false))
+      end
+    end
+
+    def drop_table(s) = ConnectionAdapters::SQLite3Adapter.drop_table(@connection, table_name(s), Hash.of(if_exists: true))
+
+    def normalize_migration_number(s, number) = format("%.3d", String.to_i(Kernel.to_s(number)))
+    def normalized_versions(s) = Array.map(versions(s)) { |v| normalize_migration_number(s, v) }
+
+    def versions(s)
+      t = arel_table(s)
+      sm = Arel::SelectManager.new(t)
+      Arel::SelectManager.project(sm, t[primary_key(s)])
+      Arel::SelectManager.order(sm, Arel::Attributes::Attribute.asc(t[primary_key(s)]))
+      Array.map(ConnectionAdapters::SQLite3Adapter.select_values(@connection, sm, "ActiveRecord::SchemaMigration Load")) { |v| Kernel.to_s(v) }
+    end
+
+    def integer_versions(s) = Array.map(versions(s)) { |v| String.to_i(v) }
+    def count(s) = Array.size(versions(s))
+    def table_exists?(s) = ConnectionAdapters::SQLite3Adapter.data_source_exists?(@connection, table_name(s))
+  end
+end

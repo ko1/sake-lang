@@ -1,0 +1,69 @@
+require "rails/activerecord/active_record"
+
+# Transactions: the value of the block, nesting (joined and requires_new), ActiveRecord::Rollback, an exception
+# rolling back and propagating, save! inside a transaction, the records' state and callbacks after each
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Migration.set_verbose(false)
+generate "rails/activerecord/active_record/generate/active_record", "transactions_schema.rb", "transactions_models.rb"
+TransactionsSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+
+class Account
+  def trace_commit(a) = puts("  committed #{Account.name(a)}")
+  def trace_rollback(a) = puts("  rolled back #{Account.name(a)}")
+end
+
+def transfer(from, to, amount)
+  Account.transaction do
+    Account.update!(from, balance: (Account.balance(from) || 0) - amount)
+    Account.update!(to, balance: (Account.balance(to) || 0) + amount)
+  end
+end
+
+puts("-- the block's value")
+p(Account.transaction { 42 })
+alice = Account.create(name: "alice", balance: 100)
+bob = Account.create(name: "bob", balance: 10)
+show_sql
+puts("-- a transfer")
+transfer(alice, bob, 30)
+p([Account.reload(alice).Account.balance, Account.reload(bob).Account.balance])
+show_sql
+puts("-- a failed transfer (RecordInvalid propagates)")
+begin
+  transfer(alice, bob, 500)
+rescue ActiveRecord::RecordInvalid => e
+  puts("RecordInvalid: #{Exception.message(e)}")
+end
+p([Account.reload(alice).Account.balance, Account.reload(bob).Account.balance])
+show_sql
+puts("-- a joined inner transaction")
+Account.transaction do
+  Account.update(alice, balance: 1)
+  Account.transaction do
+    Account.update(bob, balance: 2)
+  end
+end
+p(Account.pluck(:balance))
+show_sql
+puts("-- destroy rolled back")
+Account.transaction do
+  Account.destroy(bob)
+  raise ActiveRecord::Rollback
+end
+p([Account.destroyed?(bob), Account.count])
+show_sql

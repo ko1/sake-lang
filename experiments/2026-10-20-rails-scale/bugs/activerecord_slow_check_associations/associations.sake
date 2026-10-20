@@ -1,0 +1,114 @@
+require "rails/activerecord/active_record"
+
+# Associations on a :memory: database: belongs_to, has_one, has_many (with the collection proxy), has_many
+# :through, has_and_belongs_to_many, includes/preload, joins, dependent, counter_cache, autosave of new
+# records, nested attributes, inverse_of, and the SQL each step runs
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+generate "rails/activerecord/active_record/generate/active_record", "associations_schema.rb", "associations_models.rb"
+ActiveRecord::Migration.set_verbose(false)
+AssociationsSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA" || payload[:name] == "TRANSACTION"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+Rel = ActiveRecord::Relation
+Comments = Comment::ActiveRecord_Associations_CollectionProxy
+Posts = Post::ActiveRecord_Associations_CollectionProxy
+
+puts("-- belongs_to and has_many")
+ann = Author.create(name: "Ann")
+post = Post.create(title: "Hello", author: ann)
+p([Post.author_id(post), (a = Post.author(post)) ? Author.name(a) : nil])
+show_sql
+c1 = Comments.create(Post.comments(post), body: "first")
+c2 = Comments.build(Post.comments(post), body: "second")
+p([Comment.post_id(c1), Comment.post_id(c2), Comment.new_record?(c2)])
+p(Comment.save(c2))
+show_sql
+Post.reload(post)
+p([Post.comments_count(post), Enum.map(Post.comments(post)) { |x| Comment.body(x) }, Rel.count(Post.comments(post))])
+p(Post.comment_ids(post))
+show_sql
+p(Rel.where(Post.comments(post), approved: false).Rel.pluck(:body))
+show_sql
+c = Comment.find(Comment.id(c1))
+p([(x = Comment.post(c)) ? Post.title(x) : nil, Kernel.equal?(Comment.post(c), Comment.post(c))])
+show_sql
+
+puts("-- has_one")
+profile = Author.create_profile(ann, bio: "writes")
+p([Profile.author_id(profile), (x = Author.profile(ann)) ? Profile.bio(x) : nil])
+ann2 = Author.find(Author.id(ann))
+p((x = Author.profile(ann2)) ? Profile.bio(x) : nil)
+p((x = Profile.first) ? ((y = Profile.author(x)) ? Author.name(y) : nil) : nil)
+show_sql
+
+puts("-- through and habtm")
+ruby = Tag.create(name: "ruby")
+sake = Tag.create(name: "sake")
+Tagging.create(post: post, tag: ruby)
+Tagging.create(post: post, tag: sake)
+p(Enum.map(Post.tags(post)) { |x| Tag.name(x) })
+p(Enum.map(Tag.posts(ruby)) { |x| Post.title(x) })
+show_sql
+news = Category.create(name: "news")
+Category::ActiveRecord_Associations_CollectionProxy.concat(Post.categories(post), news)
+p(Enum.map(Post.categories(post)) { |x| Category.name(x) })
+p(Enum.map(Category.posts(news)) { |x| Post.title(x) })
+show_sql
+
+puts("-- includes and joins")
+second = Post.create(title: "Second", author: ann)
+Comments.create(Post.comments(second), body: "third")
+posts = Post.includes(:comments).Rel.order(:id).to_a
+show_sql
+p(Array.map(posts) { |x| [Post.title(x), Enum.map(Post.comments(x)) { |y| Comment.body(y) }] })
+show_sql
+p(Enum.map(Post.preload(:author)) { |x| (a = Post.author(x)) ? Author.name(a) : nil })
+show_sql
+p(Post.joins(:comments).Rel.where(comments: Hash.of(body: "third")).pluck(:title))
+p(Post.left_joins(:comments).Rel.where(comments: Hash.of(id: nil)).pluck(:title))
+p(Post.joins(:tags).Rel.where(tags: Hash.of(name: "sake")).count)
+p(Post.where(author: ann).Rel.count)
+show_sql
+
+puts("-- inverse_of")
+author = Author.includes(:posts).Rel.find(Author.id(ann))
+p(Enum.map(Author.posts(author)) { |x| Kernel.equal?(Post.author(x), author) })
+show_sql
+
+puts("-- nested attributes")
+bob = Author.create(name: "Bob", posts_attributes: Any[Hash.of(title: "Bob's first"), Hash.of(title: "Bob's second")])
+p(Enum.map(Author.posts(bob)) { |x| Post.title(x) })
+show_sql
+first_id = (x = Rel.first(Author.posts(bob))) ? Post.id(x) : nil
+last_id = (x = Rel.last(Author.posts(bob))) ? Post.id(x) : nil
+Author.update(bob, posts_attributes: Any[Hash.of(id: first_id, title: "Bob's renamed"), Hash.of(id: last_id, _destroy: true)])
+p(Enum.map(Author.posts(Author.reload(bob))) { |x| Post.title(x) })
+show_sql
+
+puts("-- dependent")
+p(Tag.destroy(ruby) != false)
+p(ActiveModel::Errors.full_messages(Tag.errors(ruby)))
+show_sql
+Post.destroy(post)
+p([Comment.count, Tagging.count, Post.exists?(Post.id(post))])
+show_sql
+Author.destroy(ann)
+p([Profile.count, Post.where(author_id: nil).Rel.count])
+show_sql
+
+puts("-- validation")
+orphan = Comment.build(body: "x")
+p([Comment.valid?(orphan), ActiveModel::Errors.full_messages(Comment.errors(orphan))])

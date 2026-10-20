@@ -1,0 +1,238 @@
+# Port of activerecord-8.1.3/lib/active_record/persistence.rb (partial: no insert/insert_all/upsert (InsertAll),
+# no becomes, no prefetch_primary_key (SQLite has none), no composite keys, no query constraints; the class
+# methods Post.update(id, attrs) / Post.destroy(id) / Post.delete(id) are left out: Sake has one function per
+# name and the instance's post.update(attrs) / post.destroy keep the names)
+#
+# Ruby's save goes through super from module to module (Transactions#save > Validations#save > Persistence#save,
+# Callbacks#create_or_update > Persistence#create_or_update, Timestamp#_create_record > Callbacks > Dirty >
+# Locking::Optimistic > CounterCache > Persistence). Sake has no super, so each module's body has its own name
+# (persistence_save, persistence__create_record, ...) and calls the next one in Base's ancestor order, which
+# Ruby resolves at run time and Sake writes down. The outermost one keeps Rails' name.
+
+module ActiveRecord
+  module Persistence
+    # Ruby: Post.create(attributes) { |post| }
+    def create(**attributes)
+      r = build_with(attributes)
+      save_with(r, true, nil)
+      r
+    end
+
+    def create!(**attributes)
+      r = build_with(attributes)
+      save_with!(r, true, nil)
+      r
+    end
+
+    # Ruby's Persistence#save, under Validations#save
+    # Ruby rescues ActiveRecord::RecordInvalid here (raised by a callback's save!); nothing here raises it
+    def persistence_save(r) = create_or_update(r)
+
+    def persistence_save!(r)
+      create_or_update(r) || raise(RecordNotSaved.new("Failed to save the record", r))
+    end
+
+    # Ruby's Persistence#create_or_update, under Callbacks#create_or_update
+    def persistence_create_or_update(r)
+      raise ReadOnlyRecord, "#{ModelClass.name(__model)} is marked as readonly" if readonly?(r)
+      return false if destroyed?(r)
+      result = new_record?(r) ? _create_record(r) : _update_record(r)
+      result != false
+    end
+
+    # Ruby's Persistence#_create_record(attribute_names = self.attribute_names)
+    def persistence__create_record(r, extra_names = String[])
+      names = attributes_for_create(r, Array.uniq(attribute_names_for_partial_inserts(r) + extra_names))
+      returning = primary_key ? Any[primary_key] : Any[]
+      values = _insert_record(attributes_with_values(r, names), returning)
+      pk = primary_key
+      if pk && values
+        v = Array.first(values)
+        _write_attribute(r, pk, ActiveModel::Type::Value.deserialize(type_for_attribute(pk), v)) if (_read_attribute(r, pk) in nil)
+      end
+      @new_record = false
+      @previously_new_record = true
+      id(r)
+    end
+
+    def attributes_for_create(r, names)
+      Array.select(names) { |n| Array.include?(column_names, n) && !(n == primary_key && (id(r) in nil)) }
+    end
+
+    def attributes_for_update(r, names)
+      Array.select(names) { |n| Array.include?(column_names, n) && n != primary_key && !Array.include?(ModelClass.readonly_attributes(__model), n) }
+    end
+
+    # Ruby's Persistence#_update_record(attribute_names = self.attribute_names)
+    def persistence__update_record(r)
+      names = attributes_for_update(r, attribute_names_for_partial_updates(r))
+      if Array.empty?(names)
+        affected_rows = 0
+        @trigger_update_callback = true
+      else
+        affected_rows = _update_row(r, names)
+        @trigger_update_callback = affected_rows == 1
+      end
+      @previously_new_record = false
+      affected_rows
+    end
+
+    def persistence__update_row(r, names, attempted_action = "update")
+      _update_record_with(attributes_with_values(r, names), Any[[primary_key || "id", id_in_database(r)]])
+    end
+
+    # Ruby: Post._insert_record(connection, values, returning)
+    def _insert_record(values, returning)
+      conn = ActiveRecord::Base.connection
+      im = Arel::InsertManager.new(arel_table)
+      if Hash.empty?(values)
+        Arel::InsertManager.insert(im, ConnectionAdapters::SQLite3Adapter.empty_insert_statement_value(conn, primary_key))
+      else
+        t = arel_table
+        Arel::InsertManager.insert(im, Hash.map(values) { |name, attr| [t[name], attr] })
+      end
+      v = ConnectionAdapters::SQLite3Adapter.insert(conn, im, "#{ModelClass.name(__model)} Create", primary_key || false, nil, nil, Any[], returning)
+      (v in Array) ? v : Any[v]
+    end
+
+    # Ruby: Post._update_record(values, constraints)
+    def _update_record_with(values, constraints)
+      um = Arel::UpdateManager.new(arel_table)
+      t = arel_table
+      Arel::UpdateManager.set(um, Hash.map(values) { |name, attr| [t[name], attr] })
+      Arel::UpdateManager.set_wheres(um, Array.map(constraints) { |c| PredicateBuilder.build_bind(__model, c[0], c[1]) })
+      ConnectionAdapters::SQLite3Adapter.update(ActiveRecord::Base.connection, um, "#{ModelClass.name(__model)} Update")
+    end
+
+    # Ruby: Post._delete_record(constraints)
+    def _delete_record(constraints)
+      dm = Arel::DeleteManager.new(arel_table)
+      Arel::DeleteManager.set_wheres(dm, Array.map(constraints) { |c| PredicateBuilder.build_bind(__model, c[0], c[1]) })
+      ConnectionAdapters::SQLite3Adapter.delete(ActiveRecord::Base.connection, dm, "#{ModelClass.name(__model)} Destroy")
+    end
+
+    # Ruby's Persistence#destroy, under Callbacks#destroy
+    def persistence_destroy(r)
+      raise ReadOnlyRecord, "#{ModelClass.name(__model)} is marked as readonly" if readonly?(r)
+      destroy_associations(r)
+      @trigger_destroy_callback = persisted?(r) && destroy_row(r) > 0 if !@trigger_destroy_callback
+      @destroyed = true
+      @previously_new_record = false
+      freeze(r)
+    end
+
+    def destroy!(r)
+      result = destroy(r)
+      raise RecordNotDestroyed.new("Failed to destroy #{ModelClass.name(__model)} with #{primary_key}=#{id(r)}", r) if result == false
+      r
+    end
+
+    def persistence_destroy_row(r) = _delete_row(r)
+    def _delete_row(r) = _delete_record(Any[[primary_key || "id", id_in_database(r)]])
+
+    def delete(r)
+      _delete_row(r) if persisted?(r)
+      @destroyed = true
+      freeze(r)
+    end
+
+    # Ruby: update(attributes), with_transaction_returning_status { assign_attributes; save }
+    def update(r, **attributes)
+      with_transaction_returning_status(r) do
+        assign_attributes(r, attributes)
+        save_with(r, true, nil)
+      end
+    end
+
+    def update!(r, **attributes)
+      with_transaction_returning_status(r) do
+        assign_attributes(r, attributes)
+        save_with!(r, true, nil)
+      end
+    end
+
+    def update_attribute(r, name, value)
+      __assign(r, Kernel.to_s(name), value)
+      save_with(r, false, nil)
+    end
+
+    def update_column(r, name, value) = update_columns_with(r, Hash.of(Kernel.to_s(name) => value))
+
+    # Ruby: update_columns(attributes): no callbacks, no validations, no updated_at
+    def update_columns(r, **attributes) = update_columns_with(r, attributes)
+
+    def update_columns_with(r, attributes)
+      raise PlainActiveRecordError, "cannot update a new record" if new_record?(r)
+      raise PlainActiveRecordError, "cannot update a destroyed record" if destroyed?(r)
+      raise ReadOnlyRecord, "#{ModelClass.name(__model)} is marked as readonly" if readonly?(r)
+      names = Array.map(Hash.keys(attributes)) { |k| attr_name_of(r, k) }
+      Array.each(names) { |n| raise PlainActiveRecordError, "#{n} is marked as readonly" if Array.include?(ModelClass.readonly_attributes(__model), n) }
+      Hash.each(attributes) { |k, v| ActiveModel::AttributeSet.write_cast_value(@attribute_set, attr_name_of(r, k), ActiveModel::Type::Value.cast(type_for_attribute(attr_name_of(r, k)), v)) }
+      values = Hash.new
+      Array.each(names) { |n| values[n] = @attribute_set[n] }
+      affected = _update_record_with(values, Any[[primary_key || "id", id_in_database(r)]])
+      Array.each(names) { |n| ActiveModel::AttributeSet.write_from_database(@attribute_set, n, ActiveModel::Attribute.value_for_database(@attribute_set[n])) }
+      affected == 1
+    end
+
+    def increment(r, name, by = 1)
+      n = Kernel.to_s(name)
+      v = _read_attribute(r, n)
+      _write_attribute(r, n, ((v in Integer) ? v : 0) + by)
+      r
+    end
+
+    def increment!(r, name, by = 1)
+      increment(r, name, by)
+      n = Kernel.to_s(name)
+      change = attribute_change(r, n)
+      v = _read_attribute(r, n)
+      before = change ? change[0] : nil
+      delta = (v in Integer) ? v - ((before in Integer) ? before : 0) : by
+      update_counters_for(r, n, delta)
+      clear_attribute_change(r, n)
+      r
+    end
+
+    def update_counters_for(r, n, delta)
+      t = arel_table
+      um = Arel::UpdateManager.new(t)
+      col = t[n]
+      # Ruby: COALESCE(col, 0) + ? (or - ?) with the amount as a bind
+      bind = Arel::Nodes::BindParam.new(ActiveModel::Attribute.with_cast_value(n, Integer.abs(delta), ActiveModel::Type.default_value))
+      coalesce = Arel::Nodes::NamedFunction.new("COALESCE", Any[col, Arel::Nodes.build_quoted(0)])
+      expr = delta < 0 ? Arel::Nodes::Subtraction.new(coalesce, bind) : Arel::Nodes::Addition.new(coalesce, bind)
+      Arel::UpdateManager.set(um, Any[[col, expr]])
+      Arel::UpdateManager.set_wheres(um, Any[PredicateBuilder.build_bind(__model, primary_key || "id", id_in_database(r))])
+      ConnectionAdapters::SQLite3Adapter.update(ActiveRecord::Base.connection, um, "#{ModelClass.name(__model)} Update All")
+    end
+
+    def clear_attribute_change(r, n)
+      ActiveModel::AttributeSet.write_from_database(@attribute_set, n, ActiveModel::Attribute.value_for_database(@attribute_set[n]))
+    end
+
+    def decrement(r, name, by = 1) = increment(r, name, -by)
+    def decrement!(r, name, by = 1) = increment!(r, name, -by)
+
+    def toggle(r, name)
+      n = Kernel.to_s(name)
+      _write_attribute(r, n, !query_attribute(r, n))
+      r
+    end
+
+    def toggle!(r, name)
+      toggle(r, name)
+      update_attribute(r, name, _read_attribute(r, Kernel.to_s(name)))
+    end
+
+    # Ruby: reload (a fresh copy's attributes and association cache)
+    def reload(r)
+      fresh = Relation.find(unscoped, id(r))
+      @attribute_set = attribute_set_of(fresh)
+      @association_cache = Hash.new
+      @new_record = false
+      @previously_new_record = false
+      r
+    end
+  end
+end

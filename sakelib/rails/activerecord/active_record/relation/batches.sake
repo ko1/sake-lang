@@ -1,0 +1,29 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/batches.rb (partial: no in_batches (BatchEnumerator), no
+# cursor other than the primary key, no order: :desc, no error_on_ignore)
+#
+# Ruby: find_in_batches(start:, finish:, batch_size: 1000) { |batch| } over `where(pk > last).order(pk).limit(n)`,
+# and find_each over it.
+
+module ActiveRecord
+  module Batches
+    def find_in_batches(rel, start: nil, finish: nil, batch_size: 1000)
+      pk = Relation.primary_key(rel) || "id"
+      r = Relation.limit(Relation.reorder(rel, Hash.of(pk => :asc)), batch_size)
+      r = Relation.where(r, Hash.of(pk => start..)) unless start in nil
+      r = Relation.where(r, Hash.of(pk => ..finish)) unless finish in nil
+      batch = Relation.to_a(r)
+      until Array.empty?(batch)
+        yield batch
+        break if Array.size(batch) < batch_size
+        last = Array.last(batch)
+        last_id = last ? ActiveRecord::AttributeMethods.id(last) : nil
+        batch = Relation.to_a(Relation.where(r, Arel::Attributes::Attribute.gt(Relation.table(rel)[pk], PredicateBuilder.build_bind_attribute(Relation.klass(rel), pk, last_id))))
+      end
+      nil
+    end
+
+    def find_each(rel, start: nil, finish: nil, batch_size: 1000)
+      find_in_batches(rel, start: start, finish: finish, batch_size: batch_size) { |batch| Array.each(batch) { |rec| yield rec } }
+    end
+  end
+end

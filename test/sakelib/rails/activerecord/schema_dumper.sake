@@ -1,0 +1,33 @@
+require "rails/activerecord/active_record"
+
+# db/schema.rb loaded with ActiveRecord::Schema.define (its verbose output), then dumped back by the
+# SchemaDumper, after a migration changed it
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+generate "rails/activerecord/active_record/generate/active_record", "schema_dumper_schema.rb"
+def quietly(&b)
+  out = ActiveRecord::Migration.capture_output(&b)
+  print(String.gsub(out, /\d+\.\d+s/, "0.0000s"))
+end
+
+puts("-- load")
+quietly { SchemaDumperSchema.load }
+Conn = ActiveRecord::ConnectionAdapters::SQLite3Adapter
+p(Conn.select_values(ActiveRecord::Base.connection, "SELECT version FROM schema_migrations"))
+p(Conn.select_values(ActiveRecord::Base.connection, "SELECT value FROM ar_internal_metadata WHERE key = 'environment'"))
+
+puts("-- dump")
+print(ActiveRecord::SchemaDumper.dump(ActiveRecord::Base.connection))
+
+class RenameRating
+  attr_reader name, version
+  include ActiveRecord::Migration
+  def change(m)
+    rename_column m, :authors, :rating, :score
+    remove_column m, :posts, :views, :integer, Hash.of(default: 0)
+    add_column m, :tags, :color, :string, Hash.of(limit: 20, default: "red")
+  end
+end
+
+puts("-- after a migration")
+quietly { ActiveRecord::Migration.migrate(RenameRating.new("RenameRating", 20261020000004), :up) }
+print(ActiveRecord::SchemaDumper.dump(ActiveRecord::Base.connection))

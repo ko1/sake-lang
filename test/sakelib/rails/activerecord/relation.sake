@@ -1,0 +1,121 @@
+require "rails/activerecord/active_record"
+
+# Relation: where (Hash, String, binds), where.not, or, rewhere, order, limit, select, group with
+# calculations, pluck, finders, exists?, batch, bulk updates, merge, none, scopes as class methods, and the SQL
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+generate "rails/activerecord/active_record/generate/active_record", "relation_schema.rb", "relation_models.rb"
+ActiveRecord::Migration.set_verbose(false)
+RelationSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA" || payload[:name] == "TRANSACTION"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+
+# Ruby's scope :name, -> { ... }: the lambda's body as a function of the relation
+class Item
+  def active_ones(rel = Item.all) = ActiveRecord::Relation.where(rel, active: true)
+  def cheap(rel = Item.all) = ActiveRecord::Relation.where(rel, "price < ?", 100)
+end
+def names(rel) = Enum.map(rel) { |i| Item.name(i) }
+R = ActiveRecord::Relation
+
+Array.each(Any[["apple", "fruit", 50, 10, true], ["banana", "fruit", 30, nil, true], ["carrot", "veg", 80, 5, false],
+               ["durian", "fruit", 300, 1, true], ["eggplant", "veg", 120, 0, true]]) do |name, category, price, stock, active|
+  Item.create!(name: name, category: category, price: price, stock: stock, active: active)
+end
+Array.clear(SqlLog.sqls(sql_log))
+
+puts("-- where")
+p(names(Item.where(stock: nil)))
+p(names(Item.where(category: Any["veg", "meat"])))
+p(names(Item.where(price: 40..100)))
+p(names(Item.where(price: 100..)))
+p(names(Item.where(price: ...80)))
+p(names(Item.where("price > ? AND category = ?", 60, "fruit")))
+p(names(Item.where("price > :min", Hash.of(min: 100))))
+p(names(Item.where_not(category: "fruit")))
+p(names(Item.where(category: "veg").R.or(Item.where(price: 30))))
+p(names(Item.where(category: "fruit").R.rewhere(category: "veg")))
+p(names(Item.where(active: true).R.invert_where))
+p(names(Item.where(id: Item.where(category: "veg").R.select(:id))))
+show_sql
+
+puts("-- order, limit, select")
+p(names(Item.order(price: :desc).R.limit(2)))
+p(names(Item.order(:category, :name).R.offset(3)))
+p(names(Item.order("price DESC").R.reorder(:name).limit(2)))
+p(names(Item.order(:price).R.reverse_order.limit(1)))
+p(Enum.map(Item.select(:category).R.distinct.order(:category)) { |i| Item.category(i) })
+p(R.to_sql(Item.where(category: "veg")))
+show_sql
+
+puts("-- calculations")
+p(Item.count, Item.where(active: true).R.count, Item.count(:stock))
+p(Item.sum(:price), Item.where(category: "veg").R.sum(:price), Item.maximum(:price), Item.minimum(:price))
+p(BigDecimal.to_f(Item.average(:price) || BigDecimal.of(0)))
+p(Item.group(:category).R.group_count)
+p(Item.group(:category).R.group_sum(:price))
+p(Item.group(:category).R.having("SUM(price) > ?", 300).group_count)
+p(Array.first(Item.order(:id).R.pluck(:name, :price), 2))
+p(Item.where(category: "veg").R.ids, Item.order(:price).R.pick(:name))
+show_sql
+
+puts("-- finders")
+p(Array.map(Item.first_n(2)) { |i| Item.name(i) }, Item.name(Item.last!), Item.name(Item.take!))
+p(Item.price(Item.find_by!(name: "durian")))
+begin
+  Item.find_some(Any[1, 99])
+rescue ActiveRecord::RecordNotFound => e
+  puts("RecordNotFound: #{Exception.message(e)}")
+end
+begin
+  Item.where(category: "meat").R.first!
+rescue ActiveRecord::RecordNotFound => e
+  puts("RecordNotFound: #{Exception.message(e)}")
+end
+p(Item.exists?, Item.exists?(3), Item.exists?(Hash.of(name: "fig")), Item.where(category: "veg").R.exists?)
+p(Item.where(category: "veg").R.any?, Item.where(category: "meat").R.empty?, Item.where(category: "fruit").R.many?)
+show_sql
+
+puts("-- create through a relation")
+fig = Item.where(category: "fruit").R.create_with(Hash.of(price: 70)).find_or_create_by(name: "fig")
+p([Item.name(fig), Item.category(fig), Item.price(fig)])
+p(Item.id(Item.find_or_create_by(name: "fig")) == Item.id(fig))
+p(Item.category(Item.where(category: "veg").R.build(name: "leek")))
+show_sql
+
+puts("-- bulk")
+p(Item.where(category: "veg").R.update_all(hits: 7))
+p(Item.where(hits: 7).R.count)
+Item.update_counters(1, Hash.of(hits: 2))
+p(Item.hits(Item.find(1)))
+p(Item.where(name: "fig").R.delete_all)
+p(Array.map(Item.where(name: "eggplant").R.destroy_all) { |i| Item.name(i) })
+p(Item.count)
+show_sql
+
+puts("-- batches, merge, none, scopes")
+Item.find_each(batch_size: 2) { |i| print(Item.name(i), " ") }
+puts
+Item.find_in_batches(batch_size: 3) { |batch| p(Array.map(batch) { |i| Item.id(i) }) }
+show_sql
+p(names(Item.where(category: "fruit").R.merge(Item.where(active: true)).order(:name)))
+p(names(Item.order(:name).R.where(category: "fruit").except(:order)))
+p(Item.none.R.to_a, Item.none.R.count, Item.where(category: "fruit").R.none.exists?)
+p(names(Item.cheap(Item.active_ones).R.order(:name)))
+p(names(Item.cheap.R.where(category: "veg")))
+rel = Item.where(category: "fruit")
+p([R.loaded?(rel) == true, R.size(rel), R.load(rel).R.loaded?, R.size(rel), R.length(rel)])
+p(R.inspect(Item.where(price: 30)))
+show_sql

@@ -1,0 +1,301 @@
+# Port of activerecord-8.1.3/lib/active_record/migration.rb (partial: Migration, ReversibleBlockHelper,
+# the errors, Migrator and MigrationContext (migration/migrator.sake); no change_table, no
+# create_join_table, no run(*migration_classes), no copy of migrations between engines, no advisory locks
+# (SQLite has none), no check_pending!, no migration files (the migrations are given as a list))
+#
+# Ruby: `class CreatePosts < ActiveRecord::Migration[8.1]; def change; create_table :posts do |t| ...` and
+# `CreatePosts.new("CreatePosts", 20261020000001)`. The DSL lines are Migration's method_missing, which
+# says the command with its time and sends it to the connection (or to the CommandRecorder while a
+# change is being reverted). Here Migration is a module the migration class includes, with the fields name
+# and version (Ruby's initialize(name = self.class.name, version = nil)); each DSL command is a function with
+# the migration first, written paren-less as in Ruby (`create_table m, :posts do |t|`); `def change(m)` or
+# `def up(m)`/`def down(m)` is the migration's (Ruby asks respond_to?(:change); here up and down default
+# to change and to revert { change }, and a class that defines them wins). The running migration's
+# state (Ruby's @connection, which is the recorder while reverting) is one value for the program
+# (MigrationParts::State), as migrations run one at a time.
+
+require "migration/command_recorder"
+
+module ActiveRecord
+  class UnknownMigrationVersionError < StandardError
+    include ActiveRecordError
+  end
+
+  class MigrationError_ < StandardError
+    include ActiveRecordError
+  end
+
+  module MigrationParts
+    # Ruby's class attribute verbose, the recorder standing in for @connection, and (Sake only) a capture of
+    # what `write` prints (Ruby's tests swap $stdout)
+    class State
+      attr_accessor verbose, recorder, suppressed, captured
+    end
+
+    # Ruby: reversible { |dir| dir.up { } ; dir.down { } }
+    class ReversibleBlockHelper
+      attr_reader reverting
+      def up(h)
+        yield unless @reverting
+        nil
+      end
+      def down(h)
+        yield if @reverting
+        nil
+      end
+    end
+
+    module_function
+
+    def state = once { State.new(true, nil, false, nil) }
+    def current_version = 8.1
+  end
+
+  module Migration
+    def name(m) = raise(NotImplementedError)
+    def version(m) = raise(NotImplementedError)
+
+    # Ruby: up/down call change (revert { change } when going down) unless the class defines them
+    def change(m) = nil
+    def up(m) = change(m)
+    def down(m) = revert(m) { change(m) }
+    def disable_ddl_transaction(m) = false
+
+    # Ruby: verbose / verbose= (a class attribute of ActiveRecord::Migration)
+    module_function :verbose, :set_verbose, :capture_output
+    def verbose = MigrationParts::State.verbose(MigrationParts.state)
+    def set_verbose(v) = MigrationParts::State.set_verbose(MigrationParts.state, v)
+
+    # Sake only: what migrations print, as a String (Ruby's tests capture $stdout)
+    def capture_output
+      st = MigrationParts.state
+      lines = String[]
+      MigrationParts::State.set_captured(st, lines)
+      begin
+        yield
+      ensure
+        MigrationParts::State.set_captured(st, nil)
+      end
+      Array.empty?(lines) ? "" : Array.join(lines, "\n") + "\n"
+    end
+
+    def connection(m) = ActiveRecord::Base.connection
+    def reverting?(m)
+      rec = MigrationParts::State.recorder(MigrationParts.state)
+      rec ? MigrationParts::CommandRecorder.reverting(rec) : false
+    end
+
+    # Ruby: migrate(direction)
+    def migrate(m, direction)
+      case direction
+      in :up then announce(m, "migrating")
+      else announce(m, "reverting")
+      end
+      t0 = Process.clock_gettime(Process.CLOCK_MONOTONIC)
+      exec_migration(m, direction)
+      elapsed = Process.clock_gettime(Process.CLOCK_MONOTONIC) - t0
+      case direction
+      in :up then announce(m, format("migrated (%.4fs)", elapsed))
+      else announce(m, format("reverted (%.4fs)", elapsed))
+      end
+      write(m)
+      nil
+    end
+
+    def exec_migration(m, direction)
+      direction == :down ? down(m) : up(m)
+    end
+
+    # Ruby: revert { } with the CommandRecorder as the connection, then replay
+    def revert(m)
+      st = MigrationParts.state
+      outer = MigrationParts::State.recorder(st)
+      recorder = outer || MigrationParts::CommandRecorder.new
+      MigrationParts::State.set_recorder(st, recorder)
+      MigrationParts::CommandRecorder.revert(recorder) { yield }
+      MigrationParts::State.set_recorder(st, outer)
+      Array.each(MigrationParts::CommandRecorder.commands(recorder)) { |c| run_command(m, c) } if outer == nil
+      nil
+    end
+
+    # Ruby: reversible { |dir| } (execute_block: its commands are one group when recorded)
+    def reversible(m)
+      helper = MigrationParts::ReversibleBlockHelper.new(reverting?(m))
+      rec = MigrationParts::State.recorder(MigrationParts.state)
+      if rec
+        group = MigrationParts::CommandRecorder.new(MigrationParts::Command[], false)
+        MigrationParts::State.set_recorder(MigrationParts.state, group)
+        yield helper
+        MigrationParts::State.set_recorder(MigrationParts.state, rec)
+        MigrationParts::CommandRecorder.record(rec, MigrationParts::Command.new(:execute_block, Any[], MigrationParts::CommandRecorder.commands(group)))
+      else
+        yield helper
+      end
+      nil
+    end
+
+    # Ruby's method_missing: record, or say with time and run on the connection
+    def command(m, cmd, args)
+      c = MigrationParts::Command.new(cmd, args, MigrationParts::Command[])
+      rec = MigrationParts::State.recorder(MigrationParts.state)
+      rec ? MigrationParts::CommandRecorder.record(rec, c) : run_command(m, c)
+    end
+
+    # Ruby: CommandRecorder#replay's migration.send(cmd, *args), and method_missing's connection.send
+    def run_command(m, c)
+      cmd = MigrationParts::Command.cmd(c)
+      if cmd == :execute_block
+        Array.each(MigrationParts::Command.children(c)) { |x| run_command(m, x) }
+        return nil
+      end
+      args = MigrationParts::Command.args(c)
+      if cmd == :say
+        say(m, Kernel.to_s(Array.fetch(args, 0)), Array.fetch(args, 1, false) == true)
+        return nil
+      end
+      say_with_time(m, "#{cmd}(#{format_arguments(m, args)})") { execute_command(m, cmd, args) }
+    end
+
+    def opts_at(args, i)
+      o = Array.fetch(args, i, nil)
+      (o in Hash) ? o : Hash.new
+    end
+
+    def execute_command(m, cmd, args)
+      conn = connection(m)
+      a0 = Array.fetch(args, 0, nil)
+      a1 = Array.fetch(args, 1, nil)
+      a2 = Array.fetch(args, 2, nil)
+      case cmd
+      in :create_table then ConnectionAdapters::SQLite3Adapter.create_table(conn, Kernel.to_s(a0), opts_at(args, 1))
+      in :drop_table then ConnectionAdapters::SQLite3Adapter.drop_table(conn, Kernel.to_s(a0), opts_at(args, 1))
+      in :add_column then ConnectionAdapters::SQLite3Adapter.add_column(conn, Kernel.to_s(a0), Kernel.to_s(a1), (a2 in Symbol) ? a2 : :string, opts_at(args, 3))
+      in :remove_column then ConnectionAdapters::SQLite3Adapter.remove_column(conn, Kernel.to_s(a0), Kernel.to_s(a1))
+      in :rename_column then ConnectionAdapters::SQLite3Adapter.rename_column(conn, Kernel.to_s(a0), Kernel.to_s(a1), Kernel.to_s(a2))
+      in :change_column then ConnectionAdapters::SQLite3Adapter.change_column(conn, Kernel.to_s(a0), Kernel.to_s(a1), (a2 in Symbol) ? a2 : :string, opts_at(args, 3))
+      in :change_column_default then ConnectionAdapters::SQLite3Adapter.change_column_default(conn, Kernel.to_s(a0), Kernel.to_s(a1), a2)
+      in :change_column_null then ConnectionAdapters::SQLite3Adapter.change_column_null(conn, Kernel.to_s(a0), Kernel.to_s(a1), a2 == true, Array.fetch(args, 3, nil))
+      in :add_index then ConnectionAdapters::SQLite3Adapter.add_index(conn, Kernel.to_s(a0), (a1 in Array) ? a1 : Kernel.to_s(a1), opts_at(args, 2))
+      in :remove_index
+        options = opts_at(args, 2)
+        o1 = (a1 in Hash) ? a1 : options
+        name = o1[:name] || ConnectionAdapters::SQLite3Adapter.index_name(conn, Kernel.to_s(a0), (a1 in Array) ? a1 : Any[Kernel.to_s(a1 || o1[:column])])
+        ConnectionAdapters::SQLite3Adapter.remove_index(conn, Kernel.to_s(a0), Hash.merge(o1, Hash.of(name: name)))
+      in :rename_table then ConnectionAdapters::SQLite3Adapter.rename_table(conn, Kernel.to_s(a0), Kernel.to_s(a1))
+      in :add_reference then ConnectionAdapters::SQLite3Adapter.add_reference(conn, Kernel.to_s(a0), Kernel.to_s(a1), opts_at(args, 2))
+      in :remove_reference then ConnectionAdapters::SQLite3Adapter.remove_reference(conn, Kernel.to_s(a0), Kernel.to_s(a1), opts_at(args, 2))
+      in :add_timestamps then ConnectionAdapters::SQLite3Adapter.add_timestamps(conn, Kernel.to_s(a0), opts_at(args, 1))
+      in :remove_timestamps then ConnectionAdapters::SQLite3Adapter.remove_timestamps(conn, Kernel.to_s(a0), opts_at(args, 1))
+      in :execute then ConnectionAdapters::SQLite3Adapter.execute(conn, Kernel.to_s(a0))
+      else raise ArgumentError, "undefined method '#{cmd}' for a migration"
+      end
+    end
+
+    # Ruby: format_arguments(arguments) (the last Hash shown unless empty)
+    def format_arguments(m, args)
+      return "" if Array.empty?(args)
+      list = Array.map(Array.take(args, Array.size(args) - 1)) { |a| Kernel.inspect(a) }
+      last = Array.last(args)
+      if last in Hash
+        Array.push(list, Kernel.inspect(last)) unless Hash.empty?(last)
+      else
+        Array.push(list, Kernel.inspect(last))
+      end
+      Array.join(list, ", ")
+    end
+
+    def write(m, text = "")
+      st = MigrationParts.state
+      return nil unless MigrationParts::State.verbose(st)
+      return nil if MigrationParts::State.suppressed(st)
+      cap = MigrationParts::State.captured(st)
+      if cap
+        Array.push(cap, text)
+      else
+        puts(text)
+      end
+      nil
+    end
+
+    def announce(m, message)
+      text = "#{version(m)} #{name(m)}: #{message}"
+      length = 75 - String.length(text)
+      length = 0 if length < 0
+      write(m, "== #{text} #{"=" * length}")
+    end
+
+    def say(m, message, subitem = false)
+      rec = MigrationParts::State.recorder(MigrationParts.state)
+      if rec
+        MigrationParts::CommandRecorder.record(rec, MigrationParts::Command.new(:say, Any[message, subitem], MigrationParts::Command[]))
+        return nil
+      end
+      write(m, "#{subitem ? "   ->" : "--"} #{message}")
+    end
+
+    def say_with_time(m, message)
+      say(m, message)
+      t0 = Process.clock_gettime(Process.CLOCK_MONOTONIC)
+      result = yield
+      say(m, format("%.4fs", Process.clock_gettime(Process.CLOCK_MONOTONIC) - t0), true)
+      say(m, "#{result} rows", true) if result in Integer
+      result
+    end
+
+    def suppress_messages(m)
+      st = MigrationParts.state
+      old = MigrationParts::State.suppressed(st)
+      MigrationParts::State.set_suppressed(st, true)
+      begin
+        yield
+      ensure
+        MigrationParts::State.set_suppressed(st, old)
+      end
+    end
+
+    # The DSL (Ruby's method_missing forwards these to the connection)
+    def create_table(m, table_name, options = nil)
+      args = Any[table_name]
+      Array.push(args, options) if options
+      rec = MigrationParts::State.recorder(MigrationParts.state)
+      if rec
+        MigrationParts::CommandRecorder.record(rec, MigrationParts::Command.new(:create_table, args, MigrationParts::Command[]))
+        return nil
+      end
+      say_with_time(m, "create_table(#{format_arguments(m, args)})") do
+        ConnectionAdapters::SQLite3Adapter.create_table(connection(m), Kernel.to_s(table_name), options || Hash.new) { |t| yield t if block_given? }
+      end
+    end
+
+    def drop_table(m, table_name, options = nil) = command(m, :drop_table, with_options(Any[table_name], options))
+    def add_column(m, table_name, column_name, type, options = nil) = command(m, :add_column, with_options(Any[table_name, column_name, type], options))
+    def remove_column(m, table_name, column_name, type = nil, options = nil)
+      command(m, :remove_column, with_options(type ? Any[table_name, column_name, type] : Any[table_name, column_name], options))
+    end
+    def rename_column(m, table_name, column_name, new_name) = command(m, :rename_column, Any[table_name, column_name, new_name])
+    def change_column(m, table_name, column_name, type, options = nil) = command(m, :change_column, with_options(Any[table_name, column_name, type], options))
+    def change_column_default(m, table_name, column_name, default_or_changes)
+      command(m, :change_column_default, Any[table_name, column_name, default_or_changes])
+    end
+    def change_column_null(m, table_name, column_name, null, default = nil)
+      command(m, :change_column_null, (default in nil) ? Any[table_name, column_name, null] : Any[table_name, column_name, null, default])
+    end
+    def add_index(m, table_name, column_name, options = nil) = command(m, :add_index, with_options(Any[table_name, column_name], options))
+    def remove_index(m, table_name, column_name = nil, options = nil)
+      command(m, :remove_index, with_options(column_name ? Any[table_name, column_name] : Any[table_name], options))
+    end
+    def rename_table(m, table_name, new_name) = command(m, :rename_table, Any[table_name, new_name])
+    def add_reference(m, table_name, ref_name, options = nil) = command(m, :add_reference, with_options(Any[table_name, ref_name], options))
+    def remove_reference(m, table_name, ref_name, options = nil) = command(m, :remove_reference, with_options(Any[table_name, ref_name], options))
+    def add_timestamps(m, table_name, options = nil) = command(m, :add_timestamps, with_options(Any[table_name], options))
+    def remove_timestamps(m, table_name, options = nil) = command(m, :remove_timestamps, with_options(Any[table_name], options))
+    def execute(m, sql) = command(m, :execute, Any[sql])
+
+    def with_options(args, options)
+      Array.push(args, options) if options
+      args
+    end
+  end
+end
+
+require "migration/migrator"

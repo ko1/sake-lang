@@ -1,0 +1,97 @@
+# Port of activerecord-8.1.3/lib/active_record/migration/command_recorder.rb (partial: no change_table
+# (Table) recording, no foreign keys, check/exclusion/unique constraints, enums, transaction inversion)
+#
+# Ruby records `[command, args, block]` through method_missing while `change` runs against the recorder, then
+# replays the inverted list with `migration.send(cmd, *args, &block)`. Sake has neither method_missing nor
+# send nor stored blocks: a Command is the name and its arguments as data (Ruby's args Array, as given), the
+# Migration's DSL functions record into the current recorder, and replay is a `case` over the names
+# (Migration.run_command). A reversible block is run when recorded, with its commands kept as one group
+# (Ruby stores the block and runs it at its place in the replay; the group keeps that place).
+
+module ActiveRecord
+  class IrreversibleMigration < StandardError
+    include ActiveRecordError
+  end
+
+  module MigrationParts
+    class Command
+      attr_reader cmd, args, children
+    end
+
+    class CommandRecorder
+      attr_accessor commands, reverting
+
+      def initialize(r)
+        @commands = Command[] if @commands == nil
+        @reverting = false if @reverting == nil
+      end
+
+      # Ruby: revert { } (record the block's commands inverted, in reverse order)
+      def revert(r)
+        @reverting = !@reverting
+        previous = @commands
+        @commands = Command[]
+        yield
+      ensure
+        inner = @commands
+        @commands = previous
+        Array.each(Array.reverse(inner)) { |c| Array.push(@commands, c) }
+        @reverting = !@reverting
+      end
+
+      def record(r, command)
+        Array.push(@commands, @reverting ? inverse_of(r, command) : command)
+        nil
+      end
+
+      def inverse_of(r, command)
+        args = Command.args(command)
+        case Command.cmd(command)
+        in :create_table
+          opts = Array.last(args)
+          Command.new(:drop_table, (opts in Hash) ? Array.take(args, Array.size(args) - 1) + Any[Hash.except(opts, :if_not_exists)] : args, Command[])
+        in :drop_table
+          raise IrreversibleMigration, "To avoid mistakes, drop_table is only reversible if given a single table name." if Array.size(args) > 2
+          opts = Array.last(args)
+          if !(opts in Hash) || Hash.empty?(Hash.except(opts, :if_exists))
+            raise IrreversibleMigration, "To avoid mistakes, drop_table is only reversible if given options or a block (can be empty)."
+          end
+          Command.new(:create_table, Any[Array.fetch(args, 0), Hash.except(opts, :if_exists)], Command[])
+        in :add_column then Command.new(:remove_column, args, Command[])
+        in :remove_column
+          raise IrreversibleMigration, "remove_column is only reversible if given a type." if Array.size(args) <= 2
+          Command.new(:add_column, args, Command[])
+        in :add_index then Command.new(:remove_index, args, Command[])
+        in :remove_index
+          opts = Array.last(args)
+          options = (opts in Hash) ? Hash.dup(opts) : Hash.new
+          columns = Array.size(args) >= 2 && !(args[1] in Hash) ? args[1] : Hash.delete(options, :column)
+          raise IrreversibleMigration, "remove_index is only reversible if given a :column option." if columns in nil
+          Hash.delete(options, :if_exists)
+          a = Any[Array.fetch(args, 0), columns]
+          Array.push(a, options) unless Hash.empty?(options)
+          Command.new(:add_index, a, Command[])
+        in :add_timestamps then Command.new(:remove_timestamps, args, Command[])
+        in :remove_timestamps then Command.new(:add_timestamps, args, Command[])
+        in :add_reference then Command.new(:remove_reference, args, Command[])
+        in :remove_reference then Command.new(:add_reference, args, Command[])
+        in :rename_column then Command.new(:rename_column, Any[Array.fetch(args, 0), Array.fetch(args, 2), Array.fetch(args, 1)], Command[])
+        in :rename_table then Command.new(:rename_table, Any[Array.fetch(args, 1), Array.fetch(args, 0)], Command[])
+        in :change_column_default
+          opts = Array.fetch(args, 2, nil)
+          unless (opts in Hash) && Hash.key?(opts, :from) && Hash.key?(opts, :to)
+            raise IrreversibleMigration, "change_column_default is only reversible if given a :from and :to option."
+          end
+          Command.new(:change_column_default, Any[Array.fetch(args, 0), Array.fetch(args, 1), Hash.of(from: opts[:to], to: opts[:from])], Command[])
+        in :change_column_null
+          a = Array.dup(args)
+          a[2] = !Array.fetch(args, 2)
+          Command.new(:change_column_null, a, Command[])
+        in :execute_block | :say then command
+        else
+          raise IrreversibleMigration, "This migration uses #{Command.cmd(command)}, which is not automatically reversible.\nTo make the migration reversible you can either:\n1. Define #up and #down methods in place of the #change method.\n2. Use the #reversible method to define reversible behavior.\n"
+        end
+      end
+    end
+  end
+end

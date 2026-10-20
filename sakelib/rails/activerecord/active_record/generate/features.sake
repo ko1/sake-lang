@@ -1,0 +1,163 @@
+# Port of nothing (Sake only): the class-body lines of enum.rb, store.rb, secure_token.rb as Sake source
+#
+# Ruby's `enum :status, [:pending, :shipped]` define_methods pending?/pending!/the scopes Post.pending and
+# Post.not_pending and the class method Post.statuses, and decorates the attribute with an EnumType;
+# `store :settings, accessors: [:color]` serializes the column and define_methods color/color=;
+# `has_secure_token :token` adds a before_create callback and regenerate_token. Here the same functions are
+# generated from the lines (one `def` per method Ruby defines), and the types are set in the model's ModelClass.
+
+module ActiveRecord
+  module Generate
+    module Features
+      module_function
+
+      def CALLS = String["enum", "store", "store_accessor", "has_secure_token"]
+      def base_modules = String["ActiveRecord::Enum", "ActiveRecord::Store", "ActiveRecord::SecureToken", "ActiveRecord::Locking::Pessimistic"]
+
+      # Ruby's default_scope block is the model's own `def default_scope(rel)` (scoping.sake): nothing to generate
+      def default_scopes_source(b, chain, path) = ""
+
+      def decls_of(chain, call)
+        out = Any[]
+        Array.each(chain) do |b|
+          Array.each(ActiveSupport::Generate::ClassBody.declarations(b)) do |d|
+            Array.push(out, d) if ActiveSupport::Generate::Declaration.call(d) == call
+          end
+        end
+        out
+      end
+
+      # Ruby's enum(name, values, prefix:, suffix:, scopes:): [name, [[label, value source]], method prefix, suffix, line]
+      def enums(chain, path)
+        Array.map(decls_of(chain, "enum")) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          pos, opts = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+          name = Generate.string_of(Array.fetch(pos, 0))
+          values = String.strip(Array.fetch(pos, 1, "[]"))
+          pairs = Any[]
+          if String.start_with?(values, "[")
+            Array.each_with_index(ActiveSupport::Generate.split_args(String.slice(values, 1...-1) || "")) { |v, i| Array.push(pairs, [Generate.string_of(v), Integer.to_s(i)]) }
+          else
+            Array.each(ActiveSupport::Generate.split_args(String.slice(values, 1...-1) || "")) do |pair|
+              o = ActiveSupport::Generate.option(String.strip(pair))
+              raise ArgumentError, "#{path}:#{n}: enum values are `label: value`" if o == nil
+              Array.push(pairs, [Kernel.to_s(o[0]), Generate.value(Kernel.to_s(o[1]), n, path)])
+            end
+          end
+          prefix = Generate.option_text(opts, "prefix")
+          suffix = Generate.option_text(opts, "suffix")
+          pre = prefix == "true" ? "#{name}_" : (prefix ? "#{Generate.string_of(prefix)}_" : "")
+          suf = suffix == "true" ? "_#{name}" : (suffix ? "_#{Generate.string_of(suffix)}" : "")
+          [name, pairs, pre, suf, n, Generate.option_text(opts, "scopes") != "false"]
+        end
+      end
+
+      # store(name, accessors:, coder:) and store_accessor(name, *keys): [column, keys, line]
+      def stores(chain, path)
+        out = Any[]
+        Array.each(decls_of(chain, "store") + decls_of(chain, "store_accessor")) do |d|
+          n = ActiveSupport::Generate::Declaration.line(d)
+          pos, opts = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+          name = Generate.string_of(Array.fetch(pos, 0))
+          keys = Array.map(Array.drop(pos, 1)) { |k| Generate.string_of(k) }
+          acc = Generate.option_text(opts, "accessors")
+          keys = keys + Array.map(ActiveSupport::Generate.split_args(String.slice(acc, 1...-1) || "")) { |k| Generate.string_of(k) } if acc
+          Array.push(out, [name, keys, n, ActiveSupport::Generate::Declaration.call(d) == "store"])
+        end
+        out
+      end
+
+      def tokens(chain)
+        Array.map(decls_of(chain, "has_secure_token")) do |d|
+          pos, opts = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+          len = Generate.option_text(opts, "length")
+          [Generate.string_of(Array.fetch(pos, 0, ":token")), len ? String.delete(len, "_") : "24", ActiveSupport::Generate::Declaration.line(d)]
+        end
+      end
+
+      # attribute :name, :type: the columns the attribute methods are generated for (model.sake)
+      def declared_attribute_columns(chain)
+        Array.map(decls_of(chain, "attribute")) do |d|
+          pos, _ = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+          [Generate.string_of(Array.fetch(pos, 0)), Generate.string_of(Array.fetch(pos, 1, ":string"))]
+        end
+      end
+
+      # The reader's narrowing for an attribute these features type (an enum's label, a store's Hash)
+      def attribute_pattern(chain, name)
+        return "String" if Array.any?(enums(chain, "")) { |e| e[0] == name }
+        return "Hash" if Array.any?(stores(chain, "")) { |st| st[0] == name && st[3] }
+        nil
+      end
+
+      # Lines inside `def Post.__model = once do`: the attribute types these features decorate
+      def model_class_lines(b, chain, cols, path)
+        s = ""
+        Array.each(enums(chain, path)) do |e|
+          name, pairs, _, _, n = e
+          col = Array.find(cols) { |c| c[0] == name }
+          sub = col ? col[1] : "integer"
+          mapping = "Hash.of(#{Array.join(Array.map(pairs) { |pr| "#{Kernel.inspect(pr[0])} => #{pr[1]}" }, ", ")})"
+          s += "# sake-origin: #{path}:#{n}\n"
+          s += "  ActiveRecord::ModelClass.defined_enums(m)[#{Kernel.inspect(name)}] = #{mapping}\n"
+          s += "  ActiveRecord::ModelClass.declared_types(m)[#{Kernel.inspect(name)}] = ActiveRecord::Enum::EnumType.new(#{Kernel.inspect(name)}, #{mapping}, ActiveRecord::Type.lookup(:#{sub}, :sqlite3))\n"
+        end
+        Array.each(stores(chain, path)) do |st|
+          name, keys, n, serialized = st
+          s += "# sake-origin: #{path}:#{n}\n"
+          s += "  ActiveRecord::ModelClass.declared_types(m)[#{Kernel.inspect(name)}] = ActiveRecord::Store::JsonCoderType.new\n" if serialized
+          s += "  ActiveRecord::ModelClass.stored_attributes(m)[#{Kernel.inspect(name)}] = String[#{Array.join(Array.map(keys) { |k| Kernel.inspect(k) }, ", ")}]\n"
+        end
+        s
+      end
+
+      # Callback declarations a feature line adds where it stands (has_secure_token's before_create)
+      def callback_declarations(d, path)
+        return ActiveSupport::Generate::Declaration[] if ActiveSupport::Generate::Declaration.call(d) != "has_secure_token"
+        pos, _ = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+        name = Generate.string_of(Array.fetch(pos, 0, ":token"))
+        n = ActiveSupport::Generate::Declaration.line(d)
+        ActiveSupport::Generate::Declaration[ActiveSupport::Generate::Declaration.new(n, "set_callback", String[":create", ":before", ":__secure_token_#{name}"])]
+      end
+
+      def writers(b, chain) = Array.flat_map(stores(chain, "")) { |st| st[1] }
+
+      def class_source(b, chain, cols, path)
+        k = ActiveSupport::Generate::ClassBody.name(b)
+        s = ""
+        Array.each(enums(chain, path)) do |e|
+          name, pairs, pre, suf, n, scopes = e
+          plural = ActiveSupport::Inflector.pluralize(name)
+          s += "# sake-origin: #{path}:#{n}\n"
+          s += "def #{k}.#{plural} = ActiveRecord::ModelClass.defined_enums(#{k}.__model)[#{Kernel.inspect(name)}] || Hash.new\n"
+          Array.each(pairs) do |pr|
+            label = pr[0]
+            m = "#{pre}#{label}#{suf}"
+            s += "def #{k}.#{m}?(r) = #{k}.#{name}(r) == #{Kernel.inspect(label)}\n"
+            s += "def #{k}.#{m}!(r) = #{k}.update!(r, #{name}: #{Kernel.inspect(label)})\n"
+            if scopes
+              s += "def #{k}.#{m}(rel = #{k}.all) = ActiveRecord::Relation.where(rel, Hash.of(#{Kernel.inspect(name)} => #{Kernel.inspect(label)}))\n"
+              s += "def #{k}.not_#{m}(rel = #{k}.all) = ActiveRecord::Relation.where_not(rel, Hash.of(#{Kernel.inspect(name)} => #{Kernel.inspect(label)}))\n"
+            end
+          end
+        end
+        Array.each(stores(chain, path)) do |st|
+          name, keys, n, _ = st
+          s += "# sake-origin: #{path}:#{n}\n"
+          Array.each(keys) do |key|
+            s += "def #{k}.#{key}(r) = #{k}.read_store_attribute(r, #{Kernel.inspect(name)}, #{Kernel.inspect(key)})\n"
+            s += "def #{k}.#{key}=(r, value)\n  #{k}.write_store_attribute(r, #{Kernel.inspect(name)}, #{Kernel.inspect(key)}, value)\nend\n"
+            s += "def #{k}.#{key}_changed?(r) = #{k}.store_key_changed?(r, #{Kernel.inspect(name)}, #{Kernel.inspect(key)})\n"
+          end
+        end
+        Array.each(tokens(chain)) do |t|
+          name, len, n = t
+          s += "# sake-origin: #{path}:#{n}\n"
+          s += "def #{k}.__secure_token_#{name}(r)\n  #{k}.write_attribute(r, #{Kernel.inspect(name)}, #{k}.generate_unique_secure_token(#{len})) unless #{k}.query_attribute(r, #{Kernel.inspect(name)})\nend\n"
+          s += "def #{k}.regenerate_#{name}(r) = #{k}.update!(r, #{name}: #{k}.generate_unique_secure_token(#{len}))\n"
+        end
+        s
+      end
+    end
+  end
+end

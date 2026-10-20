@@ -1,0 +1,109 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/finder_methods.rb (partial: no find with a block, no
+# sole/find_sole_by, no second..fifth/forty_two, no composite primary keys, no implicit_order_column)
+
+module ActiveRecord
+  module FinderMethods
+    # Ruby: find(*args) returns one record for one id and an Array for several; one function has one result type
+    # here, so find takes one id and find_some (Ruby's private name) an Array of them.
+    def find(rel, id)
+      raise RecordNotFound.new("Couldn't find #{ModelClass.name(Relation.klass(rel))} without an ID", ModelClass.name(Relation.klass(rel)), Relation.primary_key(rel), nil) if (id in nil)
+      find_one(rel, id)
+    end
+
+    def find_one(rel, id)
+      pk = Relation.primary_key(rel) || "id"
+      record = take(Relation.where(rel, Hash.of(pk => id)))
+      raise_record_not_found_exception!(rel, id, 0, 1) unless record
+      record
+    end
+
+    def find_some(rel, ids)
+      pk = Relation.primary_key(rel) || "id"
+      result = Relation.to_a(Relation.where(rel, Hash.of(pk => ids)))
+      expected = Array.size(Array.uniq(ids))
+      raise_record_not_found_exception!(rel, ids, Array.size(result), expected) if Array.size(result) != expected
+      Array.map(ids) { |i| Array.find(result) { |r| Kernel.to_s(ActiveRecord::AttributeMethods.id(r)) == Kernel.to_s(i) } }.Array.compact
+    end
+
+    # Ruby: raise_record_not_found_exception!(ids = nil, result_size = nil, expected_size = nil, key = primary_key)
+    def raise_record_not_found_exception!(rel, ids = nil, result_size = nil, expected_size = nil)
+      name = ModelClass.name(Relation.klass(rel))
+      key = Relation.primary_key(rel) || "id"
+      conditions = " [#{where_clause_sql(rel)}]"
+      conditions = "" if Relation::WhereClause.empty?(Relation::Values.where_clause(Relation.values(rel))) || !(ids in nil)
+      error = case ids
+              in nil then conditions == "" ? "Couldn't find #{name}" : "Couldn't find #{name} with#{conditions}"
+              in Array
+                "Couldn't find all #{ActiveSupport::Inflector.pluralize(name)} with '#{key}': (#{Array.join(Array.map(ids) { |i| Kernel.to_s(i) }, ", ")})#{conditions} (found #{result_size} results, but was looking for #{expected_size})."
+              else "Couldn't find #{name} with '#{key}'=#{ids}#{conditions}"
+              end
+      raise RecordNotFound.new(error, name, key, ids)
+    end
+
+    def where_clause_sql(rel)
+      wc = Relation::Values.where_clause(Relation.values(rel))
+      sql, _ = ConnectionAdapters::SQLite3Adapter.to_sql_and_binds(Relation.connection(rel), Relation::WhereClause.ast(wc))
+      "WHERE #{sql}"
+    end
+
+    def find_by(rel, conds = nil, **kwconds)
+      h = Hash.new
+      Hash.each(conds || Hash.new) { |k, v| h[k] = v }
+      Hash.each(kwconds) { |k, v| h[k] = v }
+      take(Relation.where(rel, h))
+    end
+
+    def find_by!(rel, conds = nil, **kwconds)
+      h = Hash.new
+      Hash.each(conds || Hash.new) { |k, v| h[k] = v }
+      Hash.each(kwconds) { |k, v| h[k] = v }
+      take!(Relation.where(rel, h))
+    end
+
+    # Ruby: take(limit = nil)
+    def take(rel)
+      Relation.loaded?(rel) ? Array.first(Relation.records(rel)) : Array.first(Relation.to_a(Relation.limit(rel, 1)))
+    end
+    def take!(rel) = take(rel) || raise_record_not_found_exception!(rel)
+    def take_n(rel, n) = Relation.to_a(Relation.limit(rel, n))
+
+    # Ruby: first(limit = nil): ordered by the primary key when the relation has no order
+    def first(rel)
+      return Array.first(Relation.records(rel)) if Relation.loaded?(rel)
+      Array.first(Relation.to_a(Relation.limit(ordered_relation(rel), 1)))
+    end
+    def first!(rel) = first(rel) || raise_record_not_found_exception!(rel)
+    def first_n(rel, n) = Relation.to_a(Relation.limit(ordered_relation(rel), n))
+
+    def last(rel)
+      return Array.last(Relation.records(rel)) if Relation.loaded?(rel)
+      Array.first(Relation.to_a(Relation.limit(Relation.reverse_order(ordered_relation(rel)), 1)))
+    end
+    def last!(rel) = last(rel) || raise_record_not_found_exception!(rel)
+    def last_n(rel, n) = Array.reverse(Relation.to_a(Relation.limit(Relation.reverse_order(ordered_relation(rel)), n)))
+
+    def ordered_relation(rel)
+      return rel if !Array.empty?(Relation::Values.order_values(Relation.values(rel)))
+      pk = Relation.primary_key(rel)
+      return rel if pk == nil
+      Relation.order(rel, Hash.of(pk => :asc))
+    end
+
+    # Ruby: exists?(conditions = :none)
+    def exists?(rel, conditions = :none)
+      return false if conditions == false || Relation.null_relation?(rel)
+      r = case conditions
+          in :none | nil then rel
+          in Hash then Relation.where(rel, conditions)
+          in String then Relation.where(rel, conditions)
+          else Relation.where(rel, Hash.of((Relation.primary_key(rel) || "id") => conditions))
+          end
+      m = Relation.arel(Relation.limit(Relation.unscope(r, :order), 1))
+      Arel::SelectManager.set_projections(m, Any[Arel.sql("1 AS one")])
+      ConnectionAdapters::SQLite3Adapter.select_rows(Relation.connection(rel), m, "#{ModelClass.name(Relation.klass(rel))} Exists?") != Any[]
+    end
+
+    def include?(rel, record) = Array.any?(Relation.records(rel)) { |r| ActiveRecord::Core.same_record?(r, record) }
+    def member?(rel, record) = include?(rel, record)
+  end
+end

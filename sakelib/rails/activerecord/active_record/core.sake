@@ -1,0 +1,107 @@
+# Port of activerecord-8.1.3/lib/active_record/core.rb (partial: no find-by-statement-cache, no filter_attributes,
+# no encode_with/init_with of YAML, no strict_loading_mode :n_plus_one_only, no pretty_print, no connection_class)
+#
+# Ruby's Post.new(attrs) is `Post.build(attrs)` (Rails 8.1's alias of new; `new` is Sake's constructor) and
+# Ruby's `allocate` + `init_with_attributes` is the generated `Post.__allocate(attribute_set)` (the one place a
+# Post is made, so a model is one type) followed by `init_internals`. The instance state is the fields the
+# generator declares on every model (record_fields in generate/active_record.sake): Ruby's @attributes is the
+# field attribute_set (a field named attributes would make a reader that wins over Rails' `attributes`).
+
+module ActiveRecord
+  module Core
+    # Required of the model (generated): `Post.new(set)` with the instance fields left to initialize.
+    def __allocate(attribute_set) = raise(NotImplementedError)
+    # Required of the model (generated): `post.public_send("#{name}=", value)`, a `case` over the writers.
+    def __assign(r, name, value) = raise(NotImplementedError)
+
+    # Ruby: initialize(attributes = nil) (new_record) and init_with_attributes (instantiate)
+    def init_internals(r, new_record)
+      @new_record = new_record
+      @previously_new_record = false
+      @destroyed = false
+      @readonly_record = false
+      @frozen = false
+      @marked_for_destruction = false
+      @destroyed_by_association = nil
+      @association_cache = Hash.new
+      @errors_or_nil = ActiveModel::Errors.new(r)
+      @strict_loading_record = false
+      @validation_context = nil
+      @trigger_update_callback = false
+      @trigger_destroy_callback = false
+      r
+    end
+
+    # Ruby: Post.new(title: "x") { |post| ... }
+    def build(**attributes) = build_with(attributes)
+
+    # Ruby's new with the attributes as a Hash (Sake only: a Hash cannot be spread into keywords)
+    def build_with(attributes)
+      r = __allocate(ActiveModel::AttributeSet.deep_dup(_default_attributes))
+      init_internals(r, true)
+      assign_attributes(r, attributes)
+      _run_initialize_callbacks(r) { nil }
+      r
+    end
+
+    # Ruby: instantiate(attributes, column_types = {}) for a row read from the database
+    def instantiate(row)
+      r = __allocate(ActiveModel::AttributeSet::Builder.build_from_database(attributes_builder, row))
+      init_internals(r, false)
+      _run_find_callbacks(r) { nil }
+      _run_initialize_callbacks(r) { nil }
+      r
+    end
+
+    def new_record?(r) = @new_record
+    def previously_new_record?(r) = @previously_new_record
+    def destroyed?(r) = @destroyed
+    def persisted?(r) = !(@new_record || @destroyed)
+    def previously_persisted?(r) = !@new_record && @destroyed
+    def frozen?(r) = @frozen
+    def freeze(r)
+      @frozen = true
+      r
+    end
+    def readonly?(r) = @readonly_record
+    def readonly!(r)
+      @readonly_record = true
+      r
+    end
+    def strict_loading?(r) = @strict_loading_record
+    def strict_loading!(r, value = true)
+      @strict_loading_record = value
+      value
+    end
+
+    # Ruby's ==: the same class and id (Sake's == compares fields, so a record read twice is one id here)
+    def same_record?(a, b)
+      ida = id(a)
+      idb = ActiveRecord::AttributeMethods.id(b)
+      Kernel.equal?(a, b) || ((ida in Integer) && (idb in Integer) && ida == idb)
+    end
+
+    def connection_of(r) = ActiveRecord::Base.connection
+
+    # Ruby: "#<Post id: 1, title: \"x\", ...>"
+    def inspect(r)
+      parts = Array.map(attribute_names) { |name| "#{name}: #{attribute_for_inspect(r, name)}" }
+      "#<#{ModelClass.name(__model)} #{Array.join(parts, ", ")}>"
+    end
+    def to_s(r) = "#<#{ModelClass.name(__model)}>"
+
+    def attribute_for_inspect(r, name)
+      value = _read_attribute(r, name)
+      case value
+      in String
+        String.size(value) > 50 ? Kernel.inspect("#{String.slice(value, 0, 50)}...") : Kernel.inspect(value)
+      in Time then Kernel.inspect(Time.strftime(value, "%Y-%m-%d %H:%M:%S.%N %z"))
+      in Date then Kernel.inspect(Date.to_s(value))
+      in BigDecimal then BigDecimal.to_s(value)
+      else Kernel.inspect(value)
+      end
+    end
+
+    def hash(r) = Kernel.inspect([ModelClass.name(__model), id(r)])
+  end
+end

@@ -1,0 +1,57 @@
+# Port of activerecord-8.1.3/lib/active_record/timestamp.rb (partial: no touch_later, no
+# timestamp attributes with precision other than the column's)
+#
+# Ruby's Timestamp#_create_record / #_update_record are the first of the super chain (persistence.sake).
+
+module ActiveRecord
+  module Timestamp
+    def record_timestamps = ModelClass.record_timestamps(__model)
+    def timestamp_attributes_for_create = String["created_at", "created_on"]
+    def timestamp_attributes_for_update = String["updated_at", "updated_on"]
+    def timestamp_attributes_for_create_in_model = Array.select(timestamp_attributes_for_create) { |c| Array.include?(column_names, c) }
+    def timestamp_attributes_for_update_in_model = Array.select(timestamp_attributes_for_update) { |c| Array.include?(column_names, c) }
+    def all_timestamp_attributes_in_model = timestamp_attributes_for_create_in_model + timestamp_attributes_for_update_in_model
+    def current_time_from_proper_timezone = Time.utc(Time.now)
+
+    # Ruby's Timestamp#_create_record
+    def _create_record(r)
+      if record_timestamps
+        current_time = current_time_from_proper_timezone
+        Array.each(all_timestamp_attributes_in_model) do |column|
+          _write_attribute(r, column, current_time) if (_read_attribute(r, column) in nil)
+        end
+      end
+      callbacks__create_record(r)
+    end
+
+    # Ruby's Timestamp#_update_record
+    def _update_record(r) = callbacks__update_record(r)
+
+    # Ruby: record_update_timestamps (inside the update callbacks)
+    def record_update_timestamps(r)
+      if should_record_timestamps?(r)
+        current_time = current_time_from_proper_timezone
+        Array.each(timestamp_attributes_for_update_in_model) do |column|
+          next if will_save_change_to_attribute?(r, column)
+          _write_attribute(r, column, current_time)
+        end
+      end
+      nil
+    end
+
+    def should_record_timestamps?(r) = record_timestamps && (!ModelClass.partial_updates(__model) || has_changes_to_save?(r))
+
+    # Ruby: touch(*names, time: nil): updates updated_at (and the names) without validations or save callbacks
+    def touch(r, *names)
+      raise PlainActiveRecordError, "cannot touch on a new or destroyed record object." unless persisted?(r)
+      time = current_time_from_proper_timezone
+      attrs = Hash.new
+      Array.each(timestamp_attributes_for_update_in_model + Array.map(names) { |n| Kernel.to_s(n) }) { |c| attrs[c] = time }
+      with_transaction_returning_status(r) do
+        affected = update_columns_with(r, attrs)
+        _run_touch_callbacks(r) { nil }
+        affected
+      end
+    end
+  end
+end

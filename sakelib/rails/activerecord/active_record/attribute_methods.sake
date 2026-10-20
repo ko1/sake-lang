@@ -1,0 +1,184 @@
+# Port of activerecord-8.1.3/lib/active_record/attribute_methods.rb, attribute_methods/{read,write,query,
+# before_type_cast,primary_key,dirty}.rb, attribute_assignment.rb, and activemodel's attribute_methods.rb and
+# dirty.rb as far as ActiveRecord uses them (partial: no alias_attribute, no attribute method patterns at run time:
+# the per-attribute methods are generated; no time zone conversion; no composite primary keys)
+#
+# Ruby defines `title`, `title=`, `title?`, `title_changed?`, `title_was`, ... with define_method from the
+# attribute names when the class first needs them (define_attribute_methods). Here the generator writes them from
+# the schema, each a one-line call of the functions below with the name as a String; the reader narrows the value
+# to the column's type (`Post.title(post)` is `String | nil`). Ruby's mutation trackers (@mutations_from_database,
+# @mutations_before_last_save) are read off the AttributeSet: the current set knows its changes, and the set
+# before the last save (attributes_before_last_save) knows the saved changes.
+
+module ActiveRecord
+  module AttributeMethods
+    def _read_attribute(r, name) = ActiveModel::AttributeSet.fetch_value(@attribute_set, name)
+    def read_attribute(r, name) = _read_attribute(r, attr_name_of(r, name))
+    def _write_attribute(r, name, value) = ActiveModel::AttributeSet.write_from_user(@attribute_set, name, value)
+
+    def write_attribute(r, name, value)
+      n = attr_name_of(r, name)
+      raise ActiveModel::MissingAttributeError, "can't write unknown attribute `#{n}`" unless Hash.key?(attribute_types, n)
+      _write_attribute(r, n, value)
+    end
+
+    def attr_name_of(r, name)
+      n = Kernel.to_s(name)
+      n == "id" ? (primary_key || "id") : n
+    end
+
+    # Ruby: post[:title], post[:title] = v
+    def [](r, name) = read_attribute(r, name)
+    def []=(r, name, value)
+      write_attribute(r, name, value)
+    end
+
+    def has_attribute?(r, name) = ActiveModel::AttributeSet.key?(@attribute_set, Kernel.to_s(name))
+    def attribute_present?(r, name) = !ActiveModel::Validations.blank?(_read_attribute(r, Kernel.to_s(name)))
+    def attributes(r) = ActiveModel::AttributeSet.to_hash(@attribute_set)
+    def attribute_set_of(r) = @attribute_set
+
+    def read_attribute_before_type_cast(r, name)
+      ActiveModel::Attribute.value_before_type_cast(@attribute_set[Kernel.to_s(name)])
+    end
+    def attributes_before_type_cast(r) = ActiveModel::AttributeSet.values_before_type_cast(@attribute_set)
+    def attribute_came_from_user?(r, name) = ActiveModel::Attribute.came_from_user?(@attribute_set[name])
+
+    # Ruby's query_attribute (title?): present, and for numbers not zero
+    def query_attribute(r, name)
+      value = _read_attribute(r, name)
+      case value
+      in true then true
+      in false | nil then false
+      in Integer | Float then value != 0
+      in BigDecimal then !BigDecimal.zero?(value)
+      in String then !ActiveModel::Validations.blank?(value) && value != "0" && value != "f" && value != "false"
+      else true
+      end
+    end
+
+    # primary_key.rb: id, id=, id?, id_was, id_in_database, to_key
+    def id(r) = _read_attribute(r, primary_key || "id")
+    def id_in_database(r) = attribute_in_database(r, primary_key || "id")
+    def id_was(r) = attribute_was(r, primary_key || "id")
+    def to_key(r) = (v = id(r)) ? Any[v] : nil
+
+    # attribute_assignment.rb: assign_attributes(new_attributes); multiparameter and nested Hashes are the
+    # writers' business (`__assign` is the public_send of the setter)
+    def assign_attributes(r, new_attributes)
+      Hash.each(new_attributes) { |k, v| __assign(r, Kernel.to_s(k), v) }
+      nil
+    end
+    def attributes=(r, new_attributes)
+      assign_attributes(r, new_attributes)
+    end
+
+    # dirty.rb (ActiveModel::Dirty over ActiveRecord's AttributeMethods::Dirty)
+    def attribute_changed?(r, name) = ActiveModel::Attribute.changed?(@attribute_set[name])
+    def attribute_was(r, name) = ActiveModel::Attribute.original_value(@attribute_set[name])
+    def attribute_change(r, name) = attribute_changed?(r, name) ? Any[attribute_was(r, name), _read_attribute(r, name)] : nil
+    def attribute_in_database(r, name) = attribute_was(r, name)
+    def will_save_change_to_attribute?(r, name) = attribute_changed?(r, name)
+    def attribute_change_to_be_saved(r, name) = attribute_change(r, name)
+
+    def changed_attribute_names(set) = Array.select(Hash.keys(ActiveModel::AttributeSet.attributes(set))) { |n| ActiveModel::Attribute.changed?(set[n]) }
+    def changes_of(set)
+      h = Hash.new
+      Array.each(changed_attribute_names(set)) do |n|
+        a = set[n]
+        h[n] = Any[ActiveModel::Attribute.original_value(a), ActiveModel::Attribute.value(a)]
+      end
+      h
+    end
+
+    def changed?(r) = !Array.empty?(changed_attribute_names(@attribute_set))
+    def changed(r) = changed_attribute_names(@attribute_set)
+    def changes(r) = changes_of(@attribute_set)
+    def has_changes_to_save?(r) = changed?(r)
+    def changes_to_save(r) = changes(r)
+    def changed_attribute_names_to_save(r) = changed(r)
+    def attributes_in_database(r)
+      h = Hash.new
+      Array.each(changed(r)) { |n| h[n] = attribute_was(r, n) }
+      h
+    end
+
+    def previous_changes(r)
+      before = @attributes_before_last_save
+      before ? changes_of(before) : Hash.new
+    end
+    def saved_changes(r) = previous_changes(r)
+    def saved_changes?(r) = !Hash.empty?(previous_changes(r))
+    def saved_change_to_attribute?(r, name) = Hash.key?(previous_changes(r), name)
+    def saved_change_to_attribute(r, name) = previous_changes(r)[name]
+    def attribute_previously_changed?(r, name) = saved_change_to_attribute?(r, name)
+    def attribute_previously_was(r, name)
+      c = previous_changes(r)[name]
+      c ? c[0] : nil
+    end
+    def attribute_before_last_save(r, name)
+      before = @attributes_before_last_save
+      before ? ActiveModel::Attribute.original_value(before[name]) : nil
+    end
+
+    # Ruby: changes_applied (@mutations_before_last_save = mutations_from_database; forget_attribute_assignments)
+    def changes_applied(r)
+      @attributes_before_last_save = @attribute_set
+      @attribute_set = ActiveModel::AttributeSet.forgetting_assignment(@attribute_set)
+      nil
+    end
+
+    def clear_changes_information(r)
+      @attributes_before_last_save = nil
+      @attribute_set = ActiveModel::AttributeSet.forgetting_assignment(@attribute_set)
+      nil
+    end
+
+    def restore_attributes(r, names = nil)
+      Array.each(names || changed(r)) { |n| restore_attribute!(r, n) }
+      nil
+    end
+    def restore_attribute!(r, name)
+      if attribute_changed?(r, name)
+        _write_attribute(r, name, attribute_was(r, name))
+        @attribute_set = ActiveModel::AttributeSet.forgetting_assignment(@attribute_set) if !changed?(r)
+      end
+      nil
+    end
+
+    # Ruby: attribute_names_for_partial_inserts / updates (partial_inserts, partial_updates)
+    def attribute_names_for_partial_inserts(r)
+      return changed(r) if ModelClass.partial_inserts(__model)
+      Hash.keys(ActiveModel::AttributeSet.attributes(@attribute_set))
+    end
+
+    def attribute_names_for_partial_updates(r)
+      return Array.select(column_names) { |n| n != primary_key } unless ModelClass.partial_updates(__model)
+      changed(r)
+    end
+
+    # Ruby: attributes_with_values(attribute_names) = attribute_names.index_with { |name| @attributes[name] }
+    def attributes_with_values(r, names)
+      h = Hash.new
+      Array.each(names) { |n| h[n] = @attribute_set[n] if Array.include?(column_names, n) }
+      h
+    end
+  end
+end
+
+module ActiveRecord
+  module AttributeMethods
+    # Ruby's AttributeMethods::Dirty#_create_record / #_update_record (super, then changes_applied)
+    def dirty__create_record(r)
+      id = locking__create_record(r)
+      changes_applied(r)
+      id
+    end
+
+    def dirty__update_record(r)
+      affected = locking__update_record(r)
+      changes_applied(r)
+      affected
+    end
+  end
+end

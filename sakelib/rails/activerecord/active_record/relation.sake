@@ -1,0 +1,263 @@
+# Port of activerecord-8.1.3/lib/active_record/relation.rb (partial: no async loading, no query cache, no
+# explain, no scoping blocks of other threads; insert_all/upsert_all are left out with InsertAll)
+#
+# Ruby's Relation is one class, and Post.all is a `Post::ActiveRecord_Relation` (Rails makes that subclass per
+# model, relation_delegate_class, so a model's class methods can be delegated). Here Relation is a module and
+# the generator writes that class per model, with the fields below and `instantiate_row`, so a relation of Posts
+# holds `Post[]` and its `to_a` is Post[] to the checker. Ruby's @values Hash (where_clause, order_values,
+# limit_value, ...) is the class Values (Sake only), and `klass` is the model's ModelClass. Every query method
+# spawns (Ruby: spawn = clone) and changes the copy's Values.
+
+require "relation/where_clause"
+require "relation/predicate_builder"
+require "relation/query_methods"
+require "relation/finder_methods"
+require "relation/calculations"
+require "relation/spawn_methods"
+require "relation/batches"
+
+module ActiveRecord
+  module Relation
+    # Ruby's @values (Sake only: the keys of Ruby's Hash as fields)
+    class Values
+      attr_accessor where_clause, having_clause, order_values, select_values, group_values, joins_values
+      attr_accessor left_outer_joins_values, includes_values, preload_values, eager_load_values, references_values
+      attr_accessor limit_value, offset_value, distinct_value, readonly_value, lock_value, from_value, none_value
+      attr_accessor reordering_value, reverse_order_value, create_with_value, strict_loading_value, annotate_values
+      attr_accessor unscope_values, extending_values, scoped_associations
+      def initialize(v)
+        @where_clause = WhereClause.new(Any[])
+        @having_clause = WhereClause.new(Any[])
+        @order_values = Any[]
+        @select_values = Any[]
+        @group_values = Any[]
+        @joins_values = Any[]
+        @left_outer_joins_values = Any[]
+        @includes_values = Any[]
+        @preload_values = Any[]
+        @eager_load_values = Any[]
+        @references_values = String[]
+        @limit_value = nil
+        @offset_value = nil
+        @distinct_value = false
+        @readonly_value = false
+        @lock_value = nil
+        @from_value = nil
+        @none_value = false
+        @reordering_value = false
+        @reverse_order_value = false
+        @create_with_value = Hash.new
+        @strict_loading_value = false
+        @annotate_values = String[]
+        @unscope_values = Symbol[]
+        @extending_values = Symbol[]
+        @scoped_associations = Any[]
+      end
+
+      # Ruby: @values.dup (each multi-value Array copied, as Ruby's query methods copy before they change one)
+      def copy(v)
+        c = dup(v)
+        Values.set_where_clause(c, WhereClause.dup_clause(@where_clause))
+        Values.set_having_clause(c, WhereClause.dup_clause(@having_clause))
+        Values.set_order_values(c, Array.dup(@order_values))
+        Values.set_select_values(c, Array.dup(@select_values))
+        Values.set_group_values(c, Array.dup(@group_values))
+        Values.set_joins_values(c, Array.dup(@joins_values))
+        Values.set_left_outer_joins_values(c, Array.dup(@left_outer_joins_values))
+        Values.set_includes_values(c, Array.dup(@includes_values))
+        Values.set_preload_values(c, Array.dup(@preload_values))
+        Values.set_eager_load_values(c, Array.dup(@eager_load_values))
+        Values.set_references_values(c, Array.dup(@references_values))
+        Values.set_create_with_value(c, Hash.dup(@create_with_value))
+        Values.set_annotate_values(c, Array.dup(@annotate_values))
+        Values.set_unscope_values(c, Array.dup(@unscope_values))
+        Values.set_scoped_associations(c, Array.dup(@scoped_associations))
+        c
+      end
+    end
+
+    include ::Enum
+    include QueryMethods
+    include FinderMethods
+    include Calculations
+    include SpawnMethods
+    include Batches
+
+    # Required of the model's relation class (generated): its fields and Ruby's klass.instantiate(row).
+    def klass(rel) = raise(NotImplementedError)
+    def values(rel) = raise(NotImplementedError)
+    def set_values(rel, values) = raise(NotImplementedError)
+    def loaded(rel) = raise(NotImplementedError)
+    def records_(rel) = raise(NotImplementedError)
+    def instantiate_row(rel, row) = raise(NotImplementedError)
+    # Ruby: klass.new(attributes) for build/create on a relation (generated)
+    def new_record_of(rel, attributes) = raise(NotImplementedError)
+
+    def table(rel) = ModelClass.arel_table(@klass)
+    def model(rel) = @klass
+    def primary_key(rel) = ModelClass.primary_key(@klass)
+    def connection(rel) = ActiveRecord::Base.connection
+    def predicate_builder(rel) = @klass
+
+    # Ruby: load (exec_queries once), records, to_a, each
+    def load(rel)
+      exec_queries(rel) unless @loaded
+      rel
+    end
+
+    def loaded?(rel) = @loaded
+
+    def exec_queries(rel)
+      rs = Array.dup(@records_)
+      Array.clear(rs)
+      unless Values.none_value(@values)
+        result = ConnectionAdapters::SQLite3Adapter.select_all(connection(rel), arel(rel), "#{ModelClass.name(@klass)} Load")
+        Array.each(ActiveRecord::Result.to_a(result)) do |row|
+          rec = instantiate_row(rel, row)
+          ActiveRecord::Core.readonly!(rec) if Values.readonly_value(@values)
+          ActiveRecord::Core.strict_loading!(rec) if Values.strict_loading_value(@values)
+          Array.push(rs, rec)
+        end
+        preload_associations(rel, rs)
+      end
+      @records_ = rs
+      @loaded = true
+      rs
+    end
+
+    # Ruby: preload_associations(records) (associations/preloader.rb answers; nothing to do without includes)
+    def preload_associations(rel, records) = nil
+
+    def records(rel)
+      load(rel)
+      @records_
+    end
+    def to_a(rel) = Array.dup(records(rel))
+    def to_ary(rel) = to_a(rel)
+    def each(rel) = Array.each(records(rel)) { |r| yield r }
+    def size(rel) = @loaded ? Array.size(@records_) : count(rel)
+    def length(rel) = Array.size(records(rel))
+    def empty?(rel) = @loaded ? Array.empty?(@records_) : !exists?(rel)
+    def none?(rel) = empty?(rel)
+    def any?(rel) = !empty?(rel)
+    # Ruby: limited_count (count of a LIMIT 2 subquery) for one?/many?
+    def one?(rel) = @loaded ? Array.size(@records_) == 1 : Relation.limited_count(rel) == 1
+    def many?(rel) = @loaded ? Array.size(@records_) > 1 : Relation.limited_count(rel) > 1
+    def blank?(rel) = empty?(rel)
+    def present?(rel) = !empty?(rel)
+
+    # Ruby: reset / reload
+    def reset(rel)
+      rs = Array.dup(@records_)
+      Array.clear(rs)
+      @records_ = rs
+      @loaded = false
+      rel
+    end
+
+    def reload(rel)
+      reset(rel)
+      load(rel)
+    end
+
+    # Ruby: new / build / create / create! on a relation (scope_for_create: the where equalities)
+    def scope_for_create(rel)
+      h = WhereClause.to_h(Values.where_clause(@values))
+      Hash.each(Values.create_with_value(@values)) { |k, v| h[Kernel.to_s(k)] = v }
+      h
+    end
+
+    def build(rel, **attributes)
+      attrs = Hash.new
+      Hash.each(scope_for_create(rel)) { |k, v| attrs[String.to_sym(k)] = v }
+      Hash.each(attributes) { |k, v| attrs[k] = v }
+      new_record_of(rel, attrs)
+    end
+
+    def create(rel, **attributes)
+      r = build(rel, **attributes)
+      ActiveRecord::Transactions.save_with(r, true, nil)
+      r
+    end
+
+    def create!(rel, **attributes)
+      r = build(rel, **attributes)
+      ActiveRecord::Transactions.save_with!(r, true, nil)
+      r
+    end
+
+    # Ruby: find_or_create_by(attributes) / find_or_initialize_by / create_or_find_by
+    def find_or_create_by(rel, **attributes) = Relation.find_by(rel, attributes) || create(rel, **attributes)
+    def find_or_create_by!(rel, **attributes) = Relation.find_by(rel, attributes) || create!(rel, **attributes)
+    def find_or_initialize_by(rel, **attributes) = Relation.find_by(rel, attributes) || build(rel, **attributes)
+    def first_or_create(rel, **attributes) = Relation.first(rel) || create(rel, **attributes)
+    def first_or_initialize(rel, **attributes) = Relation.first(rel) || build(rel, **attributes)
+
+    # Ruby: update_all(updates) (one UPDATE, no callbacks)
+    def update_all(rel, updates = nil, **attrs)
+      um = Arel::UpdateManager.new(table(rel))
+      t = table(rel)
+      case updates
+      in String then Arel::UpdateManager.set(um, Arel::Nodes::SqlLiteral.new(updates))
+      in Hash
+        Arel::UpdateManager.set(um, Hash.map(updates) { |k, v| [t[Kernel.to_s(k)], PredicateBuilder.build_bind_attribute(@klass, Kernel.to_s(k), v)] })
+      else
+        Arel::UpdateManager.set(um, Hash.map(attrs) { |k, v| [t[Symbol.to_s(k)], PredicateBuilder.build_bind_attribute(@klass, Symbol.to_s(k), v)] })
+      end
+      wc = Values.where_clause(@values)
+      Arel::UpdateManager.set_wheres(um, Any[WhereClause.ast(wc)]) unless WhereClause.empty?(wc)
+      ConnectionAdapters::SQLite3Adapter.update(connection(rel), um, "#{ModelClass.name(@klass)} Update All")
+    end
+
+    # Ruby: delete_all (one DELETE, no callbacks)
+    def delete_all(rel)
+      dm = Arel::DeleteManager.new(table(rel))
+      wc = Values.where_clause(@values)
+      Arel::DeleteManager.set_wheres(dm, Any[WhereClause.ast(wc)]) unless WhereClause.empty?(wc)
+      affected = ConnectionAdapters::SQLite3Adapter.delete(connection(rel), dm, "#{ModelClass.name(@klass)} Delete All")
+      reset(rel)
+      affected
+    end
+
+    # Ruby: destroy_all (each record's destroy, with callbacks)
+    def destroy_all(rel)
+      rs = records(rel)
+      Array.each(rs) { |r| ActiveRecord::Transactions.destroy(r) }
+      reset(rel)
+      rs
+    end
+
+    def destroy_by(rel, **conds) = destroy_all(Relation.where(rel, conds))
+    def delete_by(rel, **conds) = delete_all(Relation.where(rel, conds))
+
+    def update_counters(rel, counters)
+      t = table(rel)
+      um = Arel::UpdateManager.new(t)
+      Arel::UpdateManager.set(um, Hash.map(counters) do |k, v|
+        col = t[Kernel.to_s(k)]
+        n = (v in Integer) ? v : 0
+        op = n < 0 ? :- : :+
+        [col, Arel::Nodes::InfixOperation.new(left: Arel::Nodes::NamedFunction.new("COALESCE", Any[col, Arel::Nodes.build_quoted(0)]), right: PredicateBuilder.build_bind_attribute(@klass, Kernel.to_s(k), Integer.abs(n)), operator: op)]
+      end)
+      wc = Values.where_clause(@values)
+      Arel::UpdateManager.set_wheres(um, Any[WhereClause.ast(wc)]) unless WhereClause.empty?(wc)
+      ConnectionAdapters::SQLite3Adapter.update(connection(rel), um, "#{ModelClass.name(@klass)} Update All")
+    end
+
+    # Ruby: connection.unprepared_statement { connection.to_sql(arel) } (the binds written in as literals)
+    def to_sql(rel)
+      conn = connection(rel)
+      collector = Arel::Collectors::SubstituteBinds.new(conn, Arel::Collectors::SQLString.new)
+      Arel::Visitors::Visitor.compile(ConnectionAdapters::SQLite3Adapter.visitor(conn), Arel::SelectManager.ast(arel(rel)), collector)
+    end
+
+    # Ruby: inspect "#<ActiveRecord::Relation [#<Post ...>, ...]>" (at most 10 records, then "...")
+    def inspect(rel)
+      rs = @loaded ? Array.first(@records_, 11) : Relation.to_a(Relation.annotate(Relation.limit(rel, 11), "loading for inspect"))
+      entries = Array.map(Array.first(rs, 10)) { |r| ActiveRecord::Core.inspect(r) }
+      Array.push(entries, "...") if Array.size(rs) > 10
+      "#<ActiveRecord::Relation [#{Array.join(entries, ", ")}]>"
+    end
+
+  end
+end

@@ -1,0 +1,85 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/predicate_builder.rb and predicate_builder/
+# {basic_object,array,range,relation}_handler.rb (partial: no association/polymorphic values (the associations'
+# where(author: record) is built by associations/), no dot notation, no aggregations, no composite keys)
+#
+# Ruby's handlers are registered by class (`register_handler(Range, RangeHandler.new(self))`); here `build` is a
+# `case` over the value's type. The table is the model's ModelClass (Ruby's TableMetadata).
+
+module ActiveRecord
+  module PredicateBuilder
+    module_function
+
+    # Ruby: expand_from_hash(attributes): one predicate per key, in order
+    def build_from_hash(klass, attributes)
+      return Any[Arel.sql("1=0")] if Hash.empty?(attributes)
+      Array.map(Hash.to_a(attributes)) { |kv| build_for(klass, Kernel.to_s(kv[0]), kv[1]) }
+    end
+
+    def build_for(klass, key, value)
+      ModelClass.build_predicate(klass, key, value)
+    end
+
+    # Ruby: predicate_builder[name, value] (build(table.arel_table[name], value))
+    def build_bind(klass, name, value) = build(klass, ModelClass.arel_table(klass)[name], name, value)
+
+    def build(klass, attribute, name, value)
+      case value
+      in nil then Arel::Attributes::Attribute.eq(attribute, nil)
+      in Array then build_array(klass, attribute, name, value)
+      in Range then build_range(klass, attribute, name, value)
+      in Arel::Nodes::Node | Arel::Nodes::SqlLiteral then Arel::Attributes::Attribute.eq(attribute, value)
+      in ActiveRecord::Relation then build_relation(klass, attribute, value)
+      else Arel::Attributes::Attribute.eq(attribute, build_bind_attribute(klass, name, value))
+      end
+    end
+
+    def build_bind_attribute(klass, name, value)
+      Arel::Nodes::BindParam.new(Relation::QueryAttribute.new(name, value, ModelClass.type_for_attribute(klass, name)))
+    end
+
+    # RelationHandler: IN (SELECT ...), the primary key when the subquery selects nothing
+    def build_relation(klass, attribute, value)
+      r = value
+      if Array.empty?(Relation::Values.select_values(Relation.values(r)))
+        r = Relation.select(r, String.to_sym(Relation.primary_key(r) || "id"))
+      end
+      Arel::Predications.in(attribute, Relation.arel(r))
+    end
+
+    # ArrayHandler: IN (?, ?), with OR IS NULL for a nil, 1=0 when empty
+    def build_array(klass, attribute, name, value)
+      values = Array.compact(value)
+      has_nil = Array.size(values) != Array.size(value)
+      return (has_nil ? Arel::Attributes::Attribute.eq(attribute, nil) : Arel::Nodes::SqlLiteral.new("1=0")) if Array.empty?(values)
+      in_node = if Array.size(values) == 1
+                  Arel::Attributes::Attribute.eq(attribute, build_bind_attribute(klass, name, Array.fetch(values, 0)))
+                else
+                  Arel::Nodes::HomogeneousIn.new(values, attribute, :in)
+                end
+      return in_node unless has_nil
+      Arel::Nodes::Grouping.new(Arel::Nodes::Or.new(Any[in_node, Arel::Attributes::Attribute.eq(attribute, nil)]))
+    end
+
+    # RangeHandler: BETWEEN ? AND ?, >= ?, < ? for endless and exclusive ranges
+    def build_range(klass, attribute, name, value)
+      b = Range.begin(value)
+      e = Range.end(value)
+      bb = (b in nil) ? nil : build_bind_attribute(klass, name, b)
+      eb = (e in nil) ? nil : build_bind_attribute(klass, name, e)
+      if bb && eb
+        if Range.exclude_end?(value)
+          Arel::Nodes::And.new(Any[Arel::Attributes::Attribute.gteq(attribute, bb), Arel::Attributes::Attribute.lt(attribute, eb)])
+        else
+          Arel::Nodes::Between.new(attribute, Arel::Nodes::And.new(Any[bb, eb]))
+        end
+      elsif bb
+        Arel::Attributes::Attribute.gteq(attribute, bb)
+      elsif eb
+        Range.exclude_end?(value) ? Arel::Attributes::Attribute.lt(attribute, eb) : Arel::Attributes::Attribute.lteq(attribute, eb)
+      else
+        Arel::Nodes::SqlLiteral.new("1=1")
+      end
+    end
+  end
+
+end

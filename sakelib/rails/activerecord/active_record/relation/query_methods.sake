@@ -1,0 +1,442 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/query_methods.rb (partial: no with/with_recursive (CTE),
+# no optimizer_hints, no regroup/reselect beyond reselect, no extending (blocks), no in_order_of, no excluding;
+# joins/left_outer_joins of associations are built by associations/join_dependency)
+#
+# Each method is Ruby's pair: `where(...)` = `spawn.where!(...)`. Ruby's where takes `where(opts = :chain, *rest)`
+# and `where.not(...)` (a WhereChain); here the keywords are the Hash form (`Post.where(title: "x")`), a String
+# with binds the SQL form, and `where.not` is `where_not` (a chain object would be one class for every model).
+
+module ActiveRecord
+  module QueryMethods
+
+    # Ruby: spawn (clone, with its own @values)
+    def spawn(rel)
+      r = dup(rel)
+      Relation.set_values(r, Relation::Values.copy(Relation.values(rel)))
+      Relation.reset(r)
+    end
+
+    # Ruby: where(opts, *rest) / where(**conds)
+    def where(rel, opts = nil, *rest, **conds)
+      r = spawn(rel)
+      where!(r, opts, rest, conds)
+      r
+    end
+
+    def where!(rel, opts, rest, conds)
+      clause = build_where_clause(rel, opts, rest)
+      clause = Relation::WhereClause.+(clause, build_where_clause(rel, conds, Any[])) if !Hash.empty?(conds)
+      v = Relation.values(rel)
+      Relation::Values.set_where_clause(v, Relation::WhereClause.+(Relation::Values.where_clause(v), clause))
+      rel
+    end
+
+    # Ruby: where.not(...)
+    def where_not(rel, opts = nil, *rest, **conds)
+      r = spawn(rel)
+      clause = build_where_clause(r, opts, rest)
+      clause = Relation::WhereClause.+(clause, build_where_clause(r, conds, Any[])) if !Hash.empty?(conds)
+      v = Relation.values(r)
+      Relation::Values.set_where_clause(v, Relation::WhereClause.+(Relation::Values.where_clause(v), Relation::WhereClause.invert(clause)))
+      r
+    end
+
+    # Ruby: rewhere(conditions): unscope the keys' conditions, then where
+    def rewhere(rel, **conds)
+      r = spawn(rel)
+      v = Relation.values(r)
+      names = Array.map(Hash.keys(conds)) { |k| Symbol.to_s(k) }
+      kept = Array.reject(Relation::WhereClause.predicates(Relation::Values.where_clause(v))) { |p| Array.include?(names, predicate_column(p)) }
+      Relation::Values.set_where_clause(v, Relation::WhereClause.new(kept))
+      where!(r, nil, Any[], conds)
+      r
+    end
+
+    def predicate_column(p)
+      case p
+      in Arel::Nodes::Equality | Arel::Nodes::NotEqual | Arel::Nodes::In | Arel::Nodes::NotIn | Arel::Nodes::Between | Arel::Nodes::GreaterThan | Arel::Nodes::GreaterThanOrEqual | Arel::Nodes::LessThan | Arel::Nodes::LessThanOrEqual
+        l = Arel::Nodes::Binary.left(p)
+        (l in Arel::Attributes::Attribute) ? Kernel.to_s(Arel::Attributes::Attribute.name(l)) : nil
+      in Arel::Nodes::HomogeneousIn
+        l = Arel::Nodes::HomogeneousIn.attribute(p)
+        (l in Arel::Attributes::Attribute) ? Kernel.to_s(Arel::Attributes::Attribute.name(l)) : nil
+      else nil
+      end
+    end
+
+    # Ruby: build_where_clause(opts, rest)
+    def build_where_clause(rel, opts, rest)
+      parts = case opts
+              in nil then Any[]
+              in String
+                first = Array.first(rest)
+                if Array.empty?(rest)
+                  Any[Arel.sql(opts)]
+                elsif (first in Hash) && String.match?(opts, /:\w+/)
+                  named = Hash.new
+                  Hash.each(first) { |k, x| named[String.to_sym(Kernel.to_s(k))] = x }
+                  Any[Arel::Nodes::BoundSqlLiteral.new("(#{opts})", nil, named)]
+                elsif String.include?(opts, "?")
+                  Any[Arel::Nodes::BoundSqlLiteral.new("(#{opts})", rest, nil)]
+                else
+                  Any[Arel.sql(Sanitization.sanitize_sql_array(opts, rest))]
+                end
+              in Hash then PredicateBuilder.build_from_hash(Relation.klass(rel), opts)
+              in Arel::Nodes::Node then Any[opts]
+              else raise ArgumentError, "Unsupported argument type: #{Kernel.inspect(opts)}"
+              end
+      Relation::WhereClause.new(parts)
+    end
+
+    # Ruby: or(other) / and(other)
+    def or(rel, other)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Relation::Values.set_where_clause(v, Relation::WhereClause.or(Relation::Values.where_clause(v), Relation::Values.where_clause(Relation.values(other))))
+      r
+    end
+
+    def and(rel, other)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Relation::Values.set_where_clause(v, Relation::WhereClause.+(Relation::Values.where_clause(v), Relation::Values.where_clause(Relation.values(other))))
+      r
+    end
+
+    # Ruby: invert_where
+    def invert_where(rel)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Relation::Values.set_where_clause(v, Relation::WhereClause.invert(Relation::Values.where_clause(v)))
+      r
+    end
+
+    # Ruby: order(*args): Symbols and Strings, and Hashes of column => :asc/:desc
+    def order(rel, *args, **dirs)
+      r = spawn(rel)
+      order!(r, args, dirs)
+      r
+    end
+
+    def order!(rel, args, dirs)
+      v = Relation.values(rel)
+      Array.each(preprocess_order_args(rel, args, dirs)) { |o| Array.push(Relation::Values.order_values(v), o) }
+      rel
+    end
+
+    def preprocess_order_args(rel, args, dirs)
+      t = Relation.table(rel)
+      out = Any[]
+      Array.each(args) do |a|
+        case a
+        in Symbol then Array.push(out, Arel::Attributes::Attribute.asc(t[Symbol.to_s(a)]))
+        in String then Array.push(out, Arel.sql(a))
+        in Hash then Hash.each(a) { |k, d| Array.push(out, order_column(t, Kernel.to_s(k), d)) }
+        in Arel::Nodes::Ordering | Arel::Nodes::Node | Arel::Attributes::Attribute then Array.push(out, a)
+        else raise ArgumentError, "Direction \"#{Kernel.inspect(a)}\" is invalid."
+        end
+      end
+      Hash.each(dirs) { |k, d| Array.push(out, order_column(t, Kernel.to_s(k), d)) }
+      out
+    end
+
+    def order_column(t, name, dir)
+      d = String.downcase(Kernel.to_s(dir))
+      raise ArgumentError, "Direction \"#{dir}\" is invalid. Valid directions are: [:asc, :desc, :ASC, :DESC, \"asc\", \"desc\", \"ASC\", \"DESC\"]" unless d == "asc" || d == "desc"
+      d == "desc" ? Arel::Attributes::Attribute.desc(t[name]) : Arel::Attributes::Attribute.asc(t[name])
+    end
+
+    def reorder(rel, *args, **dirs)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.clear(Relation::Values.order_values(v))
+      Relation::Values.set_reordering_value(v, true)
+      order!(r, args, dirs)
+      r
+    end
+
+    def reverse_order(rel)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Relation::Values.set_reverse_order_value(v, !Relation::Values.reverse_order_value(v))
+      r
+    end
+
+    def limit(rel, value)
+      r = spawn(rel)
+      Relation::Values.set_limit_value(Relation.values(r), value)
+      r
+    end
+
+    def offset(rel, value)
+      r = spawn(rel)
+      Relation::Values.set_offset_value(Relation.values(r), value)
+      r
+    end
+
+    def select(rel, *fields)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(fields) { |f| Array.push(Relation::Values.select_values(v), f) }
+      r
+    end
+
+    def reselect(rel, *fields)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.clear(Relation::Values.select_values(v))
+      Array.each(fields) { |f| Array.push(Relation::Values.select_values(v), f) }
+      r
+    end
+
+    def group(rel, *fields)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(fields) { |f| Array.push(Relation::Values.group_values(v), f) }
+      r
+    end
+
+    def having(rel, opts, *rest)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Relation::Values.set_having_clause(v, Relation::WhereClause.+(Relation::Values.having_clause(v), build_where_clause(r, opts, rest)))
+      r
+    end
+
+    def distinct(rel, value = true)
+      r = spawn(rel)
+      Relation::Values.set_distinct_value(Relation.values(r), value)
+      r
+    end
+
+    def readonly(rel, value = true)
+      r = spawn(rel)
+      Relation::Values.set_readonly_value(Relation.values(r), value)
+      r
+    end
+
+    def strict_loading(rel, value = true)
+      r = spawn(rel)
+      Relation::Values.set_strict_loading_value(Relation.values(r), value)
+      r
+    end
+
+    def lock(rel, locks = true)
+      r = spawn(rel)
+      Relation::Values.set_lock_value(Relation.values(r), locks)
+      r
+    end
+
+    def none(rel)
+      r = spawn(rel)
+      Relation::Values.set_none_value(Relation.values(r), true)
+      r
+    end
+
+    def null_relation?(rel) = Relation::Values.none_value(Relation.values(rel))
+
+    def create_with(rel, value)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Hash.each(value) { |k, x| Relation::Values.create_with_value(v)[k] = x }
+      r
+    end
+
+    def from(rel, value)
+      r = spawn(rel)
+      Relation::Values.set_from_value(Relation.values(r), value)
+      r
+    end
+
+    def annotate(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) { |a| Array.push(Relation::Values.annotate_values(v), a) }
+      r
+    end
+
+    def references(rel, *tables)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(tables) { |t| Array.push(Relation::Values.references_values(v), Kernel.to_s(t)) }
+      r
+    end
+
+    # Ruby: joins(*args) with String/Arel joins here; association names are associations/' (join_dependency)
+    def joins(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) { |a| Array.push(Relation::Values.joins_values(v), a) }
+      r
+    end
+
+    def left_outer_joins(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) { |a| Array.push(Relation::Values.left_outer_joins_values(v), a) }
+      r
+    end
+    def left_joins(rel, *args) = left_outer_joins(rel, *args)
+
+    def includes(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) { |a| Array.push(Relation::Values.includes_values(v), a) }
+      r
+    end
+
+    def preload(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) { |a| Array.push(Relation::Values.preload_values(v), a) }
+      r
+    end
+
+    def eager_load(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) { |a| Array.push(Relation::Values.eager_load_values(v), a) }
+      r
+    end
+
+    # Ruby: unscope(*args): :where, :order, :limit, :offset, :select, :group, :having, :joins, :includes, ...
+    def unscope(rel, *args)
+      r = spawn(rel)
+      v = Relation.values(r)
+      Array.each(args) do |a|
+        case a
+        in :where then Relation::Values.set_where_clause(v, Relation::WhereClause.new(Any[]))
+        in :order then Array.clear(Relation::Values.order_values(v))
+        in :limit then Relation::Values.set_limit_value(v, nil)
+        in :offset then Relation::Values.set_offset_value(v, nil)
+        in :select then Array.clear(Relation::Values.select_values(v))
+        in :group then Array.clear(Relation::Values.group_values(v))
+        in :having then Relation::Values.set_having_clause(v, Relation::WhereClause.new(Any[]))
+        in :joins then Array.clear(Relation::Values.joins_values(v))
+        in :left_outer_joins then Array.clear(Relation::Values.left_outer_joins_values(v))
+        in :includes then Array.clear(Relation::Values.includes_values(v))
+        in :readonly then Relation::Values.set_readonly_value(v, false)
+        in :distinct then Relation::Values.set_distinct_value(v, false)
+        in :lock then Relation::Values.set_lock_value(v, nil)
+        else raise ArgumentError, "Called unscope() with invalid unscoping argument ':#{a}'. Valid arguments are :where, :select, :group, :order, :lock, :limit, :offset, :joins, :left_outer_joins, :annotate, :includes, :eager_load, :preload, :from, :readonly, :having, :optimizer_hints, :with."
+        end
+      end
+      r
+    end
+
+    # Ruby: arel / build_arel
+    def arel(rel) = build_arel(rel)
+
+    def build_arel(rel)
+      v = Relation.values(rel)
+      t = Relation.table(rel)
+      conn = Relation.connection(rel)
+      m = Arel::SelectManager.new(t)
+      build_joins(rel, m)
+      wc = Relation::Values.where_clause(v)
+      Arel::SelectManager.where(m, Relation::WhereClause.ast(wc)) unless Relation::WhereClause.empty?(wc)
+      hc = Relation::Values.having_clause(v)
+      Arel::SelectManager.having(m, Relation::WhereClause.ast(hc)) unless Relation::WhereClause.empty?(hc)
+      lv = Relation::Values.limit_value(v)
+      Arel::SelectManager.take(m, build_cast_value("LIMIT", lv)) if lv != nil
+      ov = Relation::Values.offset_value(v)
+      Arel::SelectManager.skip(m, build_cast_value("OFFSET", ov)) if ov != nil
+      gv = Relation::Values.group_values(v)
+      Arel::SelectManager.group(m, *arel_columns(rel, Array.uniq(gv))) if !Array.empty?(gv)
+      build_order(rel, m)
+      build_select(rel, m)
+      Arel::SelectManager.distinct(m, Relation::Values.distinct_value(v))
+      fv = Relation::Values.from_value(v)
+      Arel::SelectManager.from(m, Arel.sql(Kernel.to_s(fv))) if fv in String
+      lk = Relation::Values.lock_value(v)
+      Arel::SelectManager.lock(m) if lk == true
+      Arel::SelectManager.lock(m, Arel.sql(lk)) if lk in String
+      av = Relation::Values.annotate_values(v)
+      Arel::SelectManager.comment(m, *av) if !Array.empty?(av)
+      m
+    end
+
+    # Ruby: build_cast_value(name, value) = Arel::Nodes::BindParam.new(ActiveModel::Attribute.with_cast_value(name, value, Type.default_value))
+    def build_cast_value(name, value) = Arel::Nodes::BindParam.new(ActiveModel::Attribute.with_cast_value(name, value, ActiveModel::Type.default_value))
+
+    # String and Arel joins; association joins are associations/' (build_association_joins answers nil without)
+    def build_joins(rel, m)
+      v = Relation.values(rel)
+      Array.each(Relation::Values.joins_values(v)) do |j|
+        case j
+        in String then Arel::SelectManager.join(m, Arel.sql(j), :string)
+        in Arel::Nodes::Node then Arel::SelectManager.join(m, j, :string)
+        else build_association_join(rel, m, j, :inner)
+        end
+      end
+      Array.each(Relation::Values.left_outer_joins_values(v)) { |j| build_association_join(rel, m, j, :outer) }
+      Array.each(Relation::Values.eager_load_values(v)) { |j| build_association_join(rel, m, j, :outer) }
+      nil
+    end
+
+    # Ruby: JoinDependency for joins(:comments) (associations/ defines it on ActiveRecord::Base)
+    def build_association_join(rel, m, j, kind)
+      ActiveRecord::Associations.build_join(Relation.klass(rel), m, j, kind)
+    end
+
+    def arel_columns(rel, columns)
+      t = Relation.table(rel)
+      Array.map(columns) do |c|
+        case c
+        in Symbol then column_or_literal(rel, Symbol.to_s(c))
+        in String then column_or_literal(rel, c)
+        else c
+        end
+      end
+    end
+
+    def column_or_literal(rel, name)
+      t = Relation.table(rel)
+      Array.include?(ModelClass.column_names(Relation.klass(rel)), name) ? t[name] : Arel.sql(name)
+    end
+
+    def build_order(rel, m)
+      v = Relation.values(rel)
+      orders = Relation::Values.order_values(v)
+      orders = reverse_sql_order(rel, orders) if Relation::Values.reverse_order_value(v)
+      Arel::SelectManager.order(m, *orders) if !Array.empty?(orders)
+      nil
+    end
+
+    # Ruby: reverse_sql_order(order_query): with no order, the primary key DESC
+    def reverse_sql_order(rel, orders)
+      if Array.empty?(orders)
+        pk = Relation.primary_key(rel)
+        return Any[Arel::Attributes::Attribute.desc(Relation.table(rel)[pk || "id"])]
+      end
+      Array.map(orders) do |o|
+        case o
+        in Arel::Nodes::Ascending | Arel::Nodes::Descending then Arel::Nodes::Ordering.reverse(o)
+        in Arel::Nodes::SqlLiteral then Arel.sql(reverse_sql_string(Arel::Nodes::SqlLiteral.to_s(o)))
+        else o
+        end
+      end
+    end
+
+    def reverse_sql_string(s)
+      Array.map(String.split(s, ",")) do |part|
+        p = String.strip(part)
+        if String.match?(p, /\sasc\z/i) then String.sub(p, /\sasc\z/i, " DESC")
+        elsif String.match?(p, /\sdesc\z/i) then String.sub(p, /\sdesc\z/i, " ASC")
+        else "#{p} DESC"
+        end
+      end.Array.join(", ")
+    end
+
+    def build_select(rel, m)
+      v = Relation.values(rel)
+      sv = Relation::Values.select_values(v)
+      if Array.empty?(sv)
+        Arel::SelectManager.project(m, Relation.table(rel)[Arel.star])
+      else
+        Arel::SelectManager.project(m, *arel_columns(rel, sv))
+      end
+      nil
+    end
+  end
+end

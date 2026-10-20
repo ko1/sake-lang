@@ -1,0 +1,110 @@
+require "rails/activerecord/active_record"
+
+# The model layer on a :memory: database: attributes from the schema, create/find/update/destroy, dirty
+# tracking, validations, callbacks, and the SQL each step runs
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Migration.set_verbose(false)
+generate "rails/activerecord/active_record/generate/active_record", "base_schema.rb", "base_models.rb"
+BaseSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+
+class Post
+  def normalize_title(post)
+    post.Post.title = String.strip(Post.title(post) || "")
+  end
+
+  def body_is_not_shouting(post)
+    body = Post.body(post)
+    ActiveModel::Errors.add(Post.errors(post), :body, "is shouting") if body && body == String.upcase(body)
+  end
+
+  def log_create(post)
+    puts("  created #{Post.id(post)}")
+  end
+end
+
+puts("-- attributes")
+p(Post.table_name, Post.primary_key, Post.column_names)
+post = Post.build(title: " Hello ")
+p([Post.title(post), Post.views(post), Post.published(post), Post.new_record?(post), Post.persisted?(post), Post.id(post)])
+p([Post.changed?(post), Post.changed(post), Post.title_changed?(post), Post.title_was(post)])
+post.Post.views = "12"
+p([Post.views(post), Post.views_before_type_cast(post), Post.views_changed?(post)])
+show_sql
+
+puts("-- create")
+p(Post.save(post))
+p([Post.id(post), Post.title(post), Post.new_record?(post), Post.persisted?(post), Post.changed?(post), Post.previous_changes(post).Hash.keys])
+show_sql
+second = Post.create(title: "Second post", body: "plain words", views: 3, published: true)
+p([Post.id(second), Post.title(second), Post.published(second)])
+show_sql
+
+puts("-- find")
+found = Post.find(1)
+p([Post.id(found), Post.title(found), Post.views(found), Post.published(found), (Post.created_at(found) in Time) ? "Time" : "nil"])
+show_sql
+p((f = Post.find_by(title: "Second post")) ? Post.id(f) : nil)
+p(Post.find_by(title: "nope"))
+show_sql
+begin
+  Post.find(99)
+rescue ActiveRecord::RecordNotFound => e
+  puts("RecordNotFound: #{Exception.message(e)}")
+end
+show_sql
+p(Enum.map(Post.where(published: true)) { |x| Post.title(x) })
+p(Enum.map(Post.where("views > ?", 5).ActiveRecord::Relation.order(title: :desc)) { |x| Post.id(x) })
+p((f = Post.order(:title).ActiveRecord::Relation.first) ? Post.title(f) : nil, Post.count, Post.pluck(:title))
+p(Post.exists?(Hash.of(title: "Hello")), Post.where(published: false).ActiveRecord::Relation.count)
+show_sql
+
+puts("-- update")
+found.Post.title = "Hello again"
+p([Post.changes(found), Post.save(found), Post.saved_changes(found).Hash.keys])
+show_sql
+p(Post.update(found, views: 20))
+p(Post.update(found, title: ""))
+p(ActiveModel::Errors.full_messages(Post.errors(found)))
+show_sql
+Post.reload(found)
+p([Post.title(found), Post.views(found)])
+show_sql
+
+puts("-- validations")
+bad = Post.build(title: "x", body: "LOUD")
+p([Post.valid?(bad), ActiveModel::Errors.full_messages(Post.errors(bad)), Post.errors(bad)[:title]])
+p(Post.save(bad))
+begin
+  Post.save!(bad)
+rescue ActiveRecord::RecordInvalid => e
+  puts("RecordInvalid: #{Exception.message(e)}")
+end
+begin
+  Post.create!(title: nil)
+rescue ActiveRecord::RecordInvalid => e
+  puts("RecordInvalid: #{Exception.message(e)}")
+end
+show_sql
+
+puts("-- destroy")
+Post.destroy(second)
+p(Post.destroyed?(second))
+p([Post.count, Post.exists?(Post.id(second))])
+p(Post.where(id: Any[1, 2]).ActiveRecord::Relation.pluck(:id))
+show_sql
+p(Post.inspect(Post.build(title: "abc")))

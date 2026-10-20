@@ -1,0 +1,39 @@
+# Port of activerecord-8.1.3/lib/active_record/schema.rb (partial: no schema_sha1 in the internal metadata,
+# no versions of migration files below the defined one (there are no files))
+#
+# Ruby: ActiveRecord::Schema[8.1].define(version: 1) do create_table ... end runs the block with
+# instance_eval on a Schema, which is a Migration (its DSL says each command when verbose). The db/schema.rb
+# file is read by the generator (generate/schema.sake), which writes the block as Sake calls with the Schema
+# first: `ActiveRecord::Schema.create_table(s, "posts", Hash.of(force: :cascade)) do |t| ...`. Schema includes
+# Migration, so those are Migration's DSL functions.
+
+module ActiveRecord
+  class Schema
+    attr_reader name, version
+    include Migration
+
+    # Ruby: Schema::Definition#define(info, &block)
+    def define(info)
+      s = Schema.new("ActiveRecord::Schema", 0)
+      yield s
+      conn = ActiveRecord::Base.connection
+      SchemaMigration.create_table(SchemaMigration.new(conn))
+      v = info[:version]
+      assume_migrated_upto_version(conn, v) if v in Integer
+      InternalMetadata.create_table_and_set_flags(InternalMetadata.new(conn), "default_env")
+      s
+    end
+
+    # Ruby: connection.assume_migrated_upto_version(version) (SchemaStatements)
+    def assume_migrated_upto_version(conn, version)
+      sm = SchemaMigration.new(conn)
+      unless Array.include?(SchemaMigration.integer_versions(sm), version)
+        ConnectionAdapters::SQLite3Adapter.execute(conn, "INSERT INTO #{ConnectionAdapters::SQLite3Adapter.quote_table_name(conn, "schema_migrations")} (version) VALUES (#{ConnectionAdapters::SQLite3Adapter.quote(conn, Integer.to_s(version))})")
+      end
+      nil
+    end
+
+    # Ruby adds the key through alter_table on SQLite; foreign keys are not ported (the notes say so)
+    def add_foreign_key(s, from_table, to_table, options = nil) = nil
+  end
+end

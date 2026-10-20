@@ -1,0 +1,79 @@
+# Port of activemodel-8.1.3/lib/active_model/attribute_set.rb, attribute_set/builder.rb (partial: no
+# LazyAttributeSet (the row is cast into Attributes when the record is built; each Attribute still casts its value
+# on first read), no YAML encoder, no freeze)
+#
+# A stand-in kept under activerecord until part 5 (activemodel) lands its own; the names are Rails'.
+
+module ActiveModel
+  class AttributeSet
+    attr_reader attributes
+    include Indexable
+
+    def [](s, name) = @attributes[name] || default_attribute(s, name)
+    def []=(s, name, value)
+      @attributes[name] = value
+    end
+
+    def values_before_type_cast(s) = Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.value_before_type_cast(a) }
+    def values_for_database(s) = Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.value_for_database(a) }
+
+    def to_hash(s)
+      h = Hash.new
+      Array.each(keys(s)) { |name| h[name] = ActiveModel::Attribute.value(s[name]) }
+      h
+    end
+    def to_h(s) = to_hash(s)
+
+    def key?(s, name) = Hash.key?(@attributes, name) && ActiveModel::Attribute.initialized?(s[name])
+    def include?(s, name) = key?(s, name)
+    def keys(s) = Array.select(Hash.keys(@attributes)) { |name| ActiveModel::Attribute.initialized?(s[name]) }
+    def fetch_value(s, name) = ActiveModel::Attribute.value(s[name])
+
+    def write_from_database(s, name, value)
+      @attributes[name] = ActiveModel::Attribute.with_value_from_database(s[name], value)
+    end
+
+    def write_from_user(s, name, value)
+      @attributes[name] = ActiveModel::Attribute.with_value_from_user(s[name], value)
+      value
+    end
+
+    def write_cast_value(s, name, value)
+      @attributes[name] = ActiveModel::Attribute.with_cast_value_of(s[name], value)
+    end
+
+    def deep_dup(s) = AttributeSet.new(Hash.dup(@attributes))
+
+    def reset(s, key)
+      write_from_database(s, key, nil) if key?(s, key)
+    end
+
+    def accessed(s) = Array.select(Hash.keys(@attributes)) { |name| ActiveModel::Attribute.has_been_read?(s[name]) }
+
+    # Ruby: map(&:forgetting_assignment) and friends; the block's Attribute is any of Attribute's classes
+    def forgetting_assignment(s) = AttributeSet.new(Hash.transform_values(@attributes) { |a| ActiveModel::Attribute.forgetting_assignment(a) })
+
+    def default_attribute(s, name) = ActiveModel::Attribute.null(name)
+
+    class Builder
+      attr_reader types, default_attributes
+
+      # Ruby: LazyAttributeSet.new(values, types, additional_types, default_attributes); built eagerly here
+      def build_from_database(b, values = Hash.new)
+        attrs = Hash.new
+        Hash.each(@types) do |name, type|
+          if Hash.key?(values, name)
+            attrs[name] = ActiveModel::Attribute.from_database(name, values[name], type)
+          else
+            d = @default_attributes[name]
+            attrs[name] = d ? d : ActiveModel::Attribute.uninitialized(name, type)
+          end
+        end
+        Hash.each(values) do |name, v|
+          attrs[name] = ActiveModel::Attribute.from_database(name, v, ActiveModel::Type.default_value) unless Hash.key?(attrs, name)
+        end
+        AttributeSet.new(attrs)
+      end
+    end
+  end
+end

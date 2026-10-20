@@ -1,0 +1,31 @@
+# Port of activerecord-8.1.3/lib/active_record/locking/pessimistic.rb (partial: no lock strings with NOWAIT
+# checks for other adapters)
+#
+# Ruby: lock!(lock = true) reloads the record with SELECT ... FOR UPDATE (SQLite's visitor writes no lock
+# clause), and with_lock { } runs the block in a transaction after lock!.
+
+module ActiveRecord
+  module Locking
+    module Pessimistic
+      def lock!(r, lock = true)
+        if persisted?(r)
+          if has_changes_to_save?(r)
+            raise PlainActiveRecordError, "Locking a record with unpersisted changes is not supported. Use `save` to persist the changes, or `reload` to discard them explicitly.\nChanged attributes: #{Array.join(Array.map(changed(r)) { |n| "`#{n}`" }, ", ")}."
+          end
+          fresh = Relation.find(Relation.lock(unscoped, lock), id(r))
+          @attribute_set = attribute_set_of(fresh)
+        end
+        r
+      end
+
+      def with_lock(r, lock = true)
+        result = nil
+        Transactions.run_transaction do
+          lock!(r, lock)
+          result = yield
+        end
+        result
+      end
+    end
+  end
+end

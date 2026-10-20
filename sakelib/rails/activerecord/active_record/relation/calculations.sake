@@ -1,0 +1,152 @@
+# Port of activerecord-8.1.3/lib/active_record/relation/calculations.rb (partial: no async_*, no count with a
+# block, no distinct count over several columns; grouped calculations return a Hash keyed by one group column)
+#
+# Ruby type-casts a calculation's result through the column's type (type_cast_calculated_value) and pluck's
+# values through the attribute types; here the same, from ModelClass.attribute_types.
+
+module ActiveRecord
+  module Calculations
+    # Ruby: count(column_name = nil)
+    def count(rel, column_name = nil)
+      calculate(rel, :count, column_name)
+    end
+
+    def average(rel, column_name) = calculate(rel, :average, column_name)
+    def minimum(rel, column_name) = calculate(rel, :minimum, column_name)
+    def maximum(rel, column_name) = calculate(rel, :maximum, column_name)
+    def sum(rel, column_name = nil) = calculate(rel, :sum, column_name)
+
+    # Ruby: calculate(operation, column_name). Ruby returns a Hash when the relation is grouped; one function has
+    # one result type here, so a grouped calculation is group_calculate (group_count, group_sum, ...), and
+    # calculate on a grouped relation raises.
+    def calculate(rel, operation, column_name)
+      unless Array.empty?(Relation::Values.group_values(Relation.values(rel)))
+        raise ArgumentError, "#{operation} on a grouped relation: call group_#{operation} (Sake: one result type per function)"
+      end
+      execute_simple_calculation(rel, operation, column_name)
+    end
+
+    def group_calculate(rel, operation, column_name) = execute_grouped_calculation(rel, operation, column_name)
+    def group_count(rel, column_name = nil) = group_calculate(rel, :count, column_name)
+    def group_sum(rel, column_name) = group_calculate(rel, :sum, column_name)
+    def group_average(rel, column_name) = group_calculate(rel, :average, column_name)
+    def group_minimum(rel, column_name) = group_calculate(rel, :minimum, column_name)
+    def group_maximum(rel, column_name) = group_calculate(rel, :maximum, column_name)
+
+    # Ruby: SELECT COUNT(*) FROM (SELECT 1 AS one FROM ... LIMIT 2) subquery_for_count
+    def limited_count(rel)
+      inner = Relation.arel(Relation.limit(Relation.unscope(rel, :order), 2))
+      Arel::SelectManager.set_projections(inner, Any[Arel.sql("1 AS one")])
+      m = Arel::SelectManager.new(Relation.table(rel))
+      Arel::SelectManager.from(m, Arel::SelectManager.as(inner, "subquery_for_count"))
+      Arel::SelectManager.project(m, Arel::Nodes::Count.new(Any[Arel.star], false))
+      v = ConnectionAdapters::SQLite3Adapter.select_value(Relation.connection(rel), m, "#{ModelClass.name(Relation.klass(rel))} Count")
+      (v in Integer) ? v : 0
+    end
+
+    def aggregate_column(rel, column_name)
+      case column_name
+      in nil then Arel.star
+      in :all then Arel.star
+      in Symbol then QueryMethods.column_or_literal(rel, Symbol.to_s(column_name))
+      in String then column_name == "*" ? Arel.star : QueryMethods.column_or_literal(rel, column_name)
+      else Arel.star
+      end
+    end
+
+    def operation_over_aggregate_column(rel, column, operation, distinct)
+      case operation
+      in :count then Arel::Nodes::Count.new(Any[column], distinct)
+      in :sum then Arel::Nodes::Sum.new(Any[column])
+      in :average then Arel::Nodes::Avg.new(Any[column])
+      in :minimum then Arel::Nodes::Min.new(Any[column])
+      in :maximum then Arel::Nodes::Max.new(Any[column])
+      else raise ArgumentError, "unknown operation #{operation}"
+      end
+    end
+
+    def execute_simple_calculation(rel, operation, column_name)
+      return (operation == :count || operation == :sum ? 0 : nil) if Relation.null_relation?(rel)
+      v = Relation.values(rel)
+      distinct = Relation::Values.distinct_value(v) && operation == :count
+      column = aggregate_column(rel, column_name)
+      r = Relation.unscope(rel, :order)
+      r = Relation.distinct(r, false) if distinct
+      m = Relation.arel(r)
+      Arel::SelectManager.set_projections(m, Any[operation_over_aggregate_column(rel, column, operation, distinct)])
+      value = ConnectionAdapters::SQLite3Adapter.select_value(Relation.connection(rel), m, "#{ModelClass.name(Relation.klass(rel))} #{String.capitalize(Symbol.to_s(operation))}")
+      type_cast_calculated_value(rel, value, operation, column_name)
+    end
+
+    def execute_grouped_calculation(rel, operation, column_name)
+      v = Relation.values(rel)
+      group_fields = QueryMethods.arel_columns(rel, Relation::Values.group_values(v))
+      column = aggregate_column(rel, column_name)
+      m = Relation.arel(rel)
+      conn = Relation.connection(rel)
+      table_name = ModelClass.table_name(Relation.klass(rel))
+      # Ruby: aggregate_alias ("count_all", "sum_price") and column_alias_for ("items_category")
+      agg_alias = (column_name in nil) ? "#{operation}_all" : "#{operation}_#{String.gsub(Kernel.to_s(column_name), /\W+/, "_")}"
+      aliased = Any[Arel::Nodes::As.new(operation_over_aggregate_column(rel, column, operation, false), Arel.sql(ConnectionAdapters::SQLite3Adapter.quote_column_name(conn, agg_alias)))]
+      Array.each(Relation::Values.group_values(v)) do |g|
+        name = Kernel.to_s(g)
+        Array.push(aliased, Arel::Nodes::As.new(QueryMethods.column_or_literal(rel, name), Arel.sql(ConnectionAdapters::SQLite3Adapter.quote_column_name(conn, String.gsub("#{table_name}_#{name}", /\W+/, "_")))))
+      end
+      Arel::SelectManager.set_projections(m, aliased)
+      rows = ConnectionAdapters::SQLite3Adapter.select_rows(conn, m, "#{ModelClass.name(Relation.klass(rel))} #{String.capitalize(Symbol.to_s(operation))}")
+      out = Hash.new
+      gname = Kernel.to_s(Array.first(Relation::Values.group_values(v)))
+      gtype = ModelClass.type_for_attribute(Relation.klass(rel), gname)
+      Array.each(rows) do |row|
+        key = Array.size(group_fields) == 1 ? ActiveModel::Type::Value.deserialize(gtype, row[1]) : Array.drop(row, 1)
+        out[key] = type_cast_calculated_value(rel, row[0], operation, column_name)
+      end
+      out
+    end
+
+    def type_cast_calculated_value(rel, value, operation, column_name)
+      case operation
+      in :count then (value in Integer) ? value : String.to_i(Kernel.to_s(value))
+      in :sum then (value in nil) ? 0 : cast_column_value(rel, column_name, value)
+      in :average
+        case value
+        in nil then nil
+        in Integer | Float then BigDecimal.of(value)
+        else BigDecimal.parse(Kernel.to_s(value))
+        end
+      else cast_column_value(rel, column_name, value)
+      end
+    end
+
+    def cast_column_value(rel, column_name, value)
+      name = Kernel.to_s(column_name)
+      types = ModelClass.attribute_types(Relation.klass(rel))
+      t = types[name]
+      t ? ActiveModel::Type::Value.deserialize(t, value) : value
+    end
+
+    # Ruby: pluck(*column_names): one value per row for one column, an Array per row for several
+    def pluck(rel, *column_names)
+      if Relation.loaded?(rel) && Array.all?(column_names) { |c| (c in Symbol) && Array.include?(ModelClass.column_names(Relation.klass(rel)), Symbol.to_s(c)) }
+        return Array.map(Relation.records(rel)) do |r|
+          vals = Array.map(column_names) { |c| ActiveRecord::AttributeMethods.read_attribute(r, c) }
+          Array.size(vals) == 1 ? Array.fetch(vals, 0) : vals
+        end
+      end
+      return Any[] if Relation.null_relation?(rel)
+      m = Relation.arel(rel)
+      Arel::SelectManager.set_projections(m, QueryMethods.arel_columns(rel, column_names))
+      result = ConnectionAdapters::SQLite3Adapter.select_all(Relation.connection(rel), m, "#{ModelClass.name(Relation.klass(rel))} Pluck")
+      names = Array.map(column_names) { |c| Kernel.to_s(c) }
+      Array.map(ActiveRecord::Result.rows(result)) do |row|
+        vals = Array.each_with_index(row).Array.map { |x, i| cast_column_value(rel, Array.fetch(names, i), x) }
+        Array.size(vals) == 1 ? Array.fetch(vals, 0) : vals
+      end
+    end
+
+    # Ruby: pick(*column_names) (limit(1).pluck.first)
+    def pick(rel, *column_names) = Array.first(pluck(Relation.limit(rel, 1), *column_names))
+
+    def ids(rel) = pluck(rel, String.to_sym(Relation.primary_key(rel) || "id"))
+  end
+end

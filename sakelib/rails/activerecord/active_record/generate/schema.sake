@@ -1,0 +1,123 @@
+# Port of nothing (Sake only): db/schema.rb as data, and as the Sake calls that load it
+#
+# Ruby loads db/schema.rb (`load "db/schema.rb"`, an instance_eval of ActiveRecord::Schema.define's block). The
+# generator reads the same file: `parse` gives the tables and their columns (what the model generator needs for
+# the attribute methods), and `loader_source` writes the block as Sake, a module named after the file
+# (`base_schema.rb` is `BaseSchema.load`), with origin lines pointing at the file.
+
+require "ruby_value"
+
+module ActiveRecord
+  module Generate
+    class SchemaColumn
+      attr_reader type, name, options, line
+    end
+
+    class SchemaTable
+      attr_reader name, options, columns, line
+    end
+
+    module_function
+
+    def parse_schema(text, path)
+      tables = SchemaTable[]
+      current = nil
+      String.lines(text).Array.each_with_index do |raw, i|
+        line = String.strip(raw)
+        n = i + 1
+        next if line == "" || String.start_with?(line, "#")
+        if (m = String.match(line, /\Acreate_table "(\w+)"(?:, (.*?))? do \|t\|\z/))
+          t = SchemaTable.new(Kernel.to_s(m[1]), ActiveSupport::Generate.split_args(m[2] || ""), SchemaColumn[], n)
+          Array.push(tables, t)
+          current = t
+        elsif (m = String.match(line, /\At\.(\w+) (.*)\z/))
+          raise ArgumentError, "#{path}:#{n}: a column outside create_table" if current == nil
+          args = ActiveSupport::Generate.split_args(Kernel.to_s(m[2]))
+          Array.push(SchemaTable.columns(current), SchemaColumn.new(Kernel.to_s(m[1]), string_of(Array.fetch(args, 0)), Array.drop(args, 1), n))
+        elsif (m = String.match(line, /\At\.(timestamps)(?: (.*))?\z/))
+          raise ArgumentError, "#{path}:#{n}: a column outside create_table" if current == nil
+          opts = ActiveSupport::Generate.split_args(m[2] || "")
+          Array.push(SchemaTable.columns(current), SchemaColumn.new("datetime", "created_at", opts, n))
+          Array.push(SchemaTable.columns(current), SchemaColumn.new("datetime", "updated_at", opts, n))
+        elsif line == "end"
+          current = nil
+        end
+      end
+      tables
+    end
+
+    # The column names and types a model gets from its table (Ruby: columns_hash), with the implicit id.
+    def table_columns(t)
+      cols = Any[]
+      _, opts = split_options(SchemaTable.options(t))
+      id = option_text(opts, "id")
+      pk = option_text(opts, "primary_key")
+      Array.push(cols, [pk ? string_of(pk) : "id", "integer"]) unless id == "false"
+      Array.each(SchemaTable.columns(t)) do |c|
+        type = SchemaColumn.type(c)
+        if type == "references" || type == "belongs_to"
+          Array.push(cols, ["#{SchemaColumn.name(c)}_id", "integer"])
+          _, copts = split_options(SchemaColumn.options(c))
+          Array.push(cols, ["#{SchemaColumn.name(c)}_type", "string"]) if option_text(copts, "polymorphic") == "true"
+        else
+          Array.push(cols, [SchemaColumn.name(c), type])
+        end
+      end
+      cols
+    end
+
+    def schema_module_name(path) = ActiveSupport::Inflector.camelize(File.basename(path, ".rb"))
+
+    def options_source(args, n, path)
+      _, opts = split_options(args)
+      return "Hash.new" if Array.empty?(opts)
+      "Hash.of(#{Array.join(Array.map(opts) { |o| "#{o[0]}: #{value(Kernel.to_s(o[1]), n, path)}" }, ", ")})"
+    end
+
+    # db/schema.rb's block as Sake: `module BaseSchema ... def load = ActiveRecord::Schema.define(...) do |s| ...`
+    def loader_source(text, path)
+      out = "module #{schema_module_name(path)}\n  module_function\n  def load\n"
+      String.lines(text).Array.each_with_index do |raw, i|
+        line = String.strip(raw)
+        n = i + 1
+        next if line == "" || String.start_with?(line, "#")
+        origin = "# sake-origin: #{path}:#{n}\n"
+        if (m = String.match(line, /\AActiveRecord::Schema(?:\[[\d.]+\])?\.define(?:\((.*)\))? do\z/))
+          out += origin + "    ActiveRecord::Schema.define(#{options_source(ActiveSupport::Generate.split_args(m[1] || ""), n, path)}) do |s|\n"
+        elsif (m = String.match(line, /\Acreate_table "(\w+)"(?:, (.*?))? do \|t\|\z/))
+          out += origin + "      ActiveRecord::Schema.create_table(s, \"#{m[1]}\", #{options_source(ActiveSupport::Generate.split_args(m[2] || ""), n, path)}) do |t|\n"
+        elsif (m = String.match(line, /\At\.(\w+)(?: (.*))?\z/))
+          args = ActiveSupport::Generate.split_args(m[2] || "")
+          pos, _ = split_options(args)
+          names = Array.map(pos) { |a| value(a, n, path) }
+          opts = options_source(args, n, path)
+          meth = Kernel.to_s(m[1])
+          meth = "references" if meth == "belongs_to"
+          call = if meth == "timestamps"
+                   "timestamps(t, #{opts})"
+                 elsif meth == "references" || meth == "index"
+                   "#{meth}(t, #{Array.join(names, ", ")}, #{opts})"
+                 else
+                   "#{meth}(t, #{Array.join(names + String[opts], ", ")})"
+                 end
+          out += origin + "        ActiveRecord::ConnectionAdapters::TableDefinitionMethods.#{call}\n"
+        elsif (m = String.match(line, /\Aadd_index (.*)\z/))
+          args = ActiveSupport::Generate.split_args(Kernel.to_s(m[1]))
+          pos, _ = split_options(args)
+          out += origin + "      ActiveRecord::Schema.add_index(s, #{Array.join(Array.map(pos) { |a| value(a, n, path) }, ", ")}, #{options_source(args, n, path)})\n"
+        elsif (m = String.match(line, /\Aadd_foreign_key (.*)\z/))
+          args = ActiveSupport::Generate.split_args(Kernel.to_s(m[1]))
+          pos, _ = split_options(args)
+          out += origin + "      ActiveRecord::Schema.add_foreign_key(s, #{Array.join(Array.map(pos) { |a| value(a, n, path) }, ", ")}, #{options_source(args, n, path)})\n"
+        elsif line == "end"
+          out += "      end\n"
+        else
+          raise ArgumentError, "#{path}:#{n}: `#{line}` is not a schema statement the generator knows"
+        end
+      end
+      out += "# sake-origin: none\n  end\nend\n"
+      # the define block's own end closes `do |s|`; the method's end is written above
+      out
+    end
+  end
+end

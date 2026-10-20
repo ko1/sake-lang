@@ -1,0 +1,72 @@
+# Port of nothing (Sake only): Ruby literals of class bodies and db/schema.rb as Sake source
+#
+# Symbols, Strings, numbers (with _), true/false/nil, Ranges of numbers, Regexps, constants, Arrays (`Any[...]`)
+# and Hashes with Symbol keys (`Hash.of(k: v)`); anything else (a lambda, a block) has no Sake form here.
+
+require "rails/activesupport/active_support/generate/class_body"
+
+module ActiveRecord
+  module Generate
+    module_function
+
+    def value(v, n, path)
+      s = String.strip(v)
+      return s if ActiveSupport::Generate.symbol?(s) || s == "true" || s == "false" || s == "nil"
+      return String.delete(s, "_") if String.match?(s, /\A-?[\d_]+(\.\d+)?\z/)
+      return s if String.match?(s, /\A-?\d+(\.\d+)?\.\.\.?-?\d*\z/)
+      return s if String.match?(s, /\A"([^"\\#]|\\.)*"\z/)
+      return "\"#{String.slice(s, 1...-1)}\"" if String.match?(s, /\A'[^'\\]*'\z/)
+      return s if String.match?(s, /\A\/.*\/[imx]*\z/)
+      return s if String.match?(s, /\A:"[^"]*"\z/)
+      return s if String.match?(s, /\A[A-Z][\w:]*\z/)
+      return "Hash.new" if s == "{}"
+      if String.start_with?(s, "[") && String.end_with?(s, "]")
+        items = Array.map(ActiveSupport::Generate.split_args(String.slice(s, 1...-1) || "")) { |x| value(x, n, path) }
+        return "Any[#{Array.join(items, ", ")}]"
+      end
+      if String.start_with?(s, "{") && String.end_with?(s, "}")
+        return "Hash.of(#{Array.join(hash_pairs(String.slice(s, 1...-1) || "", n, path), ", ")})"
+      end
+      raise ArgumentError, "#{path}:#{n}: `#{s}` has no Sake form here (a block or a lambda: name a method instead)"
+    end
+
+    # `k: v, "k" => v` as Sake `k: v` / `"k" => v`
+    def hash_pairs(body, n, path)
+      Array.map(ActiveSupport::Generate.split_args(body)) do |pair|
+        p = String.strip(pair)
+        o = ActiveSupport::Generate.option(p)
+        if o
+          k, x = o
+          "#{k}: #{value(x, n, path)}"
+        else
+          m = String.match(p, /\A(.+?)\s*=>\s*(.+)\z/)
+          raise ArgumentError, "#{path}:#{n}: `#{p}` is not a Hash pair" if m == nil
+          "#{value(Kernel.to_s(m[1]), n, path)} => #{value(Kernel.to_s(m[2]), n, path)}"
+        end
+      end
+    end
+
+    # The positional arguments and the `key: value` options of a declaration, as raw Ruby text.
+    def split_options(args)
+      pos = String[]
+      opts = Any[]
+      Array.each(args) do |raw|
+        a = String.strip(raw)
+        o = ActiveSupport::Generate.option(a)
+        if o
+          Array.push(opts, o)
+        else
+          Array.push(pos, a)
+        end
+      end
+      [pos, opts]
+    end
+
+    def option_text(opts, key)
+      found = Array.find(opts) { |o| o[0] == key }
+      found ? Kernel.to_s(found[1]) : nil
+    end
+
+    def string_of(v) = String.delete_prefix(String.delete_suffix(String.delete_prefix(String.delete_prefix(String.strip(v), ":"), "\""), "\""), "'").String.delete_suffix("'")
+  end
+end

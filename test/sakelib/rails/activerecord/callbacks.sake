@@ -1,0 +1,132 @@
+require "rails/activerecord/active_record"
+
+# Model callbacks in Rails' order (initialize/find, validation, save/create/update/destroy, around, commit and
+# rollback), halting with throw :abort, conditions, uniqueness with a scope, on: :update validations
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Migration.set_verbose(false)
+generate "rails/activerecord/active_record/generate/active_record", "callbacks_schema.rb", "callbacks_models.rb"
+CallbacksSchema.load
+# Ruby subscribes a block to "sql.active_record"; here a listener object
+class SqlLog
+  attr_reader sqls
+  include ActiveSupport::Notifications::Listener
+  def call(l, event)
+    payload = ActiveSupport::Notifications::Event.payload(event)
+    Array.push(@sqls, Kernel.to_s(payload[:sql])) unless payload[:name] == "SCHEMA"
+  end
+end
+def sql_log = once { SqlLog.new(String[]) }
+ActiveSupport::Notifications.subscribe("sql.active_record", sql_log)
+def show_sql
+  Array.each(SqlLog.sqls(sql_log)) { |sql| puts("  sql: #{sql}") }
+  Array.clear(SqlLog.sqls(sql_log))
+end
+
+class Post
+  def trace_initialize(post) = puts("  after_initialize")
+  def trace_find(post) = puts("  after_find")
+  def trace_before_validation(post) = puts("  before_validation")
+  def trace_after_validation(post) = puts("  after_validation")
+  def trace_before_save(post) = puts("  before_save")
+
+  def trace_around_save(post)
+    puts("  around_save {")
+    yield
+    puts("  } around_save")
+  end
+
+  def trace_after_save(post) = puts("  after_save")
+  def trace_after_save_again(post) = puts("  after_save again")
+
+  def make_slug(post)
+    puts("  before_create")
+    post.Post.slug = String.downcase(Post.title(post) || "").String.tr(" ", "-")
+  end
+
+  def trace_around_create(post)
+    puts("  around_create {")
+    yield
+    puts("  } around_create")
+  end
+
+  def trace_after_create(post) = puts("  after_create")
+  def trace_before_update(post) = puts("  before_update")
+  def trace_after_update(post) = puts("  after_update")
+
+  def check_locked(post)
+    puts("  before_destroy")
+    throw :abort if Post.locked(post)
+  end
+
+  def trace_after_destroy(post) = puts("  after_destroy")
+  def trace_commit(post) = puts("  after_commit")
+  def trace_create_commit(post) = puts("  after_create_commit")
+  def trace_update_commit(post) = puts("  after_update_commit")
+  def trace_destroy_commit(post) = puts("  after_destroy_commit")
+  def trace_rollback(post) = puts("  after_rollback")
+end
+
+class Account
+  def frozen_balance?(a) = (Account.balance(a) || 0) > 100
+
+  def check_frozen(a)
+    puts("  balance is frozen")
+    throw :abort
+  end
+end
+
+puts("-- new")
+post = Post.build(title: "Hello World")
+puts("-- create")
+p(Post.save(post))
+p(Post.slug(post))
+show_sql
+puts("-- update")
+post.Post.title = "Hello again"
+p(Post.save(post))
+show_sql
+puts("-- update with a condition (unless: :locked?)")
+p(Post.update(post, locked: true))
+show_sql
+puts("-- find")
+found = Post.find(Post.id(post))
+puts("-- invalid")
+p(Post.save(Post.build(title: "")))
+show_sql
+puts("-- destroy halted by throw :abort")
+p(Post.destroy(found))
+p([Post.destroyed?(found), Post.count])
+show_sql
+puts("-- destroy")
+Post.update_column(found, :locked, false)
+Post.destroy(found)
+p(Post.destroyed?(found))
+p(Post.count)
+show_sql
+puts("-- rollback")
+Post.transaction do
+  Post.create(title: "Doomed")
+  raise ActiveRecord::Rollback
+end
+p(Post.count)
+show_sql
+
+puts("-- uniqueness with a scope")
+a = Account.create(email: "a@example.com", org_id: 1)
+p(Account.persisted?(a))
+b = Account.build(email: "a@example.com", org_id: 1)
+p([Account.valid?(b), ActiveModel::Errors.full_messages(Account.errors(b))])
+c = Account.build(email: "a@example.com", org_id: 2)
+p(Account.valid?(c))
+show_sql
+puts("-- on: :update")
+d = Account.build(email: "d@example.com", balance: -5)
+p(Account.save(d))
+d.Account.balance = -10
+p([Account.save(d), ActiveModel::Errors.full_messages(Account.errors(d))])
+show_sql
+puts("-- if: condition halting before_save")
+a.Account.balance = 500
+p(Account.save(a))
+p(Account.reload(a).Account.balance)
+show_sql

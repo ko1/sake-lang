@@ -1,0 +1,461 @@
+# Port of activerecord-8.1.3/lib/active_record/associations/builder/{association,singular_association,
+# collection_association,belongs_to,has_one,has_many,has_and_belongs_to_many}.rb and the generated methods of
+# nested_attributes.rb and autosave_association.rb (Sake only: Ruby defines them with define_method)
+#
+# Ruby's `has_many :comments, dependent: :destroy` in a class body runs Builder::HasMany.build: it makes the
+# reflection, defines `comments`, `comments=`, `comment_ids` in the model's generated association methods module,
+# and adds a before_destroy callback for :dependent and after_create/after_update callbacks for autosave. Here
+# the same class-body line is read by this generator, which writes per model (k) and association (n):
+#
+#   fields assoc_n, assoc_n_loaded                  Ruby's association(:n).target / loaded?
+#   def Post.__reflection_n = once { ActiveRecord::Reflection::AssociationReflection.new(...) }
+#   def Comment.post(c) / Comment.post=(c, post) / build_post / create_post / reload_post   (belongs_to, has_one)
+#   def Post.comments(post) -> Comment::ActiveRecord_Associations_CollectionProxy, Post.comment_ids(post)
+#   def Post.__autosave_associated_records_for_comments(r), __dependent_for_comments(r)  (callbacks)
+#   def Post.__preload_associations(rel, records)   (Ruby's Preloader, for includes/preload)
+#   def Comment.set_inverse_instance_of(c, name, owner), Comment.each_counter_cached_association_change(c, d)
+#   def Author.posts_attributes=(r, list)           (accepts_nested_attributes_for)
+
+require "model"
+
+module ActiveRecord
+  module Generate
+    module Associations
+      # One association of a class body, with what Ruby's reflection derives from its options
+      class Assoc
+        attr_reader macro, name, target, target_table, foreign_key, owner_key, target_key
+        attr_reader through_table, through_owner_key, through_target_key, join_table
+        attr_reader inverse, counter_cache, options, line
+      end
+
+      module_function
+
+      def CALLS = String["belongs_to", "has_one", "has_many", "has_and_belongs_to_many", "accepts_nested_attributes_for"]
+      def MACROS = String["belongs_to", "has_one", "has_many", "has_and_belongs_to_many"]
+
+      def bodies_holder = once { ActiveSupport::Generate::ClassBody[] }
+
+      def remember(bodies)
+        h = bodies_holder
+        Array.each(bodies) { |b| Array.push(h, b) unless Array.include?(h, b) }
+      end
+
+      def body_named(name) = Array.find(bodies_holder) { |b| ActiveSupport::Generate::ClassBody.name(b) == name }
+
+      def table_of(class_name)
+        b = body_named(class_name)
+        b ? Generate.table_name_of(b) : ActiveSupport::Inflector.tableize(class_name)
+      end
+
+      def opt(opts, key)
+        v = Generate.option_text(opts, key)
+        v ? Generate.string_of(v) : nil
+      end
+
+      def singular_target(name) = ActiveSupport::Inflector.camelize(name)
+      def plural_target(name) = ActiveSupport::Inflector.camelize(ActiveSupport::Inflector.singularize(name))
+      def owner_fk(k) = "#{ActiveSupport::Inflector.underscore(ActiveSupport::Inflector.demodulize(k))}_id"
+
+      # The raw declarations of a model's associations (Ruby's _reflections in declaration order)
+      def raw(b)
+        Array.select(ActiveSupport::Generate::ClassBody.declarations(b)) { |d| Array.include?(Associations.MACROS, ActiveSupport::Generate::Declaration.call(d)) }
+      end
+
+      def find_raw(class_name, name)
+        b = body_named(class_name)
+        return nil if b == nil
+        Array.find(raw(b)) { |d| Generate.string_of(Array.fetch(ActiveSupport::Generate::Declaration.args(d), 0, "")) == name }
+      end
+
+      # Ruby's automatic inverse_of: the target's belongs_to back to this class (has_many/has_one only)
+      def inverse_of(k, target, opts)
+        given = opt(opts, "inverse_of")
+        return given if given
+        b = body_named(target)
+        return nil if b == nil
+        d = Array.find(raw(b)) do |x|
+          next false unless ActiveSupport::Generate::Declaration.call(x) == "belongs_to"
+          pos, o = Generate.split_options(ActiveSupport::Generate::Declaration.args(x))
+          (opt(o, "class_name") || singular_target(Generate.string_of(Array.fetch(pos, 0, "")))) == k
+        end
+        d ? Generate.string_of(Array.fetch(ActiveSupport::Generate::Declaration.args(d), 0, "")) : nil
+      end
+
+      def assocs(b, path)
+        k = ActiveSupport::Generate::ClassBody.name(b)
+        Array.map(raw(b)) do |d|
+          call = ActiveSupport::Generate::Declaration.call(d)
+          n = ActiveSupport::Generate::Declaration.line(d)
+          pos, opts = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+          name = Generate.string_of(Array.fetch(pos, 0, ""))
+          raise ArgumentError, "#{path}:#{n}: an association scope (`-> { }`) has no Sake form here" if Array.size(pos) > 1
+          raise ArgumentError, "#{path}:#{n}: polymorphic associations are not ported" if opt(opts, "polymorphic") || opt(opts, "as")
+          macro = String.to_sym(call)
+          target = opt(opts, "class_name") || (call == "belongs_to" || call == "has_one" ? singular_target(name) : plural_target(name))
+          ttable = table_of(target)
+          through = opt(opts, "through")
+          fk = nil
+          tt = nil
+          tok = nil
+          ttk = nil
+          jt = nil
+          case call
+          in "belongs_to" then fk = opt(opts, "foreign_key") || "#{name}_id"
+          in "has_and_belongs_to_many"
+            ot = Generate.table_name_of(b)
+            jt = opt(opts, "join_table") || Array.join(Array.sort(String[ot, ttable]), "_")
+            tok = opt(opts, "foreign_key") || owner_fk(k)
+            ttk = opt(opts, "association_foreign_key") || owner_fk(target)
+          else
+            if through
+              td = find_raw(k, through)
+              raise ArgumentError, "#{path}:#{n}: Could not find the association :#{through} in model #{k}" if td == nil
+              tpos, topts = Generate.split_options(ActiveSupport::Generate::Declaration.args(td))
+              tclass = opt(topts, "class_name") || plural_target(Generate.string_of(Array.fetch(tpos, 0, "")))
+              tt = table_of(tclass)
+              tok = opt(topts, "foreign_key") || owner_fk(k)
+              source = opt(opts, "source") || ActiveSupport::Inflector.singularize(name)
+              sd = find_raw(tclass, source)
+              _, sopts = sd ? Generate.split_options(ActiveSupport::Generate::Declaration.args(sd)) : [String[], Any[]]
+              ttk = opt(sopts, "foreign_key") || "#{source}_id"
+            end
+            fk = opt(opts, "foreign_key") || owner_fk(k)
+          end
+          cc = opt(opts, "counter_cache")
+          ccol = cc == nil || cc == "false" ? nil : (cc == "true" ? "#{ActiveSupport::Inflector.pluralize(ActiveSupport::Inflector.underscore(k))}_count" : cc)
+          inv = call == "belongs_to" ? opt(opts, "inverse_of") : (through || jt ? nil : inverse_of(k, target, opts))
+          Assoc.new(macro: macro, name: name, target: target, target_table: ttable, foreign_key: fk || "", owner_key: "id", target_key: "id",
+                    through_table: tt, through_owner_key: tok, through_target_key: ttk, join_table: jt, inverse: inv,
+                    counter_cache: ccol, options: opts, line: n)
+        end
+      end
+
+      def collection?(a) = Assoc.macro(a) == :has_many || Assoc.macro(a) == :has_and_belongs_to_many
+
+      def fields(b, chain)
+        out = String[]
+        Array.each(assocs(b, "")) do |a|
+          Array.push(out, "assoc_#{Assoc.name(a)}")
+        end
+        out
+      end
+
+      def nested_names(b)
+        out = Any[]
+        Array.each(ActiveSupport::Generate::ClassBody.declarations(b)) do |d|
+          next unless ActiveSupport::Generate::Declaration.call(d) == "accepts_nested_attributes_for"
+          pos, opts = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+          Array.each(pos) { |p| Array.push(out, [Generate.string_of(p), opt(opts, "allow_destroy") == "true", ActiveSupport::Generate::Declaration.line(d)]) }
+        end
+        out
+      end
+
+      def writers(b, chain)
+        out = String[]
+        Array.each(assocs(b, "")) { |a| Array.push(out, Assoc.name(a)) unless collection?(a) || Assoc.through_table(a) }
+        Array.each(nested_names(b)) { |x| Array.push(out, "#{x[0]}_attributes") }
+        out
+      end
+
+      def proxy_class(target) = "#{target}::ActiveRecord_Associations_CollectionProxy"
+
+      # The CollectionProxy class of a model that some collection association targets
+      def relation_classes_source(b, bodies, path)
+        remember(bodies)
+        k = ActiveSupport::Generate::ClassBody.name(b)
+        targeted = Array.any?(bodies) { |o| Array.any?(assocs(o, path)) { |a| collection?(a) && Assoc.target(a) == k } }
+        return "" unless targeted
+        s = "class #{proxy_class(k)}\n  attr_accessor klass, values, loaded, records_, owner, reflection, new_records, scope_owner_id\n"
+        s += "  include ActiveRecord::Relation\n  include ActiveRecord::Associations::CollectionProxy\n"
+        s += "  def instantiate_row(rel, row) = #{k}.instantiate(row)\n"
+        s += "  def new_record_of(rel, attributes) = #{k}.build_with(attributes)\n"
+        s += "  def preload_records(rel, records) = #{k}.__preload_associations(rel, records)\n"
+        s += "end\n"
+        s
+      end
+
+      def reflection_new(k, a)
+        opts = Array.map(Assoc.options(a)) { |o| "#{o[0]}: #{Generate.value(Kernel.to_s(o[1]), Assoc.line(a), "")}" }
+        h = Array.empty?(opts) ? "Hash.new" : "Hash.of(#{Array.join(opts, ", ")})"
+        "ActiveRecord::Reflection::AssociationReflection.new(macro: :#{Assoc.macro(a)}, name: :#{Assoc.name(a)}, class_name: #{Kernel.inspect(Assoc.target(a))}, " +
+          "table_name: #{Kernel.inspect(Assoc.target_table(a))}, foreign_key: #{Kernel.inspect(Assoc.foreign_key(a))}, active_record_primary_key: \"id\", " +
+          "association_primary_key: \"id\", options: #{h}, through_table: #{Kernel.inspect(Assoc.through_table(a))}, " +
+          "through_owner_key: #{Kernel.inspect(Assoc.through_owner_key(a))}, through_target_key: #{Kernel.inspect(Assoc.through_target_key(a))}, " +
+          "join_table: #{Kernel.inspect(Assoc.join_table(a))}, inverse_name: #{Assoc.inverse(a) ? ":#{Assoc.inverse(a)}" : "nil"}, " +
+          "counter_cache_column: #{Kernel.inspect(Assoc.counter_cache(a))}, owner_table: #{Kernel.inspect(table_of(k))})"
+      end
+
+      # Lines of the model's __model (Ruby's _reflections)
+      def model_class_lines(b, path)
+        k = ActiveSupport::Generate::ClassBody.name(b)
+        s = ""
+        Array.each(assocs(b, path)) do |a|
+          s += "# sake-origin: #{path}:#{Assoc.line(a)}\n  ActiveRecord::ModelClass.reflections(m)[#{Kernel.inspect(Assoc.name(a))}] = #{k}.__reflection_#{Assoc.name(a)}\n"
+        end
+        s
+      end
+
+      # The callbacks Ruby's builders add at the association's line (dependent, autosave, required belongs_to)
+      def callback_declarations(k, d, path)
+        call = ActiveSupport::Generate::Declaration.call(d)
+        return ActiveSupport::Generate::Declaration[] unless Array.include?(Associations.MACROS, call)
+        n = ActiveSupport::Generate::Declaration.line(d)
+        pos, opts = Generate.split_options(ActiveSupport::Generate::Declaration.args(d))
+        name = Generate.string_of(Array.fetch(pos, 0, ""))
+        out = ActiveSupport::Generate::Declaration[]
+        if call == "belongs_to"
+          Array.push(out, Generate.decl(n, "set_callback", String[":save", ":before", ":__autosave_associated_records_for_#{name}"]))
+          if opt(opts, "optional") == "false" || opt(opts, "required") == "true"
+            Array.push(out, Generate.decl(n, "set_callback", String[":validate", ":__validate_presence_of_#{name}"]))
+          end
+        elsif call != "has_and_belongs_to_many" && opt(opts, "through") == nil
+          Array.push(out, Generate.decl(n, "set_callback", String[":create", ":after", ":__autosave_associated_records_for_#{name}", "prepend: true"]))
+          Array.push(out, Generate.decl(n, "set_callback", String[":update", ":after", ":__autosave_associated_records_for_#{name}", "prepend: true"]))
+          Array.push(out, Generate.decl(n, "set_callback", String[":destroy", ":before", ":__dependent_for_#{name}"])) if opt(opts, "dependent")
+        end
+        out
+      end
+
+      def class_source(b, bodies, tables, path)
+        remember(bodies)
+        k = ActiveSupport::Generate::ClassBody.name(b)
+        as = assocs(b, path)
+        s = ""
+        Array.each(as) do |a|
+          s += "# sake-origin: #{path}:#{Assoc.line(a)}\n"
+          s += "def #{k}.__reflection_#{Assoc.name(a)} = once { #{reflection_new(k, a)} }\n"
+          s += case Assoc.macro(a)
+               in :belongs_to then belongs_to_source(k, a)
+               in :has_one then has_one_source(k, a)
+               else collection_source(k, a)
+               end
+        end
+        s += "# sake-origin: none\n" if s != ""
+        s += preload_source(k, as)
+        s += inverse_source(b, bodies, path)
+        s += counter_source(k, as)
+        s += habtm_destroy_source(k, as)
+        Array.each(nested_names(b)) do |x|
+          a = Array.find(as) { |y| Assoc.name(y) == x[0] }
+          raise ArgumentError, "#{path}:#{x[2]}: No association found for name `#{x[0]}'. Has it been defined yet?" if a == nil
+          s += "# sake-origin: #{path}:#{x[2]}\n" + nested_source(k, a, x[1]) + "# sake-origin: none\n"
+        end
+        s
+      end
+
+      def belongs_to_source(k, a)
+        n = Assoc.name(a)
+        t = Assoc.target(a)
+        fk = Kernel.inspect(Assoc.foreign_key(a))
+        s = "def #{k}.#{n}(r)\n  fk = #{k}._read_attribute(r, #{fk})\n  t = #{k}.assoc_#{n}(r)\n"
+        s += "  if !#{k}.association_cached?(r, :#{n}) || (t && !#{t}.new_record?(t) && !ActiveModel::Type.same_value?(#{t}.id(t), fk))\n"
+        s += "    t = (fk in nil) ? nil : #{t}.find_by(Hash.of(id: fk))\n    #{k}.set_assoc_#{n}(r, t)\n    #{k}.mark_association_cached(r, :#{n})\n  end\n  t\nend\n"
+        s += "def #{k}.#{n}=(r, value)\n  t = case value\n      in #{t} then value\n      in nil then nil\n"
+        s += "      else raise ActiveRecord::AssociationTypeMismatch, \"#{t} expected for #{k}##{n}\"\n      end\n"
+        s += "  #{k}.set_assoc_#{n}(r, t)\n  #{k}.mark_association_cached(r, :#{n})\n  #{k}._write_attribute(r, #{fk}, t ? #{t}.id(t) : nil)\n  value\nend\n"
+        s += "def #{k}.build_#{n}(r, **attributes)\n  t = #{t}.build_with(attributes)\n  r.#{k}.#{n} = t\n  t\nend\n"
+        s += "def #{k}.create_#{n}(r, **attributes)\n  t = #{t}.build_with(attributes)\n  #{t}.save(t)\n  r.#{k}.#{n} = t\n  t\nend\n"
+        s += "def #{k}.reload_#{n}(r)\n  #{k}.unmark_association_cached(r, :#{n})\n  #{k}.#{n}(r)\nend\n"
+        s += "def #{k}.__autosave_associated_records_for_#{n}(r)\n  return nil unless #{k}.association_cached?(r, :#{n})\n  t = #{k}.assoc_#{n}(r)\n"
+        s += "  return nil unless t\n  #{t}.save(t) if #{t}.new_record?(t)\n"
+        s += "  #{k}._write_attribute(r, #{fk}, #{t}.id(t)) unless #{t}.new_record?(t)\n  nil\nend\n"
+        s += "def #{k}.__validate_presence_of_#{n}(r)\n  ActiveModel::Errors.add(#{k}.errors(r), :#{n}, :required) if (#{k}.#{n}(r) in nil)\nend\n"
+        s
+      end
+
+      def has_one_source(k, a)
+        n = Assoc.name(a)
+        t = Assoc.target(a)
+        fk = Kernel.inspect(Assoc.foreign_key(a))
+        inv = Assoc.inverse(a)
+        set_inv = inv ? "    ActiveRecord::Associations.set_inverse_instance_of(t, :#{inv}, r) if t\n" : ""
+        s = "def #{k}.#{n}(r)\n  t = #{k}.assoc_#{n}(r)\n  unless #{k}.association_cached?(r, :#{n})\n"
+        s += "    t = #{k}.new_record?(r) ? nil : #{t}.find_by(Hash.of(#{Assoc.foreign_key(a)}: #{k}.id(r)))\n#{set_inv}"
+        s += "    #{k}.set_assoc_#{n}(r, t)\n    #{k}.mark_association_cached(r, :#{n})\n  end\n  t\nend\n"
+        s += "def #{k}.#{n}=(r, value)\n  t = case value\n      in #{t} then value\n      in nil then nil\n"
+        s += "      else raise ActiveRecord::AssociationTypeMismatch, \"#{t} expected for #{k}##{n}\"\n      end\n"
+        s += "  #{k}.set_assoc_#{n}(r, t)\n  #{k}.mark_association_cached(r, :#{n})\n"
+        s += "  if t\n    #{t}._write_attribute(t, #{fk}, #{k}.id(r))\n    #{t}.save(t) if #{k}.persisted?(r)\n  end\n  value\nend\n"
+        # Ruby's replace(record) loads the current target first (to nullify or delete it per :dependent)
+        s += "def #{k}.__build_#{n}_record(r, attributes)\n  t = #{t}.build_with(attributes)\n  #{t}._write_attribute(t, #{fk}, #{k}.id(r))\n"
+        s += "  ActiveRecord::Associations.set_inverse_instance_of(t, :#{inv}, r)\n" if inv
+        s += "  t\nend\n"
+        s += "def #{k}.__set_new_#{n}(r, t)\n  #{k}.#{n}(r) if #{k}.persisted?(r)\n  #{k}.set_assoc_#{n}(r, t)\n  #{k}.mark_association_cached(r, :#{n})\n  t\nend\n"
+        s += "def #{k}.build_#{n}(r, **attributes) = #{k}.__set_new_#{n}(r, #{k}.__build_#{n}_record(r, attributes))\n"
+        s += "def #{k}.create_#{n}(r, **attributes)\n  t = #{k}.__build_#{n}_record(r, attributes)\n  #{t}.save(t)\n  #{k}.__set_new_#{n}(r, t)\nend\n"
+        s += "def #{k}.reload_#{n}(r)\n  #{k}.unmark_association_cached(r, :#{n})\n  #{k}.#{n}(r)\nend\n"
+        s += "def #{k}.__autosave_associated_records_for_#{n}(r)\n  return nil unless #{k}.association_cached?(r, :#{n})\n  t = #{k}.assoc_#{n}(r)\n"
+        s += "  return nil unless t && #{t}.changed_for_autosave?(t)\n  #{t}._write_attribute(t, #{fk}, #{k}.id(r))\n  #{t}.save(t)\n  nil\nend\n"
+        dep = opt(Assoc.options(a), "dependent")
+        if dep
+          s += "def #{k}.__dependent_for_#{n}(r)\n  t = #{k}.#{n}(r)\n  return nil unless t\n"
+          s += case dep
+               in "destroy" then "  #{t}.set_destroyed_by_association(t, #{k}.__reflection_#{n})\n  #{t}.destroy(t)\n"
+               in "delete" then "  #{t}.delete(t)\n"
+               in "nullify" then "  #{t}.update_columns(t, Hash.of(#{fk} => nil))\n"
+               in "restrict_with_exception" then "  raise ActiveRecord::DeleteRestrictionError, \"Cannot delete record because of dependent #{n}\"\n"
+               in "restrict_with_error"
+                 "  ActiveModel::Errors.add(#{k}.errors(r), :base, :restrict_dependent_destroy_has_one, record: \"#{n}\")\n  throw :abort\n"
+               else raise ArgumentError, "The :dependent option must be one of [:destroy, :delete, :nullify, :restrict_with_error, :restrict_with_exception], but is :#{dep}"
+               end
+          s += "  nil\nend\n"
+        end
+        s
+      end
+
+      def collection_source(k, a)
+        n = Assoc.name(a)
+        t = Assoc.target(a)
+        px = proxy_class(t)
+        s = "def #{k}.__#{n}_scope(r)\n"
+        if Assoc.join_table(a) || Assoc.through_table(a)
+          jt = Assoc.join_table(a) || Assoc.through_table(a) || ""
+          s += "  j = Arel::Nodes.build_join(:inner, Arel::Table.new(#{Kernel.inspect(jt)}), Arel::Nodes::On.new(ActiveRecord::Associations.join_on(#{Kernel.inspect(Assoc.target_table(a))}, \"id\", #{Kernel.inspect(jt)}, #{Kernel.inspect(Assoc.through_target_key(a))})))\n"
+          s += "  w = Arel::Attributes::Attribute.eq(Arel::Table.new(#{Kernel.inspect(jt)})[#{Kernel.inspect(Assoc.through_owner_key(a))}], ActiveRecord::PredicateBuilder.build_bind_attribute(#{t}.__model, #{Kernel.inspect(Assoc.through_owner_key(a))}, #{k}.id(r)))\n"
+          s += "  ActiveRecord::Relation.where(ActiveRecord::Relation.joins(#{t}.all, j), w)\nend\n"
+        else
+          s += "  #{t}.where(Hash.of(#{Assoc.foreign_key(a)}: #{k}.id(r)))\nend\n"
+        end
+        s += "def #{k}.#{n}(r)\n  px = #{k}.assoc_#{n}(r)\n  if px == nil || !#{k}.association_cached?(r, :#{n})\n"
+        s += "    px = #{px}.new(#{t}.__model, ActiveRecord::Relation.values(#{k}.__#{n}_scope(r)), false, #{t}[], r, #{k}.__reflection_#{n}, #{t}[], #{k}.id(r))\n"
+        s += "    #{k}.set_assoc_#{n}(r, px)\n    #{k}.mark_association_cached(r, :#{n})\n"
+        s += "  elsif !ActiveModel::Type.same_value?(#{px}.scope_owner_id(px), #{k}.id(r))\n"
+        s += "    #{px}.set_values(px, ActiveRecord::Relation.values(#{k}.__#{n}_scope(r)))\n    #{px}.set_scope_owner_id(px, #{k}.id(r))\n"
+        s += "  end\n  px\nend\n"
+        s += "def #{k}.#{ActiveSupport::Inflector.singularize(n)}_ids(r) = ActiveRecord::Relation.ids(#{k}.#{n}(r))\n"
+        # autosave: the new records built through the proxy, and with autosave (nested attributes) the changed and marked ones
+        auto = Array.any?(Assoc.options(a)) { |o| o[0] == "autosave" && Kernel.to_s(o[1]) == "true" }
+        if !Assoc.through_table(a) && !Assoc.join_table(a)
+          fk = Kernel.inspect(Assoc.foreign_key(a))
+          s += "def #{k}.__autosave_associated_records_for_#{n}(r)\n  return nil unless #{k}.association_cached?(r, :#{n})\n  px = #{k}.assoc_#{n}(r)\n  return nil unless px\n"
+          s += "  loaded = #{px}.loaded(px) ? #{px}.records_(px) : #{t}[]\n"
+          s += "  Array.each(loaded + #{px}.new_records(px)) do |c|\n"
+          s += "    if #{t}.marked_for_destruction?(c)\n      #{t}.set_destroyed_by_association(c, #{k}.__reflection_#{n})\n      #{t}.destroy(c)\n    end\n  end\n"
+          s += "  #{px}.set_records_(px, Array.reject(loaded) { |c| #{t}.destroyed?(c) })\n"
+          s += "  Array.each(loaded + #{px}.new_records(px)) do |c|\n    next if #{t}.destroyed?(c)\n"
+          s += "    if #{t}.new_record?(c)\n      #{t}._write_attribute(c, #{fk}, #{k}.id(r))\n      #{t}.save(c)\n"
+          s += "      Array.push(#{px}.records_(px), c) if #{px}.loaded(px)\n"
+          s += "    elsif #{auto || nested_auto?(k, n)} && #{t}.changed?(c)\n      #{t}.save(c)\n    end\n  end\n"
+          s += "  #{px}.set_new_records(px, #{t}[])\n  nil\nend\n"
+        end
+        dep = opt(Assoc.options(a), "dependent")
+        if dep
+          s += "def #{k}.__dependent_for_#{n}(r)\n  px = #{k}.#{n}(r)\n"
+          s += case dep
+               in "destroy"
+                 "  Array.each(#{px}.records(px)) do |c|\n    #{t}.set_destroyed_by_association(c, #{k}.__reflection_#{n})\n    #{t}.destroy(c)\n  end\n"
+               in "delete_all" then "  ActiveRecord::Relation.delete_all(px)\n"
+               in "nullify" then "  ActiveRecord::Relation.update_all(px, Hash.of(#{Kernel.inspect(Assoc.foreign_key(a))} => nil))\n"
+               in "restrict_with_exception"
+                 "  raise ActiveRecord::DeleteRestrictionError, \"Cannot delete record because of dependent #{n}\" if ActiveRecord::Relation.exists?(px)\n"
+               in "restrict_with_error"
+                 "  if ActiveRecord::Relation.exists?(px)\n    ActiveModel::Errors.add(#{k}.errors(r), :base, :restrict_dependent_destroy_has_many, record: \"#{n}\")\n    throw :abort\n  end\n"
+               else raise ArgumentError, "The :dependent option must be one of [:destroy, :delete_all, :nullify, :restrict_with_error, :restrict_with_exception], but is :#{dep}"
+               end
+          s += "  nil\nend\n"
+        end
+        s
+      end
+
+      def nested_auto?(k, n)
+        b = body_named(k)
+        b ? Array.any?(nested_names(b)) { |x| x[0] == n } : false
+      end
+
+      # Ruby's Preloader: one query per association for the loaded records (includes, preload, eager_load)
+      def preload_source(k, as)
+        s = "def #{k}.__preload_associations(rel, records)\n  v = ActiveRecord::Relation.values(rel)\n"
+        s += "  names = ActiveRecord::Relation::Values.includes_values(v) + ActiveRecord::Relation::Values.preload_values(v) + ActiveRecord::Relation::Values.eager_load_values(v)\n"
+        s += "  return nil if Array.empty?(names) || Array.empty?(records)\n  Array.each(names) do |name|\n    case name\n"
+        Array.each(as) { |a| s += "    in :#{Assoc.name(a)} then #{k}.__preload_#{Assoc.name(a)}(records)\n" }
+        s += "    in :__no_association then nil\n" if Array.empty?(as)
+        s += "    else raise ArgumentError, \"Association named '\#{name}' was not found on #{k}; perhaps you misspelled it?\"\n    end\n  end\n  nil\nend\n"
+        Array.each(as) do |a|
+          n = Assoc.name(a)
+          t = Assoc.target(a)
+          fk = Assoc.foreign_key(a)
+          s += "def #{k}.__preload_#{n}(records)\n"
+          case Assoc.macro(a)
+          in :belongs_to
+            s += "  ids = Array.map(records) { |o| #{k}._read_attribute(o, #{Kernel.inspect(fk)}) }.Array.compact.uniq\n"
+            s += "  targets = Array.empty?(ids) ? #{t}[] : ActiveRecord::Relation.to_a(#{t}.where(Hash.of(id: ids)))\n"
+            s += "  Array.each(records) do |o|\n    fk = #{k}._read_attribute(o, #{Kernel.inspect(fk)})\n"
+            s += "    #{k}.set_assoc_#{n}(o, Array.find(targets) { |x| ActiveModel::Type.same_value?(#{t}.id(x), fk) })\n    #{k}.mark_association_cached(o, :#{n})\n  end\n"
+          in :has_one
+            s += "  ids = Array.map(records) { |o| #{k}.id(o) }.Array.compact\n"
+            s += "  targets = ActiveRecord::Relation.to_a(#{t}.where(Hash.of(#{fk}: ids)))\n"
+            s += "  Array.each(records) do |o|\n    #{k}.set_assoc_#{n}(o, Array.find(targets) { |x| ActiveModel::Type.same_value?(#{t}._read_attribute(x, #{Kernel.inspect(fk)}), #{k}.id(o)) })\n    #{k}.mark_association_cached(o, :#{n})\n  end\n"
+          else
+            if Assoc.through_table(a) || Assoc.join_table(a)
+              s += "  Array.each(records) { |o| ActiveRecord::Relation.load(#{k}.#{n}(o)) }\n"
+            else
+              px = proxy_class(t)
+              inv = Assoc.inverse(a)
+              s += "  ids = Array.map(records) { |o| #{k}.id(o) }.Array.compact\n"
+              s += "  children = ActiveRecord::Relation.to_a(#{t}.where(Hash.of(#{fk}: ids)))\n"
+              s += "  Array.each(records) do |o|\n    px = #{k}.#{n}(o)\n"
+              s += "    mine = Array.select(children) { |c| ActiveModel::Type.same_value?(#{t}._read_attribute(c, #{Kernel.inspect(fk)}), #{k}.id(o)) }\n"
+              s += "    Array.each(mine) { |c| ActiveRecord::Associations.set_inverse_instance_of(c, :#{inv}, o) }\n" if inv
+              s += "    #{px}.set_records_(px, mine)\n    #{px}.set_loaded(px, true)\n  end\n"
+            end
+          end
+          s += "  nil\nend\n"
+        end
+        s
+      end
+
+      # set_inverse_instance_of for the belongs_to associations other models name as their inverse
+      def inverse_source(b, bodies, path)
+        k = ActiveSupport::Generate::ClassBody.name(b)
+        bts = Array.select(assocs(b, path)) { |a| Assoc.macro(a) == :belongs_to }
+        return "" if Array.empty?(bts)
+        s = "def #{k}.set_inverse_instance_of(r, name, owner)\n  case name\n"
+        Array.each(bts) do |a|
+          n = Assoc.name(a)
+          s += "  in :#{n}\n    if owner in #{Assoc.target(a)}\n      #{k}.set_assoc_#{n}(r, owner)\n      #{k}.mark_association_cached(r, :#{n})\n    end\n"
+        end
+        s += "  else nil\n  end\n  nil\nend\n"
+        s
+      end
+
+      # Ruby's CounterCache for belongs_to counter_cache: (skipped for a record its parent destroys)
+      def counter_source(k, as)
+        ccs = Array.select(as) { |a| Assoc.counter_cache(a) != nil }
+        return "" if Array.empty?(ccs)
+        s = "def #{k}.each_counter_cached_association_change(r, delta)\n  return nil if #{k}.destroyed_by_association(r)\n"
+        Array.each(ccs) do |a|
+          s += "  fk = #{k}._read_attribute(r, #{Kernel.inspect(Assoc.foreign_key(a))})\n"
+          s += "  ActiveRecord::Associations.update_counter(#{Assoc.target(a)}.__model, #{Kernel.inspect(Assoc.counter_cache(a))}, fk, delta) unless fk in nil\n"
+        end
+        s += "  nil\nend\n"
+        s
+      end
+
+      # has_and_belongs_to_many's join rows go with the record (Ruby's destroy_associations)
+      def habtm_destroy_source(k, as)
+        hs = Array.select(as) { |a| Assoc.join_table(a) != nil }
+        return "" if Array.empty?(hs)
+        s = "def #{k}.destroy_associations(r)\n"
+        Array.each(hs) { |a| s += "  ActiveRecord::Associations.delete_join_rows(#{Kernel.inspect(Assoc.join_table(a))}, #{Kernel.inspect(Assoc.through_owner_key(a))}, #{k}.id(r))\n" }
+        s += "  nil\nend\n"
+        s
+      end
+
+      # Ruby's accepts_nested_attributes_for: posts_attributes=(list) builds, updates and marks for destruction
+      def nested_source(k, a, allow_destroy)
+        n = Assoc.name(a)
+        t = Assoc.target(a)
+        px = proxy_class(t)
+        s = "def #{k}.#{n}_attributes=(r, value)\n  list = (value in Array) ? value : Any[]\n  px = #{k}.#{n}(r)\n"
+        s += "  Array.each(list) do |h|\n    next unless h in Hash\n    id = h[:id] || h[\"id\"]\n"
+        s += "    attrs = Hash.except(h, :id, \"id\", :_destroy, \"_destroy\")\n"
+        s += "    if id\n      rec = Array.find(#{px}.records(px)) { |x| Kernel.to_s(#{t}.id(x)) == Kernel.to_s(id) }\n"
+        s += "      raise ActiveRecord::RecordNotFound.new(\"Couldn't find #{t} with ID=\#{id} for #{k} with ID=\#{#{k}.id(r)}\", #{Kernel.inspect(t)}, \"id\", nil) unless rec\n"
+        d = allow_destroy ? "      if ActiveRecord::Associations.truthy?(h[:_destroy] || h[\"_destroy\"])\n        #{t}.mark_for_destruction(rec)\n      else\n        #{t}.assign_attributes(rec, attrs)\n      end\n" : "      #{t}.assign_attributes(rec, attrs)\n"
+        s += d
+        s += "    else\n      #{px}.build_with_hash(px, attrs)\n    end\n  end\n  value\nend\n"
+        s
+      end
+    end
+  end
+end
