@@ -4,7 +4,7 @@ SQLite3::Database は SQLite のデータベースへの接続の型です（Rub
 
 行は、文が並べた順の列の値の Array で、値はそれぞれ `Integer`（INTEGER）、`Float`（REAL）、`String`（TEXT は UTF-8。BLOB はバイナリの String で、エンコーディングは `ASCII-8BIT`）、`nil`（NULL）です。`execute` の結果はそういう行の Array なので、行から読んだ値の型をチェッカは `Integer | Float | String | nil` とします。1 つの型を取る操作に渡す前に絞ります（`v => Integer`、`case v in String`）。行は Tuple ではなく Array なので `in [a, b]` には当たりません。ブロックの `|id, name|` は他の Array と同じく行を分解します。
 
-binds は Array（`Any[...]`。Tuple の `[...]` ではありません）で、要素が文の `?`（と `?1`、`?2`）を順に埋めます。bind に渡せるのは `Integer`、`Float`、`String`、`nil` で、それ以外の型（`true`、Symbol、Array など）は静的な `type` の問題、チェッカに見えない所では `TypeError`（`can't prepare Symbol`）です。プレースホルダより bind が少なければ残りは NULL、多ければ `SQLite3::RangeException` です。名前付きパラメタ（`:name` と Hash）、`results_as_hash`、プリペアドステートメント（`SQLite3::Statement`）、gem の型変換の設定はありません。
+binds は Array（`Any[...]`。Tuple の `[...]` ではありません）で、要素が文の `?`（と `?1`、`?2`）を順に埋めます。bind に渡せるのは `Integer`、`Float`、`String`、`nil` で、それ以外の型（`true`、Symbol、Array など）は静的な `type` の問題、チェッカに見えない所では `TypeError`（`can't prepare Symbol`）です。プレースホルダより bind が少なければ残りは NULL、多ければ `SQLite3::RangeException` です。名前付きパラメタ（`:name` と Hash）、`results_as_hash`、gem の型変換の設定はありません。プリペアドステートメントは、各列の宣言された型も分かるもので、[SQLite3::Statement](SQLite3-Statement.md) です（`SQLite3::Database.prepare`）。
 
 エラーは gem の例外クラスで、メッセージも gem のものです: `SQLite3::SQLException`（構文の誤り、無い表や列）、`SQLite3::ConstraintException`（UNIQUE、NOT NULL、CHECK、FOREIGN KEY）、`SQLite3::BusyException`、`SQLite3::LockedException`、`SQLite3::ReadOnlyException`、`SQLite3::MisuseException`、`SQLite3::RangeException`、`SQLite3::CantOpenException`、ほかに gem の残り（`SQLite3::MismatchException`、`NotADatabaseException`、`IOException`、`FullException`、`TooBigException`、`AbortException`、`InterruptException`、`PermissionException`、`CorruptException`、`InternalException`、`MemoryException`、`NotFoundException`、`ProtocolException`、`EmptyException`、`SchemaChangedException`、`AuthorizationException`、`FormatException`、`UnsupportedException`）。どれも `SQLite3::Exception` の下にあるので、`rescue SQLite3::Exception` で全部を捕まえられます。`Math::DomainError` と同じく入れ子の名前なので、`rescue`（と `raise`）に書き、メッセージは `Exception.message(e)` で読みます（[例外](Exceptions.md)）。閉じたデータベースへの操作は、gem と同じく `ArgumentError`（`prepare called on a closed database`）です。
 
@@ -132,7 +132,7 @@ p(SQLite3::Database.last_insert_row_id(db))   # => 2
 
 `SQLite3::Database.changes(x)`
 
-最後の `insert`、`update`、`delete` が変えた行の数を Integer で返します（他の種類の文は値を変えません）。
+最後の `insert`、`update`、`delete` が変えた行の数を Integer で返します（他の種類の文は値を変えません）。接続全体での数は `total_changes` です。
 
 ```ruby
 db = SQLite3::Database.new(":memory:")
@@ -144,11 +144,48 @@ SQLite3::Database.execute(db, "select * from t")
 p(SQLite3::Database.changes(db))    # => 2
 ```
 
+## total_changes
+
+`SQLite3::Database.total_changes(x)`
+
+データベースを開いてからのすべての `insert`、`update`、`delete` が変えた行の数を Integer で返します（gem の `total_changes`）。`changes` は最後に行を変えた文の数を保ったままなので、ActiveRecord は文の前後でこれを比べて、その文が行を変えたかを判断します。
+
+```ruby
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute_batch(db, "create table t (n integer); insert into t values (1), (2), (3);")
+before = SQLite3::Database.total_changes(db)
+SQLite3::Database.execute(db, "select * from t")
+p(SQLite3::Database.total_changes(db) - before, SQLite3::Database.changes(db))   # => 0
+                                                                                  # => 3
+SQLite3::Database.execute(db, "delete from t where n = 1")
+p(SQLite3::Database.total_changes(db))   # => 4
+```
+
+## prepare
+
+`SQLite3::Database.prepare(x, String)`
+
+`sql` の最初の SQL 文をコンパイルし、bind して実行し、何度でも実行し直せる [SQLite3::Statement](SQLite3-Statement.md) として返します。`SQLite3::Statement.new(db, sql)` と同じです。構文の誤りや無い表はここで `SQLite3::SQLException` として投げられます（gem のメッセージは文を次の行に付け加えます）。gem のブロックを取る形（ブロックの後で文を閉じる）はありません。`SQLite3::Statement.close` を呼びます。
+
+```ruby
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute(db, "create table t (id integer primary key, name text)")
+st = SQLite3::Database.prepare(db, "insert into t (name) values (?)")
+Array.each(Any["ann", "bob"]) { |name| SQLite3::Statement.execute(st, Any[name]) }
+SQLite3::Statement.close(st)
+p(SQLite3::Database.execute(db, "select * from t"))   # => [[1, "ann"], [2, "bob"]]
+begin
+  SQLite3::Database.prepare(db, "select * from nope")
+rescue SQLite3::SQLException => e
+  p(Exception.message(e))           # => "no such table: nope:\nselect * from nope"
+end
+```
+
 ## transaction
 
 `SQLite3::Database.transaction(x) { }`
 
-トランザクションを始め、データベースを渡してブロックを呼び、コミットします。結果はブロックの値です。ブロックが例外を投げるとロールバックし、その例外を投げ直します。`break`、`next`、`return` でブロックを抜けたときは、Ruby と同じくコミットします。トランザクションの中で始めるトランザクションは `SQLite3::SQLException`（`cannot start a transaction within a transaction`）です。
+トランザクションを始め、データベースを渡してブロックを呼び、コミットします。結果はブロックの値です。ブロックが例外を投げるとロールバックし、その例外を投げ直します。`break`、`next`、`return`、`throw` でブロックを抜けたときは、gem と同じくコミットします。トランザクションの中で始めるトランザクションは `SQLite3::SQLException`（`cannot start a transaction within a transaction`）です。
 
 ```ruby
 db = SQLite3::Database.new(":memory:")

@@ -346,6 +346,70 @@ def rec(n) = once { rec(n) }
 rec(1)                           # !> SystemStackError: once: the block reached its own once again while computing it
 ```
 
+## catch
+
+`Kernel.catch(Any) { }`
+
+タグを引数にブロックを実行し、ブロックの値か、その実行中に同じタグで行われた `throw` の値を返します（Ruby の `catch`）。タグは普通 Symbol です。throw は、タグが同じオブジェクト（Ruby と同じく `equal?`。同じ名前の 2 つの Symbol は同じオブジェクトですが、2 か所で作った 2 つの String は違います）である最も内側の `catch` に当たります。throw は自分と `catch` の間の関数やブロックをただちに抜けます。その `ensure` 節は実行され、途中の `rescue` は throw を止めません（throw は例外ではありません）。チェッカは `catch` の型を、ブロックの値の型と、プログラム中のどこかでそのタグに throw される型を合わせたものにします（値の無い throw は nil）。リテラルの Symbol のタグは、その Symbol で throw されたものだけを受け取ります。タグを渡さない Ruby の `catch`（新しいオブジェクトを作る）はありません。
+
+```ruby
+def first_over(xs, limit)
+  catch(:found) do
+    Array.each(xs) { |x| throw :found, x if x > limit }
+    nil
+  end
+end
+p(first_over(Any[1, 5, 9], 4))   # => 5
+p(first_over(Any[1, 2], 4))      # => nil
+v = catch(:halt) do |tag|
+  p(tag)                         # => :halt
+  throw :halt
+  1
+end
+p(v)                             # => nil
+```
+
+## throw
+
+`Kernel.throw(Any, [Any])`
+
+タグが `tag` である実行中の最も内側の `catch` を終わらせ、その `catch` は `value`（省略すれば nil）を返します。Ruby の `throw` で、戻ってきません。Rails のコールバックは `throw :abort` でチェーンを止めます。そのタグの `catch` が実行中でなければ `UncaughtThrowError`（`uncaught throw :tag`）を投げ、Ruby と同じく `rescue ArgumentError` でも捕まえられます。
+
+```ruby
+def check(x)
+  throw :abort if x < 0
+  "ok #{x}"
+end
+p(catch(:abort) { check(1) })    # => "ok 1"
+p(catch(:abort) { check(-1) })   # => nil
+begin
+  throw :nobody, 1
+rescue UncaughtThrowError => e
+  puts(Exception.message(e))     # => uncaught throw :nobody
+end
+```
+
+## class_name
+
+`Kernel.class_name(Any)`
+
+値のクラスの名前を、Ruby の `x.class.name` と同じ形で返します: `"Integer"`、`"String"`、`"NilClass"`、`"TrueClass"`、クラスの完全な名前（`"Shop::Order"`）、例外の型（`"KeyError"`、`"ActiveRecord::RecordNotFound"`）。Ruby でそうであるように Tuple は `"Array"`、Record は `"Hash"` です。Queue は `"Thread::Queue"`、Mutex は `"Thread::Mutex"` です。Rails はこれでメッセージやキーを組み立てます（`"#{e.class.name}: #{e.message}"`）。
+
+```ruby
+module Shop
+  class Order
+    attr_reader id
+  end
+end
+p(Array.map(Any[1, "s", nil, true, [1, "a"], {a: 1}, Shop::Order.new(1)]) { class_name(it) })
+# => ["Integer", "String", "NilClass", "TrueClass", "Array", "Hash", "Shop::Order"]
+begin
+  Hash.fetch(Hash.new, :k)
+rescue => e
+  puts("#{class_name(e)}: #{Exception.message(e)}")   # => KeyError: key not found: :k
+end
+```
+
 ## rand
 
 `Kernel.rand([Integer|Float])`

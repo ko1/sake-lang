@@ -23,6 +23,8 @@ Sake の値は Ruby の値とほぼ同じ顔をしていますが、どの値も
 | IO | `IO.stdout`, `File.open(path)` | ファイルとストリームの 1 つの型 |
 | Thread, Mutex, Queue, TCPServer, Socket | `Thread.new { }`, `Mutex.new`, ... | 並行とネットワーク |
 | SQLite3::Database | `SQLite3::Database.new(path)` | SQLite のデータベースへの接続（[SQLite3::Database](ref/SQLite3-Database.md)） |
+| SQLite3::Statement | `SQLite3::Database.prepare(db, sql)` | 準備済みの文（[SQLite3::Statement](ref/SQLite3-Statement.md)） |
+| OpenSSL::Cipher | `OpenSSL::Cipher.new("aes-256-gcm")` | Ruby の openssl の暗号（[OpenSSL::Cipher](ref/OpenSSL-Cipher.md)） |
 | クラス | `Point.new(x, y)` | 可変なフィールドを持つレコード（[クラス](07-classes.md)） |
 
 - **真偽。** 偽は `nil` と `false` だけです。`0` や `""` を含む他のすべての値は真です。
@@ -257,13 +259,13 @@ p(Set.of(1, 1.0))                 # => Set[1, 1.0]
 p(1 == 1.0)                    # => true
 ```
 
-- **使えるもの。** Integer, Float, String, Symbol, true, false, nil, Time、およびそれらからなる Tuple, Record, Array, Hash, Set、クラスの値。
-- **使えないもの（`TypeError`）。** Regexp、Range、自分の等価（`==`、または `Comparable` の `<=>`）を定義したクラスの値。キーの比較がその等価と食い違いうるからです。
+- **使えるもの。** Integer, Float, String, Symbol, true, false, nil, Time, Regexp（ソースとオプションで比べます）、およびそれらからなる Tuple, Record, Array, Hash, Set、クラスの値。
+- **使えないもの（`TypeError`）。** Range、自分の等価（`==`、または `Comparable` の `<=>`）を定義したクラスの値。キーの比較がその等価と食い違いうるからです。
 - **キーの変更。** Ruby と同じく、キーに使った Array・Hash・Set・クラスの値を後で変えると見つからなくなります。
 - **キーは複製される。** Tuple や Record のキーは格納時に複製されるので、元を後で書いてもキーは変わりません。
 
 ```ruby error
-h = Hash.of(/a/ => 1)             # !> Regexp cannot be a Hash key or Set element
+h = Hash.of(1..2 => 1)            # !> Range cannot be a Hash key or Set element
 ```
 
 ```ruby

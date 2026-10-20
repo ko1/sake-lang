@@ -46,7 +46,8 @@ def operations
   out << "\n### Exception types\n\n#{named.map { "`#{_1}`" }.join(" · ")}: each has `T.new(message)`, "
   out << "`T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. "
   out << "Only in `rescue`: #{scoped.map { "`#{_1}`" }.join(" · ")}; under `SQLite3::Exception`: "
-  out << "#{sqlite.map { "`#{_1.delete_prefix("SQLite3::")}`" }.join(" · ")} (written `SQLite3::SQLException`).\n"
+  out << "#{sqlite.map { "`#{_1.delete_prefix("SQLite3::")}`" }.join(" · ")} (written `SQLite3::SQLException`); "
+  out << "`rescue OpenSSL::OpenSSLError` catches every `OpenSSL::` one (`OpenSSL::Cipher::AuthTagError` is a `CipherError`).\n"
   out
 end
 

@@ -4,7 +4,25 @@ Regexp は正規表現です。リテラル `/\d+/` と、Ruby と同じフラ�
 
 Ruby との大きな違いは、一致の結果がグローバルに残らないことです。`$~`、`$1`、`Regexp.last_match` は存在せず、`/(?<y>\d+)/ =~ s` が局所変数 `y` を作ることもありません（静的なエラー）。一致の結果は `Regexp.match` が返す MatchData を変数に置いて読みます（[MatchData](MatchData.md)）。
 
-Regexp に使える演算子は `=~`（String との一致位置、無ければ nil）、`==`、`!=` です。String 側の `s =~ re`、`s !~ re` もあります。`String.match`、`match?`、`scan`、`sub`、`gsub`、`split`、`index` なども Regexp を取ります（[演算子と添字](../05-operators.md)）。Regexp は Hash のキーや Set の要素にはなれません（`TypeError`）。
+Regexp に使える演算子は `=~`（String との一致位置、無ければ nil）、`==`、`!=` です。String 側の `s =~ re`、`s !~ re` もあります。`String.match`、`match?`、`scan`、`sub`、`gsub`、`split`、`index` なども Regexp を取ります（[演算子と添字](../05-operators.md)）。Regexp は Hash のキーや Set の要素になれます。Ruby と同じく、ソースとオプションが同じなら同じキーです。`Regexp[...]` は Regexp の Array です。
+
+## Regexp[]
+
+`Regexp[*Any]`
+
+**Regexp の Array** を作ります。`Integer[]` と同じ型付き Array で、要素はすべて Regexp でなければならず、`Array.push` などの書き込みも毎回検査されます。Regexp 以外は静的に `type` の問題、実行時は `TypeError`。空の Regexp の Array は `Regexp[]`。
+
+```ruby
+filters = Regexp[/passw/i, /token/]
+Array.push(filters, Regexp.new("secret"))
+p(filters)                                               # => [/passw/i, /token/, /secret/]
+p(Array.any?(filters) { |r| Regexp.match?(r, "api_token") })   # => true
+p(Array.size(Regexp[]))                                  # => 0
+```
+
+```ruby error
+Array.push(Regexp[/a/], "a")       # !> Array.push: an element must be Regexp, but is String
+```
 
 ## new
 

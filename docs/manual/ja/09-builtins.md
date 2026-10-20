@@ -40,6 +40,8 @@ p(Math.PI > 3)                   # => true
 | `__FILE__`、`__LINE__`、`__dir__` | String、Integer、String | このファイル（主ファイルは与えた名前、require したファイルはフルパス）、この行、このファイルのディレクトリのフルパス。Ruby と同じ: `File.join(__dir__, "views")` |
 | `equal?(a, b)` | true/false | 同一性 |
 | `block_given?` | true/false | 今の関数がブロックを受けたか |
+| `catch(tag) { }` · `throw(tag, [v])` | ブロックの値か v | Ruby と同じく、throw は同じタグのいちばん内側の catch を終わらせます。検査器はブロックの型とそのタグに投げられる型を合わせます。catch が無ければ `UncaughtThrowError` |
+| `class_name(x)` | String | Ruby の `x.class.name`: `"Integer"`、`"NilClass"`、`"Shop::Order"`（Tuple は `"Array"`、Record は `"Hash"`） |
 
 - **定数は操作。** `Math::PI`、`Math::E`、`Float::INFINITY`、`Float::NAN`、`Float::EPSILON`、`Float::MAX`、`Float::MIN` は、`ARGV` と同じく操作として読みます（`Math.PI`）。Sake に値の定数は無く、組み込みの定数もこれだけです（`A::B` のような入れ子の名前は名前空間で、値ではありません）。
 
@@ -377,13 +379,44 @@ p(SQLite3::Database.execute2(db, "select name from t"))   # => [["name"], ["ann"
 | `SQLite3::Database.new(path)` · `close(db)` · `closed?(db)` | SQLite3::Database（`":memory:"` はメモリ上）· nil · true/false |
 | `execute(db, sql, [binds])` · `execute2(db, sql, [binds])` · `execute_batch(db, sql)` | 行（Integer、Float、String、nil の Array の Array）· 列の名前と行 · nil |
 | `last_insert_row_id(db)` · `changes(db)` · `transaction(db) { \|d\| }` | Integer · Integer · ブロックの値（ブロックが例外を投げればロールバックして投げ直す） |
+| `total_changes(db)` · `prepare(db, sql)` | Integer（開いてから変わった行の数）· [SQLite3::Statement](ref/SQLite3-Statement.md): `bind_params`、`step`、`to_a`、`execute`、`reset!`、`columns`、`types`（宣言された列の型）、`close` |
 
 - **bind。** Integer、Float、String、nil の Array（`Any[...]`）で、`?` を順に埋めます。他の型は静的な `type` の問題です。
 - **エラー。** gem のクラスとメッセージです: `SQLite3::SQLException`、`SQLite3::ConstraintException`、`SQLite3::BusyException` など。どれも `rescue SQLite3::Exception` で捕まえられます。
 
+## OpenSSL
+
+Ruby の openssl のダイジェスト・鍵導出・暗号は組み込みです（Ruby と同じく `require "openssl"` と書いてもよく、それ以上のことはしません）: `OpenSSL::HMAC.hexdigest(alg, key, data)`、`OpenSSL::KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)`（と `OpenSSL::PKCS5.pbkdf2_hmac`）、`OpenSSL::Random.random_bytes(n)`、そして 1 回の暗号化か復号を保持する値 `OpenSSL::Cipher`（AES-256-GCM、AES-256-CBC など）。ActiveSupport の MessageVerifier、KeyGenerator、MessageEncryptor が使うのはこれらです。詳細は [OpenSSL::HMAC](ref/OpenSSL-HMAC.md)、[OpenSSL::KDF](ref/OpenSSL-KDF.md)、[OpenSSL::Cipher](ref/OpenSSL-Cipher.md) にあります。
+
+```ruby
+key = OpenSSL::KDF.pbkdf2_hmac("secret", salt: "cookie", iterations: 1000, length: 32, hash: "sha256")
+c = OpenSSL::Cipher.new("aes-256-gcm")
+OpenSSL::Cipher.encrypt(c)
+OpenSSL::Cipher.set_key(c, key)
+iv = OpenSSL::Cipher.random_iv(c)
+data = OpenSSL::Cipher.update(c, "hello") + OpenSSL::Cipher.final(c)
+tag = OpenSSL::Cipher.auth_tag(c)
+d = OpenSSL::Cipher.decrypt(OpenSSL::Cipher.new("aes-256-gcm"))
+OpenSSL::Cipher.set_key(d, key)
+OpenSSL::Cipher.set_iv(d, iv)
+OpenSSL::Cipher.set_auth_tag(d, tag)
+p(OpenSSL::Cipher.update(d, data) + OpenSSL::Cipher.final(d))   # => "hello"
+puts(OpenSSL::HMAC.hexdigest("SHA1", "key", "data"))            # => 104152c5bfdca07bc633eebd46199f0255c9f49d
+```
+
+| 操作 | 結果 |
+|---|---|
+| `OpenSSL::HMAC.digest(alg, key, data)` · `hexdigest` · `base64digest` | バイナリの String · 16 進 · Base64（alg は `"SHA256"`、`"sha1"` など） |
+| `OpenSSL::KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)` · `OpenSSL::PKCS5.pbkdf2_hmac(pass, salt, iter, len, alg)` | PBKDF2 の `length` バイト |
+| `OpenSSL::Cipher.new(name)` · `encrypt(c)` · `decrypt(c)` · `set_key(c, k)` · `set_iv(c, iv)` · `random_iv(c)` | OpenSSL::Cipher · c · c · k · iv · 新しい IV（設定済み） |
+| `update(c, s)` · `final(c)` · `set_auth_data(c, s)` · `auth_tag(c)` · `set_auth_tag(c, t)` | String · String · s · String（final の後）· t（final の前） |
+
+- **setter。** Ruby の `c.key = k` は、クラスの書き込み関数と同じ名付けで `OpenSSL::Cipher.set_key(c, k)` です。
+- **エラー。** Ruby のクラスです: `OpenSSL::Cipher::CipherError`（`bad decrypt`。GCM のタグが違うときの `OpenSSL::Cipher::AuthTagError` もこれに含まれます）、`OpenSSL::Digest::DigestError`、`OpenSSL::KDF::KDFError`。どれも `OpenSSL::OpenSSLError` の下にあります。
+
 ## 型付き Array
 
-`Integer[...]`、`Float[...]`、`Rational[...]`、`Complex[...]`、`String[...]`、`Symbol[...]`、`Tuple[...]`、および各クラス `D` の `D[...]` は、要素型がその型の Array を作ります（[値と型](03-values.md)）。書き込みは要素型と照合され、合わない値は静的には `type` の問題、実行時には `TypeError` です。
+`Integer[...]`、`Float[...]`、`Rational[...]`、`Complex[...]`、`String[...]`、`Symbol[...]`、`Regexp[...]`、`Tuple[...]`、および各クラス `D` の `D[...]` は、要素型がその型の Array を作ります（[値と型](03-values.md)）。書き込みは要素型と照合され、合わない値は静的には `type` の問題、実行時には `TypeError` です。
 
 ```ruby
 xs = Integer[1, 2]

@@ -147,8 +147,24 @@ module Sake
       else
         # Ruby's own objects for the concurrency and network operations (stdlib_net.rb).
         name = { "Thread::Queue" => "Queue", "Thread::Mutex" => "Mutex", "TCPServer" => "TCPServer", "TCPSocket" => "Socket", "OpenSSL::SSL::SSLSocket" => "Socket",
-                 "SQLite3::Database" => "SQLite3::Database" }[v.class.name]
+                 "SQLite3::Database" => "SQLite3::Database", "SQLite3::Statement" => "SQLite3::Statement", "OpenSSL::Cipher" => "OpenSSL::Cipher" }[v.class.name]
         name or raise "BUG: not a Sake value: #{v.inspect}"
+      end
+    end
+
+    # Ruby's x.class.name: a Tuple is an Array and a Record a Hash there, a class its full name.
+    RUBY_CLASS_NAMES = { "Nil" => "NilClass", "Tuple" => "Array", "Queue" => "Thread::Queue", "Mutex" => "Thread::Mutex" }.freeze
+
+    def class_name(v)
+      case v
+      when true then "TrueClass"
+      when false then "FalseClass"
+      when RecordValue then "Hash"
+      when ::Array then "Array"
+      when IOValue then "IO"
+      else
+        t = type_of(v)
+        %w[Socket TCPServer].include?(t) ? v.class.name : RUBY_CLASS_NAMES.fetch(t, t)
       end
     end
 
@@ -170,7 +186,7 @@ module Sake
     # because equality of those types is undecided (protocols).
     def key_value?(v)
       case v
-      when Integer, Float, Rational, Complex, String, Symbol, Time, true, false, nil then true
+      when Integer, Float, Rational, Complex, String, Symbol, Time, Regexp, true, false, nil then true
       when Tuple then v.elems.all? { key_value?(_1) }
       when RecordValue then v.values.all? { key_value?(_1) }
       when ::Array, ::Set then v.all? { key_value?(_1) }
@@ -212,7 +228,7 @@ module Sake
       when Set then "Set[#{v.map { inspect(_1) }.join(", ")}]"
       when Range then "#{v.begin.nil? ? "" : inspect(v.begin)}#{v.exclude_end? ? "..." : ".."}#{v.end.nil? ? "" : inspect(v.end)}"
       when ThreadValue, ::Thread::Queue, ::Thread::Mutex then "#<#{type_of(v)}>"
-      else v.class.name.to_s.match?(/\A(TCPServer|TCPSocket|OpenSSL::SSL::SSLSocket|SQLite3::Database)\z/) ? "#<#{type_of(v)}>" : v.inspect
+      else v.class.name.to_s.match?(/\A(TCPServer|TCPSocket|OpenSSL::SSL::SSLSocket|SQLite3::Database|SQLite3::Statement|OpenSSL::Cipher)\z/) ? "#<#{type_of(v)}>" : v.inspect
       end
     end
 

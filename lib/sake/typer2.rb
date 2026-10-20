@@ -21,7 +21,7 @@ module Sake
     SPECIALIZE = :typer2_specialize
     MAX_EVALUATIONS = 300_000
     # Built-ins whose scalar parameter is only checked (the result does not depend on it) may take α.
-    SCALAR = %w[Integer Float String Symbol Rational Complex Time Regexp Boolean MatchData IO TCPServer Socket Mutex SQLite3::Database].freeze
+    SCALAR = %w[Integer Float String Symbol Rational Complex Time Regexp Boolean MatchData IO TCPServer Socket Mutex SQLite3::Database SQLite3::Statement OpenSSL::Cipher].freeze
     # Built-ins that give an argument back as it is: α passes through.
     ECHO = %w[Kernel.p Kernel.pp].freeze
 

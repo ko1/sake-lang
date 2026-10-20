@@ -1,6 +1,6 @@
 # Set
 
-A Set is a collection of elements without duplicates. `Set.of(1, 2)` makes a Set, and `Set.new(xs)` one of an Array's elements, as Ruby's `Set.new([1, 2])`. Elements are told apart by the rules of Hash keys: Integer, Float, String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets and values of a class made of these can be elements; a Regexp, a Range, or a value of a class that defines its own equality (`==` or `Comparable`) is a `TypeError` at run time. Whether two values are the same element is decided as Ruby's Hash does, by `hash` and `eql?`, so `1` and `1.0` are two elements. Elements keep the order they were added in, and iteration follows it. A String used as an element is copied in, so changing the original String afterwards does not change the Set.
+A Set is a collection of elements without duplicates. `Set.of(1, 2)` makes a Set, and `Set.new(xs)` one of an Array's elements, as Ruby's `Set.new([1, 2])`. Elements are told apart by the rules of Hash keys: Integer, Float, String, Symbol, true, false, nil, Time, Regexp, and Tuples, Records, Arrays, Hashes, Sets and values of a class made of these can be elements; a Range, or a value of a class that defines its own equality (`==` or `Comparable`) is a `TypeError` at run time. Whether two values are the same element is decided as Ruby's Hash does, by `hash` and `eql?`, so `1` and `1.0` are two elements. Elements keep the order they were added in, and iteration follows it. A String used as an element is copied in, so changing the original String afterwards does not change the Set.
 
 The checker follows the element type of a Set per construction site and widens it on writes such as `Set.add`. The block of an operation that takes one receives values of that element type.
 
@@ -10,7 +10,7 @@ The operators on Sets are `|` (union), `&` (intersection), `-` (difference), `==
 
 `Set.of(*Any)`
 
-Makes a Set of the listed elements. Duplicate elements collapse into one. A value that cannot be an element (a Regexp, a Range, a class instance with its own equality) is a `TypeError` at run time. `Set.new` is the empty Set; elements added later with `Set.add` widen its element type.
+Makes a Set of the listed elements. Duplicate elements collapse into one. A value that cannot be an element (a Range, a class instance with its own equality) is a `TypeError` at run time. `Set.new` is the empty Set; elements added later with `Set.add` widen its element type.
 
 ```ruby
 s = Set.of(1, 2, 2, 3)
@@ -20,7 +20,7 @@ p(Set.size(Set.of(1, 1.0)))      # => 2
 ```
 
 ```ruby error
-p(Set.of(/a/))                   # !> TypeError: Set.of: Regexp cannot be a Hash key or Set element
+p(Set.of(1..2))                  # !> TypeError: Set.of: Range cannot be a Hash key or Set element
 ```
 
 ## new

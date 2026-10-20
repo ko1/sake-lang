@@ -922,13 +922,19 @@ module Sake
     def struct_type(name) = @program.struct_types[name]
 
     # Exception types that only `raise` produces; built-in operations may raise the other kinds anywhere.
-    def user_raised?(name) = name == "RuntimeError" || !Resolver::BUILTIN_EXCEPTIONS.include?(name)
+    def user_raised?(name) = USER_RAISED.include?(name) || !Resolver::BUILTIN_EXCEPTIONS.include?(name)
+    USER_RAISED = %w[RuntimeError NoMethodError].freeze
 
-    # The built-in exceptions an operation may raise: SQLite3's only in a program that calls a SQLite3 operation.
+    # The built-in exceptions an operation may raise: SQLite3's only in a program that calls a SQLite3 operation,
+    # OpenSSL's in one that calls an OpenSSL operation, UncaughtThrowError in one that calls throw.
     def builtin_exceptions
       @builtin_exceptions ||= begin
-        uses = @program.calls.each_value.any? { |h| h.each_value.any? { _1.is_a?(Builtin) && _1.namespace.start_with?("SQLite3::") } }
-        uses ? Resolver::BUILTIN_EXCEPTIONS : Resolver::BUILTIN_EXCEPTIONS - Stdlib::SQLITE3_EXCEPTIONS - ["SQLite3::Exception"]
+        used = @program.calls.each_value.flat_map { |h| h.each_value.grep(Builtin).map(&:full_name) }.uniq
+        ex = Resolver::BUILTIN_EXCEPTIONS - ["NoMethodError"] # only `raise` makes it: counted where raised
+        ex -= Stdlib::SQLITE3_EXCEPTIONS + ["SQLite3::Exception"] unless used.any? { _1.start_with?("SQLite3::") }
+        ex -= Stdlib::OPENSSL_EXCEPTIONS unless used.any? { _1.start_with?("OpenSSL::") }
+        ex -= ["UncaughtThrowError"] unless used.include?("Kernel.throw")
+        ex
       end
     end
 
@@ -1667,8 +1673,9 @@ module Sake
         u(new_site(node, " #{name}", t("String")), t("Nil"))
       when "Exception.cause"
         record(node, name, 1, "Exception", a0)
-        sqlite3 = Resolver::BUILTIN_EXCEPTIONS - builtin_exceptions
-        u(of_atoms(@program.struct_types.select { |k, st| st.exception && !Resolver::NOT_RESCUABLE.include?(k) && !sqlite3.include?(k) }.keys), t("Nil"))
+        # NoMethodError only in a program that names it (only `raise` makes it).
+        unused = Resolver::BUILTIN_EXCEPTIONS - builtin_exceptions - ["RuntimeError"] - (@program.const_names.value?("NoMethodError") ? ["NoMethodError"] : [])
+        u(of_atoms(@program.struct_types.select { |k, st| st.exception && !Resolver::NOT_RESCUABLE.include?(k) && !unused.include?(k) }.keys), t("Nil"))
       else unknown("no signature for #{name}")
       end
     end

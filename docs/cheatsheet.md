@@ -15,7 +15,9 @@ Part 1 gives the rules; Part 2 lists every built-in operation (only those exist)
 - Built-in and user operations: `Type.op(subject, args...)`. Chain form: `T.f(x).U.op(args)` is `U.op(T.f(x), args)`; start a chain with `T.f(x)`. A step without a type continues with the type the chain named last: `T.f(x).op` is `T.f(x).T.op`; name the type where the value's type changes (`String.split(s, " ").Array.sort.join(",")`).
   A call on a value (`s.strip`, `xs.size`, `3.times`, `1.to_s`, `x.nil?`) is rejected.
 - Kernel functions are called bare: `puts print p pp format sprintf gets loop raise rand srand sleep
-  exit warn system at_exit Integer(s) Float(s) Rational(..) Complex(..) dup(x) block_given? once ARGV`.
+  exit warn system at_exit Integer(s) Float(s) Rational(..) Complex(..) dup(x) block_given? once ARGV
+  catch throw class_name`. `catch(:t) { throw :t, v }` is Ruby's (its type: the block's or a thrown value);
+  `class_name(x)` is Ruby's `x.class.name`.
   `format` is Kernel only (no `String.format`); `"%d-%s" % [a, b]` also works.
 - Names are Ruby's: `Integer.to_s`, `String.include?`, `Array.each_with_index`. Not every Ruby
   arity exists: no `Array.min(xs, n)`, `Array.sort` takes no block (use `sort_by`, or `Comparable`),
@@ -351,11 +353,15 @@ p(v)
 - Ported: json csv yaml toml base64 digest strscan optparse shellwords set-like structures time date
   fileutils pathname tempfile stringio logger benchmark net_http uri cgi ipaddr webrick monitor
   timeout bigdecimal matrix prime securerandom erb; gems colorize thor rack httparty redis money
-  jwt kramdown liquid i18n faker concurrent_ruby rspec minitest. Each has `sakelib/notes/NAME.md`.
+  jwt bcrypt kramdown liquid i18n faker concurrent_ruby rspec minitest. Each has `sakelib/notes/NAME.md`.
 - SQLite is built in (Ruby's sqlite3 gem, no `require`): `db = SQLite3::Database.new(":memory:")`,
   `SQLite3::Database.execute(db, sql, Any[binds])` gives rows (an Array of Arrays of Integer|Float|String|nil;
   binds are Integer, Float, String, nil), `execute2` (column names first), `execute_batch`, `last_insert_row_id`,
-  `changes`, `transaction(db) { |d| }` (rolls back when the block raises), `close`. Errors: `rescue SQLite3::ConstraintException`, ...
+  `changes`, `total_changes`, `transaction(db) { |d| }` (rolls back when the block raises), `close`; `prepare(db, sql)` gives a
+  `SQLite3::Statement` (`bind_params`, `step`, `to_a`, `execute`, `columns`, `types`). Errors: `rescue SQLite3::ConstraintException`, ...
+- OpenSSL is built in (`require "openssl"` allowed): `OpenSSL::HMAC.hexdigest("SHA256", key, data)`, `OpenSSL::KDF.pbkdf2_hmac(pw,
+  salt:, iterations:, length:, hash:)`, `c = OpenSSL::Cipher.new("aes-256-gcm")` then `OpenSSL::Cipher.encrypt(c)`,
+  `set_key(c, k)` (Ruby's `c.key = k`), `random_iv`, `update`, `final`, `auth_tag`; `rescue OpenSSL::Cipher::CipherError`.
 - Tests with minitest: `suite = Minitest.suite("x")`, `Minitest.test(suite, "name") { |t|
   Minitest.assert_equal(t, want, got) }`, `Minitest.run(suite)`.
 
@@ -421,7 +427,7 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Kernel
 
-`ARGV()` · `Complex(Integer|Float|Rational, [Integer|Float|Rational])` · `Float(String|Integer|Float)` · `Integer(String|Integer|Float)` · `PROGRAM_NAME()` · `Rational(Integer|Float|Rational|String, [Integer|Rational])` · `at_exit() { }` · `block_given?()` · `dup(Any)` · `equal?(Any, Any)` · `exit([Integer|Boolean])` · `format(String, *Any)` · `gets()` · `inspect(Any)` · `loop() { }` · `Kernel[*Any]` · `once() { }` · `p(*Any)` · `pp(Any)` · `print(*Any)` · `puts(*Any)` · `rand([Integer|Float])` · `sleep([Integer|Float|Rational])` · `sprintf(String, *Any)` · `srand([Integer])` · `system(String, *String)` · `to_s(Any)` · `warn(*Any)`
+`ARGV()` · `Complex(Integer|Float|Rational, [Integer|Float|Rational])` · `Float(String|Integer|Float)` · `Integer(String|Integer|Float)` · `PROGRAM_NAME()` · `Rational(Integer|Float|Rational|String, [Integer|Rational])` · `at_exit() { }` · `block_given?()` · `catch(Any) { }` · `class_name(Any)` · `dup(Any)` · `equal?(Any, Any)` · `exit([Integer|Boolean])` · `format(String, *Any)` · `gets()` · `inspect(Any)` · `loop() { }` · `Kernel[*Any]` · `once() { }` · `p(*Any)` · `pp(Any)` · `print(*Any)` · `puts(*Any)` · `rand([Integer|Float])` · `sleep([Integer|Float|Rational])` · `sprintf(String, *Any)` · `srand([Integer])` · `system(String, *String)` · `throw(Any, [Any])` · `to_s(Any)` · `warn(*Any)`
 
 ### MatchData
 
@@ -438,6 +444,26 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 ### Open3
 
 `capture2(String, *String)` · `capture2e(String, *String)` · `capture3(String, *String)`
+
+### OpenSSL::Cipher
+
+`!=(x, Any)` · `==(x, Any)` · `auth_tag(x, [Integer])` · `authenticated?(x)` · `block_size(x)` · `ciphers()` · `decrypt(x)` · `encrypt(x)` · `final(x)` · `iv_len(x)` · `key_len(x)` · `name(x)` · `new(String)` · `random_iv(x)` · `random_key(x)` · `reset(x)` · `set_auth_data(x, String)` · `set_auth_tag(x, String)` · `set_iv(x, String)` · `set_iv_len(x, Integer)` · `set_key(x, String)` · `set_padding(x, Integer)` · `update(x, String)`
+
+### OpenSSL::HMAC
+
+`base64digest(String, String, String)` · `digest(String, String, String)` · `hexdigest(String, String, String)`
+
+### OpenSSL::KDF
+
+`pbkdf2_hmac(String, [salt: String], [iterations: Integer], [length: Integer], [hash: String])`
+
+### OpenSSL::PKCS5
+
+`pbkdf2_hmac(String, String, Integer, Integer, String)` · `pbkdf2_hmac_sha1(String, String, Integer, Integer)`
+
+### OpenSSL::Random
+
+`random_bytes(Integer)`
 
 ### Process
 
@@ -461,11 +487,15 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Regexp
 
-`!=(x, Any)` · `==(x, Any)` · `=~(x, Any)` · `casefold?(x)` · `encoding(x)` · `escape(String)` · `fixed_encoding?(x)` · `match(x, String, [Integer])` · `match?(x, String, [Integer])` · `named_captures(x)` · `names(x)` · `new(String, [String])` · `options(x)` · `source(x)` · `timeout(x)` · `union(*String|Regexp|Array)`
+`!=(x, Any)` · `==(x, Any)` · `=~(x, Any)` · `casefold?(x)` · `encoding(x)` · `escape(String)` · `fixed_encoding?(x)` · `match(x, String, [Integer])` · `match?(x, String, [Integer])` · `named_captures(x)` · `names(x)` · `new(String, [String])` · `Regexp[*Any]` · `options(x)` · `source(x)` · `timeout(x)` · `union(*String|Regexp|Array)`
 
 ### SQLite3::Database
 
-`!=(x, Any)` · `==(x, Any)` · `changes(x)` · `close(x)` · `closed?(x)` · `execute(x, String, [Array])` · `execute2(x, String, [Array])` · `execute_batch(x, String)` · `last_insert_row_id(x)` · `new(String)` · `transaction(x) { }`
+`!=(x, Any)` · `==(x, Any)` · `changes(x)` · `close(x)` · `closed?(x)` · `execute(x, String, [Array])` · `execute2(x, String, [Array])` · `execute_batch(x, String)` · `last_insert_row_id(x)` · `new(String)` · `prepare(x, String)` · `total_changes(x)` · `transaction(x) { }`
+
+### SQLite3::Statement
+
+`!=(x, Any)` · `==(x, Any)` · `bind_params(x, Array)` · `close(x)` · `closed?(x)` · `column_count(x)` · `columns(x)` · `done?(x)` · `execute(x, [Array])` · `new(SQLite3::Database, String)` · `reset!(x)` · `step(x)` · `to_a(x)` · `types(x)`
 
 ### Set
 
@@ -505,4 +535,4 @@ Call them as `Namespace.name(...)`; the namespace is the heading.
 
 ### Exception types
 
-`RuntimeError` · `ArgumentError` · `KeyError` · `IndexError` · `ZeroDivisionError` · `RangeError` · `IOError` · `EncodingError` · `RegexpError` · `FloatDomainError` · `NoMatchingPatternError` · `TypeError` · `EOFError` · `ThreadError`: each has `T.new(message)`, `T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. Only in `rescue`: `Math::DomainError` · `SQLite3::Exception`; under `SQLite3::Exception`: `SQLException` · `ConstraintException` · `BusyException` · `LockedException` · `ReadOnlyException` · `MisuseException` · `RangeException` · `MismatchException` · `CantOpenException` · `NotADatabaseException` · `IOException` · `FullException` · `TooBigException` · `AbortException` · `InterruptException` · `PermissionException` · `CorruptException` · `InternalException` · `MemoryException` · `NotFoundException` · `ProtocolException` · `EmptyException` · `SchemaChangedException` · `AuthorizationException` · `FormatException` · `UnsupportedException` (written `SQLite3::SQLException`).
+`RuntimeError` · `ArgumentError` · `KeyError` · `IndexError` · `ZeroDivisionError` · `RangeError` · `IOError` · `EncodingError` · `RegexpError` · `FloatDomainError` · `NoMatchingPatternError` · `TypeError` · `EOFError` · `ThreadError` · `NoMethodError` · `UncaughtThrowError`: each has `T.new(message)`, `T.message(x)`, `T.set_message(x, v)`; `Exception.message(e)` reads any. Only in `rescue`: `Math::DomainError` · `SQLite3::Exception` · `OpenSSL::OpenSSLError` · `OpenSSL::Digest::DigestError` · `OpenSSL::HMACError` · `OpenSSL::KDF::KDFError` · `OpenSSL::Cipher::CipherError` · `OpenSSL::Cipher::AuthTagError`; under `SQLite3::Exception`: `SQLException` · `ConstraintException` · `BusyException` · `LockedException` · `ReadOnlyException` · `MisuseException` · `RangeException` · `MismatchException` · `CantOpenException` · `NotADatabaseException` · `IOException` · `FullException` · `TooBigException` · `AbortException` · `InterruptException` · `PermissionException` · `CorruptException` · `InternalException` · `MemoryException` · `NotFoundException` · `ProtocolException` · `EmptyException` · `SchemaChangedException` · `AuthorizationException` · `FormatException` · `UnsupportedException` (written `SQLite3::SQLException`); `rescue OpenSSL::OpenSSLError` catches every `OpenSSL::` one (`OpenSSL::Cipher::AuthTagError` is a `CipherError`).

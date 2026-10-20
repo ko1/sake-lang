@@ -1,0 +1,80 @@
+# OpenSSL built in (Ruby's openssl): HMAC, PBKDF2, AES-256-GCM and -CBC as ActiveSupport::MessageEncryptor uses them.
+def hex(s) = String.unpack1(s, "H*")
+
+puts(OpenSSL::HMAC.hexdigest("SHA256", "Jefe", "what do ya want for nothing?"))
+puts(OpenSSL::HMAC.base64digest("sha1", "key", "data"))
+p(String.bytesize(OpenSSL::HMAC.digest("SHA512", "key", "data")))
+puts(hex(OpenSSL::KDF.pbkdf2_hmac("password", salt: "salt", iterations: 4096, length: 20, hash: "sha1")))
+puts(hex(OpenSSL::PKCS5.pbkdf2_hmac("password", "salt", 4096, 20, "sha1")))
+puts(hex(OpenSSL::PKCS5.pbkdf2_hmac_sha1("password", "salt", 2, 20)))
+
+key = "k" * 32
+iv = "i" * 12
+c = OpenSSL::Cipher.new("aes-256-gcm")
+p([c, Kernel.class_name(c), OpenSSL::Cipher.name(c), OpenSSL::Cipher.key_len(c), OpenSSL::Cipher.iv_len(c), OpenSSL::Cipher.authenticated?(c)])
+OpenSSL::Cipher.encrypt(c)
+OpenSSL::Cipher.set_key(c, key)
+OpenSSL::Cipher.set_iv(c, iv)
+OpenSSL::Cipher.set_auth_data(c, "")
+data = OpenSSL::Cipher.update(c, "hello, sake") + OpenSSL::Cipher.final(c)
+tag = OpenSSL::Cipher.auth_tag(c, 16)
+puts(hex(data), hex(tag))
+
+def open_box(key, iv, data, tag)
+  d = OpenSSL::Cipher.new("aes-256-gcm")
+  OpenSSL::Cipher.decrypt(d)
+  OpenSSL::Cipher.set_key(d, key)
+  OpenSSL::Cipher.set_iv(d, iv)
+  OpenSSL::Cipher.set_auth_tag(d, tag)
+  OpenSSL::Cipher.set_auth_data(d, "")
+  OpenSSL::Cipher.update(d, data) + OpenSSL::Cipher.final(d)
+end
+p(open_box(key, iv, data, tag))
+begin
+  open_box(key, iv, data, "x" * 16)
+rescue OpenSSL::Cipher::CipherError => e
+  puts("CipherError: #{Exception.message(e)}")
+end
+
+cbc = OpenSSL::Cipher.new("aes-256-cbc")
+OpenSSL::Cipher.encrypt(cbc)
+OpenSSL::Cipher.set_key(cbc, key)
+civ = OpenSSL::Cipher.random_iv(cbc)
+OpenSSL::Cipher.set_iv(cbc, "v" * 16) # a fixed one instead, for the output below
+secret = OpenSSL::Cipher.update(cbc, "sixteen bytes!!!") + OpenSSL::Cipher.final(cbc)
+p([String.bytesize(civ), hex(secret), OpenSSL::Cipher.block_size(cbc), String.encoding(secret)])
+dec = OpenSSL::Cipher.new("aes-256-cbc")
+OpenSSL::Cipher.decrypt(dec)
+OpenSSL::Cipher.set_key(dec, key)
+OpenSSL::Cipher.set_iv(dec, "v" * 16)
+p(OpenSSL::Cipher.update(dec, secret) + OpenSSL::Cipher.final(dec))
+OpenSSL::Cipher.reset(dec)
+OpenSSL::Cipher.set_key(dec, "j" * 32)
+OpenSSL::Cipher.update(dec, secret)
+begin
+  OpenSSL::Cipher.final(dec)
+rescue OpenSSL::OpenSSLError => e
+  puts("OpenSSLError: #{Exception.message(e)}")
+end
+
+begin
+  OpenSSL::Cipher.set_key(OpenSSL::Cipher.new("aes-256-cbc"), "short")
+rescue ArgumentError => e
+  puts("ArgumentError: #{Exception.message(e)}")
+end
+begin
+  OpenSSL::Cipher.new("aes-999-xyz")
+rescue OpenSSL::Cipher::CipherError => e
+  puts(String.split(Exception.message(e), ":")[0])
+end
+begin
+  OpenSSL::HMAC.hexdigest("XYZ", "k", "d")
+rescue OpenSSL::Digest::DigestError => e
+  puts(String.split(Exception.message(e), ":")[0])
+end
+begin
+  OpenSSL::KDF.pbkdf2_hmac("pw", salt: "s")
+rescue ArgumentError => e
+  puts(Exception.message(e))
+end
+p(String.bytesize(OpenSSL::Random.random_bytes(7)), Array.include?(OpenSSL::Cipher.ciphers, "aes-256-gcm"))

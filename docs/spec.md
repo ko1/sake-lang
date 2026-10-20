@@ -920,7 +920,8 @@ end
   exception types that include it (directly or through another module); `e` is their union, so
   `M.f(e)` dispatches. A module cannot be raised. A built-in type also catches its Ruby subclasses
   among the built-ins: `IndexError` catches `KeyError`, `IOError` `EOFError`, `RangeError`
-  `FloatDomainError`, `ArgumentError` `Math::DomainError`, and a class of the program declared
+  `FloatDomainError`, `ArgumentError` `Math::DomainError` and `UncaughtThrowError`, `SQLite3::Exception` the
+  `SQLite3::` ones, `OpenSSL::OpenSSLError` the `OpenSSL::` ones, and a class of the program declared
   `class E < RangeError` is caught by `rescue RangeError` too. Level 1 reports a `rescue M` whose begin
   body raises none of M's types, and a `rescue A` for a type an earlier clause already catches.
   `rescue => e` catches every rescuable exception; `e` is a union, so narrow it with
@@ -1270,6 +1271,17 @@ Sake's way to compute a table or a named value once, since there are no value co
 program error (`SystemStackError`). For the checks before running, its type is the union of the
 block's results over every call that may compute it.
 
+### throw, catch, class_name
+
+`catch(tag) { |tag| ... }` gives the block's value, or the value of a `throw(tag, [value])` made while the
+block runs (Ruby's): the throw ends the innermost catch whose tag is the same object (`equal?`), leaving
+the functions and blocks between at once; `ensure` clauses run, and no `rescue` stops it. A throw with no
+catch of its tag raises `UncaughtThrowError` (an ArgumentError, as in Ruby). For the checks before
+running, a catch's type is its block's joined with the types thrown to its tag anywhere in the program
+(nil for a throw without a value); a literal Symbol tag takes only what is thrown with that Symbol.
+`class_name(x)` is Ruby's `x.class.name`: `"Integer"`, `"NilClass"`, `"TrueClass"`, a class's full name, an
+exception's type; a Tuple is `"Array"` and a Record `"Hash"`, as in Ruby.
+
 ### Positions, bytes, replacements
 
 | Operation | Result |
@@ -1294,6 +1306,13 @@ block's results over every call that may compute it.
 | `Socket.write(s, str)` · `Socket.close_write(s)` · `Socket.close(s)` | Integer · nil · nil |
 | `SQLite3::Database.new(path)` · `SQLite3::Database.execute(db, sql, [binds])` · `SQLite3::Database.execute2(db, sql, [binds])` | a SQLite3::Database (Ruby's sqlite3 gem; `":memory:"` works) · the rows, an Array of Arrays of Integer, Float, String or nil (binds: an Array of those) · the column names, then the rows |
 | `SQLite3::Database.execute_batch(db, sql)` · `last_insert_row_id(db)` · `changes(db)` · `transaction(db) { \|d\| }` · `close(db)` · `closed?(db)` | nil · Integer · Integer · the block's value (rolled back and raised again when the block raises) · nil · true/false; errors are the gem's `SQLite3::SQLException`, `SQLite3::ConstraintException`, ..., all under `SQLite3::Exception` |
+| `SQLite3::Database.total_changes(db)` · `SQLite3::Database.prepare(db, sql)` (also `SQLite3::Statement.new(db, sql)`) | Integer (rows changed since the database was opened) · a SQLite3::Statement, the gem's prepared statement |
+| `SQLite3::Statement.bind_params(st, binds)` · `step(st)` · `to_a(st)` · `execute(st, [binds])` · `reset!(st)` | st · the next row or nil · the rows left · all rows (reset and bound first) · st |
+| `SQLite3::Statement.columns(st)` · `types(st)` · `column_count(st)` · `done?(st)` · `close(st)` · `closed?(st)` | Array of String · the declared column types (String or nil each) · Integer · true/false · nil · true/false |
+| `OpenSSL::HMAC.digest(alg, key, data)` · `hexdigest` · `base64digest` | Ruby's openssl (built in; `require "openssl"` is allowed): a binary String · hex · Base64; alg is a digest name (`"SHA256"`) |
+| `OpenSSL::KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)` · `OpenSSL::PKCS5.pbkdf2_hmac(pass, salt, iter, len, alg)` · `OpenSSL::Random.random_bytes(n)` | PBKDF2's `length` bytes · the same · n random bytes |
+| `OpenSSL::Cipher.new(name)` · `encrypt(c)` / `decrypt(c)` · `set_key(c, k)` · `set_iv(c, iv)` · `set_auth_data(c, s)` · `set_auth_tag(c, t)` · `random_iv(c)` | an OpenSSL::Cipher (Ruby's) · c · k · iv · s · t · a new IV, set; Ruby's `c.key = k` is `set_key` |
+| `OpenSSL::Cipher.update(c, s)` · `final(c)` · `auth_tag(c, [n])` · `key_len(c)` · `iv_len(c)` · `authenticated?(c)` | String · String · the GCM tag · Integer · Integer · true/false; errors `OpenSSL::Cipher::CipherError` (`AuthTagError` among them), all under `OpenSSL::OpenSSLError` |
 
 - **Variables in a thread.** A block shares the variables around it, as every block does. For a
   thread, the variables of the blocks around `Thread.new` (their parameters and locals), and the
@@ -1320,7 +1339,7 @@ block's results over every call that may compute it.
 
 ### Typed arrays
 
-`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`,
+`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`, `Regexp[...]`,
 `Tuple[...]`, and `D[...]` for each class `D` create an Array whose element type is that type ([§12](#12-tuples-and-arrays)).
 
 ## 16. Not yet supported

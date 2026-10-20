@@ -4,7 +4,7 @@ SQLite3::Database is the type of a connection to an SQLite database (Ruby's sqli
 
 A row is an Array of the column values in the order the statement names them, each an `Integer` (INTEGER), a `Float` (REAL), a `String` (TEXT, in UTF-8; a BLOB is a binary String, encoding `ASCII-8BIT`), or `nil` (NULL). The result of `execute` is an Array of such rows, so the checker gives a value read from a row the type `Integer | Float | String | nil`: narrow it (`v => Integer`, `case v in String`) before an operation that takes one type. A row is an Array, not a Tuple, so `in [a, b]` does not match it; `|id, name|` in a block destructures it, as for any Array.
 
-The binds are an Array (`Any[...]`, not a Tuple `[...]`) whose elements fill the statement's `?` (and `?1`, `?2`) in order. A bind is an `Integer`, a `Float`, a `String` or `nil`; any other type (`true`, a Symbol, an Array, ...) is a static `type` problem, and a `TypeError` (`can't prepare Symbol`) where the checker cannot see it. Fewer binds than placeholders leave the rest NULL; more is a `SQLite3::RangeException`. Named parameters (`:name` with a Hash), `results_as_hash`, prepared statements (`SQLite3::Statement`) and the type translation options of the gem are not available.
+The binds are an Array (`Any[...]`, not a Tuple `[...]`) whose elements fill the statement's `?` (and `?1`, `?2`) in order. A bind is an `Integer`, a `Float`, a `String` or `nil`; any other type (`true`, a Symbol, an Array, ...) is a static `type` problem, and a `TypeError` (`can't prepare Symbol`) where the checker cannot see it. Fewer binds than placeholders leave the rest NULL; more is a `SQLite3::RangeException`. Named parameters (`:name` with a Hash), `results_as_hash` and the type translation options of the gem are not available. A prepared statement, which also tells the declared type of each column, is a [SQLite3::Statement](SQLite3-Statement.md) (`SQLite3::Database.prepare`).
 
 The errors are the gem's exception classes, with its messages: `SQLite3::SQLException` (a syntax error, a missing table or column), `SQLite3::ConstraintException` (UNIQUE, NOT NULL, CHECK, FOREIGN KEY), `SQLite3::BusyException`, `SQLite3::LockedException`, `SQLite3::ReadOnlyException`, `SQLite3::MisuseException`, `SQLite3::RangeException`, `SQLite3::CantOpenException`, and the rest of the gem's (`SQLite3::MismatchException`, `NotADatabaseException`, `IOException`, `FullException`, `TooBigException`, `AbortException`, `InterruptException`, `PermissionException`, `CorruptException`, `InternalException`, `MemoryException`, `NotFoundException`, `ProtocolException`, `EmptyException`, `SchemaChangedException`, `AuthorizationException`, `FormatException`, `UnsupportedException`). They are all under `SQLite3::Exception`, so `rescue SQLite3::Exception` catches every one of them. Like `Math::DomainError` these are nested names: they are written in `rescue` (and `raise`), and their message is read with `Exception.message(e)` ([Exceptions](Exceptions.md)). An operation on a closed database is an `ArgumentError` (`prepare called on a closed database`), as in the gem.
 
@@ -132,7 +132,7 @@ p(SQLite3::Database.last_insert_row_id(db))   # => 2
 
 `SQLite3::Database.changes(x)`
 
-The number of rows the most recent `insert`, `update` or `delete` changed, an Integer (a statement of another kind leaves it as it was).
+The number of rows the most recent `insert`, `update` or `delete` changed, an Integer (a statement of another kind leaves it as it was). `total_changes` counts them over the whole connection.
 
 ```ruby
 db = SQLite3::Database.new(":memory:")
@@ -144,11 +144,48 @@ SQLite3::Database.execute(db, "select * from t")
 p(SQLite3::Database.changes(db))    # => 2
 ```
 
+## total_changes
+
+`SQLite3::Database.total_changes(x)`
+
+The number of rows changed by every `insert`, `update` and `delete` since the database was opened, an Integer (the gem's `total_changes`). ActiveRecord compares it before and after a statement to tell whether the statement changed rows, since `changes` keeps the count of the last one that did.
+
+```ruby
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute_batch(db, "create table t (n integer); insert into t values (1), (2), (3);")
+before = SQLite3::Database.total_changes(db)
+SQLite3::Database.execute(db, "select * from t")
+p(SQLite3::Database.total_changes(db) - before, SQLite3::Database.changes(db))   # => 0
+                                                                                  # => 3
+SQLite3::Database.execute(db, "delete from t where n = 1")
+p(SQLite3::Database.total_changes(db))   # => 4
+```
+
+## prepare
+
+`SQLite3::Database.prepare(x, String)`
+
+Compiles the first SQL statement of `sql` and returns it as a [SQLite3::Statement](SQLite3-Statement.md), to be bound, run and run again; the same as `SQLite3::Statement.new(db, sql)`. A syntax error or a missing table is raised here, as `SQLite3::SQLException` (the gem's message adds the statement on its own line). The gem's form with a block (closing the statement after it) is not available: call `SQLite3::Statement.close`.
+
+```ruby
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute(db, "create table t (id integer primary key, name text)")
+st = SQLite3::Database.prepare(db, "insert into t (name) values (?)")
+Array.each(Any["ann", "bob"]) { |name| SQLite3::Statement.execute(st, Any[name]) }
+SQLite3::Statement.close(st)
+p(SQLite3::Database.execute(db, "select * from t"))   # => [[1, "ann"], [2, "bob"]]
+begin
+  SQLite3::Database.prepare(db, "select * from nope")
+rescue SQLite3::SQLException => e
+  p(Exception.message(e))           # => "no such table: nope:\nselect * from nope"
+end
+```
+
 ## transaction
 
 `SQLite3::Database.transaction(x) { }`
 
-Begins a transaction, calls the block with the database, and commits; the result is the block's value. When the block raises, the transaction is rolled back and the error is raised again; leaving the block by `break`, `next` or `return` commits, as in Ruby. A transaction inside another is a `SQLite3::SQLException` (`cannot start a transaction within a transaction`).
+Begins a transaction, calls the block with the database, and commits; the result is the block's value. When the block raises, the transaction is rolled back and the error is raised again; leaving the block by `break`, `next`, `return` or `throw` commits, as the gem's does. A transaction inside another is a `SQLite3::SQLException` (`cannot start a transaction within a transaction`).
 
 ```ruby
 db = SQLite3::Database.new(":memory:")

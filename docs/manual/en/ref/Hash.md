@@ -2,7 +2,7 @@
 
 A Hash maps keys to values and keeps insertion order. There is no literal like Ruby's `{"a" => 1}`: a Hash is made by `Hash.of("a" => 1, b: 2)`, `Hash.new`, or `Hash.new(default)` ([Values and types](../03-values.md)). **`{k: v}` is a Record, not a Hash** (and `{}` is an empty Record, rejected statically; see [Record](Record.md)). Keys written as labels, `Hash.of(name: v)`, are Symbols.
 
-A key may be an Integer, Float, String, Symbol, true, false, nil, Time, or a Tuple, Record, Array, Hash, Set, or a value of a class made only of these. A Regexp, a Range, or a value of a class that defines its own equality (`==` or `Comparable`) cannot be a key: `TypeError` at run time. Tuple and Record keys are copied when stored, so writing to the original later does not change the key (an Array key, as in Ruby, becomes unfindable when changed). `"a"` and `:a` are different keys, and so are `1` and `1.0`.
+A key may be an Integer, Float, String, Symbol, true, false, nil, Time, Regexp (equal by source and options, as in Ruby), or a Tuple, Record, Array, Hash, Set, or a value of a class made only of these. A Range, or a value of a class that defines its own equality (`==` or `Comparable`) cannot be a key: `TypeError` at run time. Tuple and Record keys are copied when stored, so writing to the original later does not change the key (an Array key, as in Ruby, becomes unfindable when changed). `"a"` and `:a` are different keys, and so are `1` and `1.0`.
 
 `h[k]` gives nil on a miss (the default, for a Hash made by `Hash.new(default)`). Using that nil unchecked is reported only at `--strict=3`, as `index-nil` (level 2 does not report it). To make a miss an exception, use `Hash.fetch`. The nil of `Hash.dig`, `Hash.min_by` and `Hash.max_by` is a miss too (level 3). The nil of `Hash.delete`, `Hash.key`, `Hash.first`, `Hash.shift`, `Hash.find` and the like is reported at level 2.
 
@@ -110,7 +110,7 @@ p(h)                               # => {"a" => 10, "b" => 2}
 ```
 
 ```ruby error
-Hash.store(Hash.new, /x/, 1)         # !> TypeError: Hash.store: Regexp cannot be a Hash key or Set element
+Hash.store(Hash.new, 1..2, 1)        # !> TypeError: Hash.store: Range cannot be a Hash key or Set element
 ```
 
 ## fetch
@@ -814,7 +814,7 @@ p(Hash.invert(Hash.of("a" => 1, "b" => 1)))        # => {1 => "b"}
 ```
 
 ```ruby error
-Hash.invert(Hash.of("a" => /x/))      # !> TypeError: Hash.invert: Regexp cannot be a Hash key or Set element
+Hash.invert(Hash.of("a" => 1..2))     # !> TypeError: Hash.invert: Range cannot be a Hash key or Set element
 ```
 
 ## delete

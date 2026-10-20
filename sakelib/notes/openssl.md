@@ -1,28 +1,32 @@
 # openssl
 
-`require "openssl"` gives `OpenSSL::HMAC` only (2026-10-13), a keyed digest (RFC 2104) written in Sake over
-`sakelib/digest.sake`. It was asked for by the web experiment (experiments/2026-10-12-web): Sinatra's signed
-session cookie and jwt each had their own HMAC.
+OpenSSL is built into the interpreter (2026-10-20, for the Rails port: lib/sake/stdlib_openssl.rb over Ruby's
+openssl). `sakelib/openssl.sake` is kept only so that `require "openssl"` works as in Ruby; it defines nothing.
+From 2026-10-13 to 10-20 it held `OpenSSL::HMAC` written in Sake over `sakelib/digest.sake` (about 20 ms per
+HMAC, so Rails' 1000-iteration PBKDF2 took about 20 s per key); the built-in is OpenSSL's speed.
 
 ## API
 
 | Ruby | Sake | |
 |---|---|---|
-| `OpenSSL::HMAC.hexdigest("SHA256", key, data)` | the same | same |
-| `OpenSSL::HMAC.digest("SHA256", key, data)` | the same | same (a binary String) |
-| `OpenSSL::HMAC.base64digest("SHA256", key, data)` | the same | same |
-| `OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new("SHA256"), ...)` | — | missing: the digest is named by a String |
-| `OpenSSL::HMAC.new(key, digest)`, `update`, `<<` | — | missing |
-| an unknown digest name | `OpenSSL::Digest::DigestError` | differs: the message is Ruby's first part, `unsupported digest algorithm: XYZ` |
-
-Digests: MD5, SHA1, SHA256, SHA384, SHA512, in any case (`"sha256"`), as OpenSSL takes them.
+| `OpenSSL::HMAC.hexdigest("SHA256", key, data)` (`digest`, `base64digest`) | the same | same |
+| `OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new("SHA256"), ...)` | — | the digest is named by a String |
+| `OpenSSL::KDF.pbkdf2_hmac(pw, salt:, iterations:, length:, hash:)` | the same | same (hash: a String) |
+| `OpenSSL::PKCS5.pbkdf2_hmac(pw, salt, iter, len, digest)`, `pbkdf2_hmac_sha1` | the same | same (digest: a String) |
+| `OpenSSL::Random.random_bytes(n)` | the same | same |
+| `c = OpenSSL::Cipher.new("aes-256-gcm")`, `c.encrypt`, `c.decrypt` | `OpenSSL::Cipher.new(...)`, `OpenSSL::Cipher.encrypt(c)` | a native value, like SQLite3::Database |
+| `c.key = k`, `c.iv = iv`, `c.auth_tag = t`, `c.auth_data = s`, `c.padding = 0`, `c.iv_len = n` | `OpenSSL::Cipher.set_key(c, k)`, `set_iv`, `set_auth_tag`, `set_auth_data`, `set_padding`, `set_iv_len` | Sake's writer names |
+| `c.update(s)`, `c.final`, `c.auth_tag(16)`, `c.random_iv`, `c.random_key`, `c.reset` | `OpenSSL::Cipher.update(c, s)`, ... | same |
+| `c.name`, `key_len`, `iv_len`, `block_size`, `authenticated?`, `OpenSSL::Cipher.ciphers` | the same, subject first | same |
+| `OpenSSL::Digest::DigestError`, `OpenSSL::Cipher::CipherError`, `AuthTagError`, `OpenSSL::KDF::KDFError`, `OpenSSL::HMACError`, `OpenSSL::OpenSSLError` | rescuable by these names | same parents (`AuthTagError < CipherError`, all `< OpenSSLError`) |
 
 ## Not ported
 
-Ciphers, keys, certificates, SSL (Sake's TLS socket is the built-in `TCPSocket.connect_ssl`), and
-`OpenSSL::Digest` itself (`Digest::SHA256` is digest.sake's).
+`OpenSSL::Digest` objects (`Digest::SHA256` is sakelib/digest.sake's, in Sake), incremental `OpenSSL::HMAC.new`,
+public keys (`OpenSSL::PKey`), certificates, SSL contexts (Sake's TLS socket is the built-in `Socket.connect_ssl`).
 
-## Size
+## Tests
 
-46 lines with comments. The test (`test/sakelib/openssl.{sake,rb}`) runs 6 names × 6 keys (empty, the block size,
-longer than the block, non-ASCII) × 4 messages, RFC 4231's test case 2, and the error.
+`test/sakelib/openssl.{sake,rb}` (HMAC: 6 names × 6 keys × 4 messages, RFC 4231 case 2, the error),
+`test/sakelib/openssl_cipher.{sake,rb}` (PBKDF2 both ways, GCM and CBC round trips as MessageEncryptor runs
+them, a bad tag), and the goldens `test/samples/openssl*.sake`.

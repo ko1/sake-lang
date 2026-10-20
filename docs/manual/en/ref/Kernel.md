@@ -346,6 +346,70 @@ def rec(n) = once { rec(n) }
 rec(1)                           # !> SystemStackError: once: the block reached its own once again while computing it
 ```
 
+## catch
+
+`Kernel.catch(Any) { }`
+
+Runs the block with the tag as its argument, and returns the block's value, or the value of a `throw` of the same tag made while it runs (Ruby's `catch`). The tag is usually a Symbol; a throw matches the innermost `catch` whose tag is the same object (`equal?`, as in Ruby: two Symbols of one name are the same object, two Strings made at two places are not). A throw leaves the functions and blocks between it and the `catch` at once; their `ensure` clauses run, and a `rescue` on the way does not stop it (a throw is not an exception). The checker gives `catch` the type of the block's value joined with the types thrown to its tag anywhere in the program (nil for a throw without a value); a literal Symbol tag only takes what is thrown with that Symbol. Ruby's `catch` without a tag, which makes a fresh object, does not exist.
+
+```ruby
+def first_over(xs, limit)
+  catch(:found) do
+    Array.each(xs) { |x| throw :found, x if x > limit }
+    nil
+  end
+end
+p(first_over(Any[1, 5, 9], 4))   # => 5
+p(first_over(Any[1, 2], 4))      # => nil
+v = catch(:halt) do |tag|
+  p(tag)                         # => :halt
+  throw :halt
+  1
+end
+p(v)                             # => nil
+```
+
+## throw
+
+`Kernel.throw(Any, [Any])`
+
+Ends the innermost running `catch` whose tag is `tag`, which returns `value` (nil when it is left out). Ruby's `throw`; it never returns. Rails' callbacks halt a chain with `throw :abort`. When no `catch` of that tag is running, it raises `UncaughtThrowError` (`uncaught throw :tag`), which `rescue ArgumentError` also catches, as in Ruby.
+
+```ruby
+def check(x)
+  throw :abort if x < 0
+  "ok #{x}"
+end
+p(catch(:abort) { check(1) })    # => "ok 1"
+p(catch(:abort) { check(-1) })   # => nil
+begin
+  throw :nobody, 1
+rescue UncaughtThrowError => e
+  puts(Exception.message(e))     # => uncaught throw :nobody
+end
+```
+
+## class_name
+
+`Kernel.class_name(Any)`
+
+The name of the value's class as Ruby's `x.class.name` gives it: `"Integer"`, `"String"`, `"NilClass"`, `"TrueClass"`, a class's full name (`"Shop::Order"`), an exception's type (`"KeyError"`, `"ActiveRecord::RecordNotFound"`). A Tuple is an `"Array"` and a Record a `"Hash"`, as they are in Ruby; a Queue is `"Thread::Queue"` and a Mutex `"Thread::Mutex"`. Rails formats messages and keys with it (`"#{e.class.name}: #{e.message}"`).
+
+```ruby
+module Shop
+  class Order
+    attr_reader id
+  end
+end
+p(Array.map(Any[1, "s", nil, true, [1, "a"], {a: 1}, Shop::Order.new(1)]) { class_name(it) })
+# => ["Integer", "String", "NilClass", "TrueClass", "Array", "Hash", "Shop::Order"]
+begin
+  Hash.fetch(Hash.new, :k)
+rescue => e
+  puts("#{class_name(e)}: #{Exception.message(e)}")   # => KeyError: key not found: :k
+end
+```
+
 ## rand
 
 `Kernel.rand([Integer|Float])`

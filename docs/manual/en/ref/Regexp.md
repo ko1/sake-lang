@@ -4,7 +4,25 @@ A Regexp is a regular expression. The literal `/\d+/` takes Ruby's flags: `i` (i
 
 The main difference from Ruby is that a match leaves nothing behind globally: `$~`, `$1` and `Regexp.last_match` do not exist, and `/(?<y>\d+)/ =~ s` does not create a local variable `y` (a static error). The result of a match is the MatchData that `Regexp.match` returns, kept in a variable and read from there ([MatchData](MatchData.md)).
 
-The operators on Regexps are `=~` (the position of a match in a String, or nil), `==` and `!=`. The String forms `s =~ re` and `s !~ re` exist too. `String.match`, `match?`, `scan`, `sub`, `gsub`, `split`, `index` and others also take a Regexp ([Operators and indexing](../05-operators.md)). A Regexp cannot be a Hash key or a Set element (`TypeError`).
+The operators on Regexps are `=~` (the position of a match in a String, or nil), `==` and `!=`. The String forms `s =~ re` and `s !~ re` exist too. `String.match`, `match?`, `scan`, `sub`, `gsub`, `split`, `index` and others also take a Regexp ([Operators and indexing](../05-operators.md)). A Regexp can be a Hash key or a Set element: two are the same key when their source and options are, as in Ruby. `Regexp[...]` is an Array of Regexps.
+
+## Regexp[]
+
+`Regexp[*Any]`
+
+Makes an **Array of Regexps**. It is a typed Array like `Integer[]`: every element must be a Regexp, and every write (`Array.push`, ...) is checked. Anything but a Regexp is a `type` problem statically and a `TypeError` at run time. The empty Array of Regexps is `Regexp[]`.
+
+```ruby
+filters = Regexp[/passw/i, /token/]
+Array.push(filters, Regexp.new("secret"))
+p(filters)                                               # => [/passw/i, /token/, /secret/]
+p(Array.any?(filters) { |r| Regexp.match?(r, "api_token") })   # => true
+p(Array.size(Regexp[]))                                  # => 0
+```
+
+```ruby error
+Array.push(Regexp[/a/], "a")       # !> Array.push: an element must be Regexp, but is String
+```
 
 ## new
 

@@ -5,12 +5,12 @@
 - `E.new(message)` が例外値を作ります（`message` は普通 String ですが、型は検査されません）。`raise E, "msg"` は `raise E.new("msg")` の略、`raise E` はメッセージを型名にします。`raise "msg"` は `RuntimeError` です。`raise` は構文で、[例外とエラー](../08-exceptions.md)にあります。
 - `E.message(e)` がメッセージを読み、`E.set_message(e, s)` が書き換えます（`e.E.message` も同じ）。古い `E.get_message` は拒まれ、`E.message` に直すよう案内されます。どの型の例外値でも読めるのが `Exception.message(e)` で、`rescue => e` のように型が和になっているときに使います。
 - `Exception.backtrace(e)` は投げられたときの呼び出しの列（`"FILE:LINE:in 'FUNCTION'"` の Array、内側が先）、`Exception.cause(e)` はそのとき rescue 節で扱っていた例外です。まだ投げていない値ではどちらも nil です（[バックトレースと原因](../08-exceptions.md)）。
-- `rescue E => e` は列挙した型を捕まえます。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` も、`rescue IOError` は `EOFError` も、`rescue RangeError` は `FloatDomainError` も、`rescue ArgumentError` は `Math::DomainError` も、`rescue SQLite3::Exception` は `SQLite3::` の例外すべてを捕まえます。それを親に書いたクラス（`class E < RangeError`）も捕まえます。ユーザの `class B < A` は書き写しなので `rescue A` は B を捕まえません。まとめるには、型が include したモジュールを書きます（`rescue M`）。複数は `rescue A, B => e`、すべては `rescue => e`（`rescue StandardError`、`rescue Exception` も同じ）です。
+- `rescue E => e` は列挙した型を捕まえます。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` も、`rescue IOError` は `EOFError` も、`rescue RangeError` は `FloatDomainError` も、`rescue ArgumentError` は `Math::DomainError` と `UncaughtThrowError` も、`rescue SQLite3::Exception` は `SQLite3::` の例外すべてを、`rescue OpenSSL::OpenSSLError` は `OpenSSL::` の例外すべてを（`rescue OpenSSL::Cipher::CipherError` は `OpenSSL::Cipher::AuthTagError` も）捕まえます。それを親に書いたクラス（`class E < RangeError`）も捕まえます。ユーザの `class B < A` は書き写しなので `rescue A` は B を捕まえません。まとめるには、型が include したモジュールを書きます（`rescue M`）。複数は `rescue A, B => e`、すべては `rescue => e`（`rescue StandardError`、`rescue Exception` も同じ）です。
 - `p(e)` は `#<E: message>`、`==` はフィールドで比べます。
 - 組み込みの操作が投げた例外のメッセージは Ruby の文（`divided by 0`）で、rescue されずにプログラムを終えたときの報告には操作名も付きます（`ZeroDivisionError: Kernel.Rational: divided by 0`）。
 - 組み込みの操作の中で Ruby が投げた例外が、バックトレース付きの生の Ruby エラーとして漏れることはありません。同じ種類の Sake の例外になり、他と同じく rescue でき、メッセージは Ruby のもの（Ruby の `Sake::Tuple` は `Tuple`）です。Ruby の `EOFError`・`Errno::*`・`ClosedQueueError` は `IOError`、`FrozenError` は `TypeError`、`Math::DomainError` はそのまま `Math::DomainError`、Ruby 自身の `RuntimeError`（不正な文字列の `String.undump`）は `ArgumentError` になります。Sake の `RuntimeError` はプログラム自身の `raise` からだけ生じます。
 
-`Math::DomainError` も組み込みの例外型で、`rescue Math::DomainError => e` と `raise Math::DomainError, "msg"` に書けますが、入れ子の名前なので `Math::DomainError.new(...)` と `Math::DomainError.message(e)` は書けません（`Exception.message(e)` で読みます）。`Math.sqrt(-1)`、`Math.log(-1)`、`Integer.sqrt(-1)`、`Integer.digits(-1)`、負の Float `x` の `x ** 0.5`（`-8.0 ** 0.5 is not a real number (a negative base with a fractional exponent)`。Ruby は Complex を返します）が投げます。SQLite の例外（`SQLite3::SQLException`、`SQLite3::ConstraintException` など。`SQLite3::Exception` の下）も同じく入れ子の名前で、一覧は [SQLite3::Database](SQLite3-Database.md) にあります。`SystemStackError`（深すぎる再帰、`once` の再入）、`LocalJumpError`、`NotImplementedError` はプログラムの誤りで、rescue できず、`rescue` に書くのは静的エラーです。
+`Math::DomainError` も組み込みの例外型で、`rescue Math::DomainError => e` と `raise Math::DomainError, "msg"` に書けますが、入れ子の名前なので `Math::DomainError.new(...)` と `Math::DomainError.message(e)` は書けません（`Exception.message(e)` で読みます）。`Math.sqrt(-1)`、`Math.log(-1)`、`Integer.sqrt(-1)`、`Integer.digits(-1)`、負の Float `x` の `x ** 0.5`（`-8.0 ** 0.5 is not a real number (a negative base with a fractional exponent)`。Ruby は Complex を返します）が投げます。SQLite の例外（`SQLite3::SQLException`、`SQLite3::ConstraintException` など。`SQLite3::Exception` の下）も同じく入れ子の名前で、一覧は [SQLite3::Database](SQLite3-Database.md) にあります。OpenSSL の例外も同じで、すべて `OpenSSL::OpenSSLError` の下にあります: `OpenSSL::Digest::DigestError`（知らないダイジェスト名）、`OpenSSL::HMACError`、`OpenSSL::KDF::KDFError`、`OpenSSL::Cipher::CipherError`、`OpenSSL::Cipher::AuthTagError`（[OpenSSL::Cipher](OpenSSL-Cipher.md)）。`SystemStackError`（深すぎる再帰、`once` の再入）、`LocalJumpError`、`NotImplementedError` はプログラムの誤りで、rescue できず、`rescue` に書くのは静的エラーです。
 
 型の誤り（`TypeError`）やパターンの不一致（`NoMatchingPatternError`）の多くは、実行前の検査が `type` の問題として止めるので、実行時に届くのは検査が見られなかった場所（`Any` を受ける操作、`--strict=0` で走らせたプログラム）だけです。
 
@@ -308,5 +308,48 @@ begin
   Thread.join(Thread.current)
 rescue ThreadError => e
   puts(Exception.message(e))       # => Target thread must not be current thread
+end
+```
+
+## NoMethodError
+
+`NoMethodError.new(message)`
+
+受け手が持たないメソッドについての Ruby のエラーです。Sake には値のメソッド呼び出しが無いので、これを投げる操作はありません（知らない操作は静的エラーです）。名前を書いてこれを投げたり rescue したりする、Ruby から移したコードのためにあります（ActiveSupport::StringInquirer や `delegate` の委譲がそうです）。`class DelegationError < NoMethodError` と宣言したクラスは `rescue NoMethodError` で捕まえられます。
+
+```ruby
+class DelegationError < NoMethodError
+end
+def call(name)
+  raise NoMethodError, "undefined method '#{name}' for nil" if name == "missing"
+  raise DelegationError, "delegated to nil" if name == "delegated"
+  "called #{name}"
+end
+Array.each(Any["ok", "missing", "delegated"]) do |name|
+  puts(call(name))
+rescue NoMethodError => e
+  puts("#{class_name(e)}: #{Exception.message(e)}")
+end
+# => called ok
+# => NoMethodError: undefined method 'missing' for nil
+# => DelegationError: delegated to nil
+```
+
+## UncaughtThrowError
+
+`UncaughtThrowError.new(message)`
+
+そのタグの `catch` が実行中でないときに `throw` が投げます（[Kernel](Kernel.md)）。メッセージは Ruby のもの（`uncaught throw :tag`）です。Ruby と同じく ArgumentError の一種で、`rescue ArgumentError` でも捕まえられます。Ruby の `UncaughtThrowError#tag` と `#value` はありません（例外はメッセージだけを持ちます）。
+
+```ruby
+begin
+  catch(:a) { throw :b, 1 }
+rescue UncaughtThrowError => e
+  p(e)                             # => #<UncaughtThrowError: uncaught throw :b>
+end
+begin
+  throw :c
+rescue ArgumentError => e
+  puts(Exception.message(e))       # => uncaught throw :c
 end
 ```

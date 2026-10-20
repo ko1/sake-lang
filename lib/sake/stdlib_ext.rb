@@ -27,6 +27,7 @@ module Sake
       install_concurrency(reg)
       install_net(reg)
       install_sqlite3(reg)
+      install_openssl(reg)
       install_more_kernel(reg)
       install_more_numeric(reg)
       install_more_string(reg)
@@ -43,7 +44,7 @@ module Sake
         raise Fail.new("TypeError", "#{x.type.name} cannot be a Hash key or Set element: it defines its own equality (== or <=>)")
       end
       raise Fail.new("TypeError", "#{Values.describe(x)} cannot be a Hash key or Set element " \
-                                  "(it contains a value that cannot: a Regexp, a Range, or a Struct value with its own equality)")
+                                  "(it contains a value that cannot: a Range, or a Struct value with its own equality)")
     end
 
     def pair(k, v) = Tuple.new([k, v])
@@ -89,7 +90,7 @@ module Sake
       end
       %i[& | ^ << >>].each { |op| reg.define_binary(op, "Integer", "Integer") { |a, b| a.public_send(op, b) } }
       %i[| & -].each { |op| reg.define_binary(op, "Set", "Set") { |a, b| a.public_send(op, b) } }
-      %w[Symbol IO Regexp Range Thread Mutex Queue Socket TCPServer SQLite3::Database].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
+      %w[Symbol IO Regexp Range Thread Mutex Queue Socket TCPServer SQLite3::Database SQLite3::Statement OpenSSL::Cipher].each { |t| %i[== !=].each { |op| reg.define_binary(op, t, t) { |a, b| a.public_send(op, b) } } }
       reg.define_binary(:=~, "String", "Regexp") { |s, r| s =~ r }
       reg.define_binary(:=~, "Regexp", "String") { |r, s| r =~ s }
       reg.define_binary(:!~, "String", "Regexp") { |s, r| s !~ r }
@@ -325,6 +326,7 @@ module Sake
     STR_OR_RE = %w[String Regexp].freeze
 
     def install_regexp(reg)
+      install_typed_array(reg, "Regexp") # Regexp[r, ...]: an Array of Regexps
       reg.define("Regexp", :new, ["String"], optional: ["String"]) do |s, flags = ""| # flags: letters of "imxn", as the literal's
         raise Fail.new("ArgumentError", "unknown regexp option: #{flags}") unless flags.match?(/\A[imxn]*\z/)
         bits = { "i" => Regexp::IGNORECASE, "m" => Regexp::MULTILINE, "x" => Regexp::EXTENDED, "n" => Regexp::NOENCODING }
@@ -379,6 +381,14 @@ module Sake
       reg.define("Kernel", :rand, [], optional: [%w[Integer Float]]) { |n = nil| n ? Random.rand(n) : rand }
       reg.define("Kernel", :Integer, [%w[String Integer Float]]) { |x| ruby_error("ArgumentError") { Integer(x) } }
       reg.define("Kernel", :Float, [%w[String Integer Float]]) { |x| ruby_error("ArgumentError") { Float(x) } }
+      # Ruby's throw / catch: a throw of a tag ends the innermost catch of the same tag (equal?) with the value.
+      reg.define("Kernel", :throw, ["Any"], optional: ["Any"]) do |tag, value = nil|
+        ::Kernel.throw(tag, value)
+      rescue ::UncaughtThrowError => e
+        raise Fail.new("UncaughtThrowError", "uncaught throw #{Values.inspect(e.tag)}")
+      end
+      reg.define("Kernel", :catch, ["Any"], block: :required) { |tag, &b| ::Kernel.catch(tag) { b.call(tag) } }
+      reg.define("Kernel", :class_name, ["Any"]) { |x| Values.class_name(x) }
     end
 
     def install_more_numeric(reg)

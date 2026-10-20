@@ -73,7 +73,8 @@ Some things Ruby requires are built-in operations in Sake. `require "tmpdir"` is
 | `open3` | `Open3.capture2`, `capture2e`, `capture3`, `Kernel.system` |
 | `set` | `Set.of(...)`, `Set.add`, ... ([Values and types](03-values.md)) |
 | `socket` | `TCPServer`, `Socket` (TCP only) |
-| `sqlite3` (the gem) | `SQLite3::Database` ([SQLite3::Database](ref/SQLite3-Database.md)) |
+| `sqlite3` (the gem) | `SQLite3::Database`, `SQLite3::Statement` ([SQLite3::Database](ref/SQLite3-Database.md)) |
+| `openssl` (may still be required, as in Ruby) | `OpenSSL::HMAC`, `OpenSSL::KDF`, `OpenSSL::PKCS5`, `OpenSSL::Cipher`, `OpenSSL::Random` ([OpenSSL::Cipher](ref/OpenSSL-Cipher.md)) |
 
 ### Small libraries after gems
 

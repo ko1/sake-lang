@@ -40,6 +40,8 @@ p(Math.PI > 3)                   # => true
 | `__FILE__`, `__LINE__`, `__dir__` | String, Integer, String | this file (the main file as given, a required file's full path), this line, and this file's directory as a full path, as Ruby's: `File.join(__dir__, "views")` |
 | `equal?(a, b)` | true/false | identity |
 | `block_given?` | true/false | whether the current function got a block |
+| `catch(tag) { }` · `throw(tag, [v])` | the block's value, or v | Ruby's: a throw ends the innermost catch of its tag; the checker joins the block's type and the types thrown to the tag; no catch: `UncaughtThrowError` |
+| `class_name(x)` | String | Ruby's `x.class.name`: `"Integer"`, `"NilClass"`, `"Shop::Order"` (a Tuple is `"Array"`, a Record `"Hash"`) |
 
 - **Constants are operations.** `Math::PI`, `Math::E`, `Float::INFINITY`, `Float::NAN`, `Float::EPSILON`, `Float::MAX`, `Float::MIN` are read as operations (`Math.PI`), as `ARGV` is. Sake has no value constants, and no other built-in constants (a nested name such as `A::B` is a namespace, never a value).
 
@@ -377,13 +379,44 @@ p(SQLite3::Database.execute2(db, "select name from t"))   # => [["name"], ["ann"
 | `SQLite3::Database.new(path)` · `close(db)` · `closed?(db)` | a SQLite3::Database (`":memory:"`: in memory) · nil · true/false |
 | `execute(db, sql, [binds])` · `execute2(db, sql, [binds])` · `execute_batch(db, sql)` | the rows (an Array of Arrays of Integer, Float, String or nil) · the column names, then the rows · nil |
 | `last_insert_row_id(db)` · `changes(db)` · `transaction(db) { \|d\| }` | Integer · Integer · the block's value (rolled back, and the error raised again, when the block raises) |
+| `total_changes(db)` · `prepare(db, sql)` | Integer (rows changed since opened) · a [SQLite3::Statement](ref/SQLite3-Statement.md): `bind_params`, `step`, `to_a`, `execute`, `reset!`, `columns`, `types` (declared column types), `close` |
 
 - **Binds.** An Array (`Any[...]`) of Integer, Float, String and nil, filling `?` in order; another type is a static `type` problem.
 - **Errors.** The gem's classes with its messages: `SQLite3::SQLException`, `SQLite3::ConstraintException`, `SQLite3::BusyException`, ..., all caught by `rescue SQLite3::Exception`.
 
+## OpenSSL
+
+The digests, key derivation and ciphers of Ruby's openssl are built in (`require "openssl"` is allowed, as in Ruby, and does nothing more): `OpenSSL::HMAC.hexdigest(alg, key, data)`, `OpenSSL::KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)` (and `OpenSSL::PKCS5.pbkdf2_hmac`), `OpenSSL::Random.random_bytes(n)`, and `OpenSSL::Cipher`, a value holding one encryption or decryption (AES-256-GCM, AES-256-CBC, ...). They are what ActiveSupport::MessageVerifier, KeyGenerator and MessageEncryptor use. Details: [OpenSSL::HMAC](ref/OpenSSL-HMAC.md), [OpenSSL::KDF](ref/OpenSSL-KDF.md), [OpenSSL::Cipher](ref/OpenSSL-Cipher.md).
+
+```ruby
+key = OpenSSL::KDF.pbkdf2_hmac("secret", salt: "cookie", iterations: 1000, length: 32, hash: "sha256")
+c = OpenSSL::Cipher.new("aes-256-gcm")
+OpenSSL::Cipher.encrypt(c)
+OpenSSL::Cipher.set_key(c, key)
+iv = OpenSSL::Cipher.random_iv(c)
+data = OpenSSL::Cipher.update(c, "hello") + OpenSSL::Cipher.final(c)
+tag = OpenSSL::Cipher.auth_tag(c)
+d = OpenSSL::Cipher.decrypt(OpenSSL::Cipher.new("aes-256-gcm"))
+OpenSSL::Cipher.set_key(d, key)
+OpenSSL::Cipher.set_iv(d, iv)
+OpenSSL::Cipher.set_auth_tag(d, tag)
+p(OpenSSL::Cipher.update(d, data) + OpenSSL::Cipher.final(d))   # => "hello"
+puts(OpenSSL::HMAC.hexdigest("SHA1", "key", "data"))            # => 104152c5bfdca07bc633eebd46199f0255c9f49d
+```
+
+| Operation | Result |
+|---|---|
+| `OpenSSL::HMAC.digest(alg, key, data)` · `hexdigest` · `base64digest` | a binary String · hexadecimal · Base64 (alg: `"SHA256"`, `"sha1"`, ...) |
+| `OpenSSL::KDF.pbkdf2_hmac(pass, salt:, iterations:, length:, hash:)` · `OpenSSL::PKCS5.pbkdf2_hmac(pass, salt, iter, len, alg)` | `length` bytes of PBKDF2 |
+| `OpenSSL::Cipher.new(name)` · `encrypt(c)` · `decrypt(c)` · `set_key(c, k)` · `set_iv(c, iv)` · `random_iv(c)` | an OpenSSL::Cipher · c · c · k · iv · a new IV, set |
+| `update(c, s)` · `final(c)` · `set_auth_data(c, s)` · `auth_tag(c)` · `set_auth_tag(c, t)` | String · String · s · String (after final) · t (before final) |
+
+- **Setters.** Ruby's `c.key = k` is `OpenSSL::Cipher.set_key(c, k)`, as a class's writer is named.
+- **Errors.** Ruby's classes: `OpenSSL::Cipher::CipherError` (`bad decrypt`; `OpenSSL::Cipher::AuthTagError` for a wrong GCM tag is one too), `OpenSSL::Digest::DigestError`, `OpenSSL::KDF::KDFError`, all under `OpenSSL::OpenSSLError`.
+
 ## Typed arrays
 
-`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`, `Tuple[...]`, and `D[...]` for each class `D` create an Array whose element type is that type ([Values and types](03-values.md)). Every write is checked against the element type: a value of another type is a `type` problem statically and a `TypeError` at run time.
+`Integer[...]`, `Float[...]`, `Rational[...]`, `Complex[...]`, `String[...]`, `Symbol[...]`, `Regexp[...]`, `Tuple[...]`, and `D[...]` for each class `D` create an Array whose element type is that type ([Values and types](03-values.md)). Every write is checked against the element type: a value of another type is a `type` problem statically and a `TypeError` at run time.
 
 ```ruby
 xs = Integer[1, 2]

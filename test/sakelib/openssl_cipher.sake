@@ -1,0 +1,47 @@
+require "openssl"
+require "base64"
+
+# ActiveSupport::MessageEncryptor's steps: a key from PBKDF2, AES-256-GCM with an auth tag, AES-256-CBC with padding.
+key = OpenSSL::KDF.pbkdf2_hmac("secret_key_base", salt: "authenticated encrypted cookie", iterations: 1000, length: 32, hash: "sha256")
+puts String.unpack1(key, "H*")
+puts String.unpack1(OpenSSL::PKCS5.pbkdf2_hmac("secret_key_base", "signed cookie", 1000, 64, "sha1"), "H*")
+Array.each(Any["aes-256-gcm", "aes-256-cbc", "aes-128-gcm"]) do |name|
+  c = OpenSSL::Cipher.new(name)
+  puts "#{OpenSSL::Cipher.name(c)} #{OpenSSL::Cipher.key_len(c)} #{OpenSSL::Cipher.iv_len(c)} #{OpenSSL::Cipher.block_size(c)} #{OpenSSL::Cipher.authenticated?(c)}"
+end
+Array.each(Any["", "a", "sixteen bytes!!!", "日本語のメッセージ" * 5]) do |msg|
+  c = OpenSSL::Cipher.new("aes-256-gcm")
+  OpenSSL::Cipher.encrypt(c)
+  OpenSSL::Cipher.set_key(c, key)
+  OpenSSL::Cipher.set_iv(c, "0123456789ab")
+  OpenSSL::Cipher.set_auth_data(c, "")
+  data = OpenSSL::Cipher.update(c, msg) + OpenSSL::Cipher.final(c)
+  tag = OpenSSL::Cipher.auth_tag(c, 16)
+  puts "gcm #{Base64.strict_encode64(data)}--#{Base64.strict_encode64(tag)}"
+  d = OpenSSL::Cipher.new("aes-256-gcm")
+  OpenSSL::Cipher.decrypt(d)
+  OpenSSL::Cipher.set_key(d, key)
+  OpenSSL::Cipher.set_iv(d, "0123456789ab")
+  OpenSSL::Cipher.set_auth_tag(d, tag)
+  OpenSSL::Cipher.set_auth_data(d, "")
+  plain = OpenSSL::Cipher.update(d, data) + OpenSSL::Cipher.final(d)
+  puts String.force_encoding(plain, "UTF-8") == msg
+  cbc = OpenSSL::Cipher.new("aes-256-cbc")
+  OpenSSL::Cipher.encrypt(cbc)
+  OpenSSL::Cipher.set_key(cbc, key)
+  OpenSSL::Cipher.set_iv(cbc, "0123456789abcdef")
+  puts "cbc #{Base64.strict_encode64(OpenSSL::Cipher.update(cbc, msg) + OpenSSL::Cipher.final(cbc))}"
+end
+begin
+  d = OpenSSL::Cipher.new("aes-256-gcm")
+  OpenSSL::Cipher.decrypt(d)
+  OpenSSL::Cipher.set_key(d, key)
+  OpenSSL::Cipher.set_iv(d, "0123456789ab")
+  OpenSSL::Cipher.set_auth_tag(d, "x" * 16)
+  OpenSSL::Cipher.update(d, "abc")
+  OpenSSL::Cipher.final(d)
+rescue OpenSSL::Cipher::CipherError => e
+  puts "CipherError #{Exception.message(e)}"
+end
+iv = OpenSSL::Cipher.random_iv(OpenSSL::Cipher.encrypt(OpenSSL::Cipher.new("aes-256-gcm")))
+p String.bytesize(iv)

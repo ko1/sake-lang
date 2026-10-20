@@ -45,8 +45,8 @@ p(e)                                     # => #<ParseError: empty line=1>
 ```
 
 - **Two spellings.** `class Name < Exception` with `attr_reader field` lines, and its shorthand `Name = Exception.new(:field, ...)`, declare the same thing.
-- **Grouped by a module.** `class B < A` is a copy, and `rescue A` does not catch B. To group exception types, include a module in them and write `rescue M` ([below](#grouping-with-a-module)). The built-in types follow Ruby's parents: `rescue IndexError` also catches `KeyError`, `rescue IOError` `EOFError`, `rescue RangeError` `FloatDomainError`, and `rescue ArgumentError` `Math::DomainError`. A class declared under a built-in exception, such as `class ConvError < RangeError`, is caught by `rescue RangeError` too.
-- **Built-in exception types.** These are raised by built-in operations, and each has only `message`: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`. Each is described in the reference's [Exceptions](ref/Exceptions.md).
+- **Grouped by a module.** `class B < A` is a copy, and `rescue A` does not catch B. To group exception types, include a module in them and write `rescue M` ([below](#grouping-with-a-module)). The built-in types follow Ruby's parents: `rescue IndexError` also catches `KeyError`, `rescue IOError` `EOFError`, `rescue RangeError` `FloatDomainError`, and `rescue ArgumentError` `Math::DomainError` and `UncaughtThrowError`. A class declared under a built-in exception, such as `class ConvError < RangeError`, is caught by `rescue RangeError` too.
+- **Built-in exception types.** These are raised by built-in operations, and each has only `message`: `RuntimeError`, `ArgumentError`, `TypeError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EOFError`, `RegexpError`, `FloatDomainError`, `EncodingError`, `ThreadError`, `NoMatchingPatternError`, `Math::DomainError`, `UncaughtThrowError` (`throw` without a `catch`), and `NoMethodError` (raised only by `raise`, for code ported from Ruby). Each is described in the reference's [Exceptions](ref/Exceptions.md).
 
 ### Forms of raise
 
@@ -325,6 +325,7 @@ A runtime error stops the program at the line of the operation. The exit status 
 | `Math::DomainError` | e.g. `Math.sqrt(-1)` |
 | `SystemStackError` | recursion deeper than 10,000 |
 | `ThreadError` | deadlock |
+| `UncaughtThrowError` | `throw` of a tag no running `catch` has |
 
 - **`TypeError`.** An operation received a value of the wrong type. An operator not supported by the left operand's type. A write of another type into a typed Array. Multiple assignment from a value other than a Tuple or an Array.
 - **`IndexError`.** A Tuple index outside the Tuple. `Array.fetch` outside the Array. Writing past the end of an Array of T (`xs[5] = 3`; the gap would be nil).

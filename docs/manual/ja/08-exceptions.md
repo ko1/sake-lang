@@ -45,8 +45,8 @@ p(e)                                     # => #<ParseError: empty line=1>
 ```
 
 - **2 つの書き方。** `class Name < Exception` に `attr_reader field` の行を書く形と、その略記 `Name = Exception.new(:field, ...)` は同じものです。
-- **まとめるのはモジュール。** `class B < A` は書き写しで、`rescue A` は B を捕まえません。例外型をまとめるには、モジュールを include させて `rescue M` と書きます（[下](#モジュールでまとめる)）。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` を、`rescue IOError` は `EOFError` を、`rescue RangeError` は `FloatDomainError` を、`rescue ArgumentError` は `Math::DomainError` も捕まえます。`class ConvError < RangeError` のように組み込みの例外を親に書いたクラスも、`rescue RangeError` で捕まります。
-- **組み込みの例外型。** 組み込みの操作が投げる型で、フィールドは `message` だけです: `RuntimeError`、`ArgumentError`、`TypeError`、`KeyError`、`IndexError`、`ZeroDivisionError`、`RangeError`、`IOError`、`EOFError`、`RegexpError`、`FloatDomainError`、`EncodingError`、`ThreadError`、`NoMatchingPatternError`、`Math::DomainError`。それぞれの詳細は[組み込みリファレンスの Exceptions](ref/Exceptions.md)にあります。
+- **まとめるのはモジュール。** `class B < A` は書き写しで、`rescue A` は B を捕まえません。例外型をまとめるには、モジュールを include させて `rescue M` と書きます（[下](#モジュールでまとめる)）。組み込みの型は Ruby の親子関係のとおりで、`rescue IndexError` は `KeyError` を、`rescue IOError` は `EOFError` を、`rescue RangeError` は `FloatDomainError` を、`rescue ArgumentError` は `Math::DomainError` と `UncaughtThrowError` も捕まえます。`class ConvError < RangeError` のように組み込みの例外を親に書いたクラスも、`rescue RangeError` で捕まります。
+- **組み込みの例外型。** 組み込みの操作が投げる型で、フィールドは `message` だけです: `RuntimeError`、`ArgumentError`、`TypeError`、`KeyError`、`IndexError`、`ZeroDivisionError`、`RangeError`、`IOError`、`EOFError`、`RegexpError`、`FloatDomainError`、`EncodingError`、`ThreadError`、`NoMatchingPatternError`、`Math::DomainError`、`UncaughtThrowError`（`catch` の無い `throw`）、`NoMethodError`（`raise` だけが投げます。Ruby から移したコードのため）。それぞれの詳細は[組み込みリファレンスの Exceptions](ref/Exceptions.md)にあります。
 
 ### raise の形
 
@@ -325,6 +325,7 @@ Queue.pop(q)                             # !> ThreadError: deadlock: every threa
 | `Math::DomainError` | `Math.sqrt(-1)` など |
 | `SystemStackError` | 10,000 より深い再帰 |
 | `ThreadError` | デッドロック |
+| `UncaughtThrowError` | 実行中のどの `catch` にも無いタグの `throw` |
 
 - **`TypeError`。** 誤った型の値を受けた操作。左のオペランドの型が支えない演算子。型付き Array への別の型の書き込み。Tuple でも Array でもない値からの多重代入。
 - **`IndexError`。** Tuple の外の添字。Array の外の `Array.fetch`。T の Array の末尾の先への書き込み（`xs[5] = 3`。隙間が nil になるため）。

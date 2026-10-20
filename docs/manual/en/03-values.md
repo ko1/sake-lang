@@ -23,6 +23,8 @@ Sake's values look much like Ruby's, but every value carries one type tag, and e
 | IO | `IO.stdout`, `File.open(path)` | one type for files and streams |
 | Thread, Mutex, Queue, TCPServer, Socket | `Thread.new { }`, `Mutex.new`, ... | concurrency and networking |
 | SQLite3::Database | `SQLite3::Database.new(path)` | a connection to an SQLite database ([SQLite3::Database](ref/SQLite3-Database.md)) |
+| SQLite3::Statement | `SQLite3::Database.prepare(db, sql)` | a prepared statement ([SQLite3::Statement](ref/SQLite3-Statement.md)) |
+| OpenSSL::Cipher | `OpenSSL::Cipher.new("aes-256-gcm")` | a cipher of Ruby's openssl ([OpenSSL::Cipher](ref/OpenSSL-Cipher.md)) |
 | class | `Point.new(x, y)` | record with mutable fields ([Classes](07-classes.md)) |
 
 - **Truthiness.** Only `nil` and `false` are falsy. Every other value, including `0` and `""`, is truthy.
@@ -257,13 +259,13 @@ p(Set.of(1, 1.0))                 # => Set[1, 1.0]
 p(1 == 1.0)                    # => true
 ```
 
-- **Allowed.** Integer, Float, String, Symbol, true, false, nil, Time, and Tuples, Records, Arrays, Hashes, Sets, and values of a class made of these.
-- **Not allowed (`TypeError`).** Regexp, Range, and values of a class that defines its own equality (`==`, or `Comparable` with `<=>`), because the key comparison could disagree with that equality.
+- **Allowed.** Integer, Float, String, Symbol, true, false, nil, Time, Regexp (by source and options), and Tuples, Records, Arrays, Hashes, Sets, and values of a class made of these.
+- **Not allowed (`TypeError`).** Range, and values of a class that defines its own equality (`==`, or `Comparable` with `<=>`), because the key comparison could disagree with that equality.
 - **Changing a key.** As in Ruby, changing an Array, Hash, Set, or class value after using it as a key makes it unfindable.
 - **Keys are copied.** A Tuple or Record key is copied when it is stored, so a later write to the original does not change the key.
 
 ```ruby error
-h = Hash.of(/a/ => 1)             # !> Regexp cannot be a Hash key or Set element
+h = Hash.of(1..2 => 1)            # !> Range cannot be a Hash key or Set element
 ```
 
 ```ruby

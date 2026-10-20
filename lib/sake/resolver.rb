@@ -55,11 +55,13 @@ module Sake
     # running report, so they cannot be rescued.
     BUILTIN_EXCEPTIONS = %w[RuntimeError ArgumentError KeyError IndexError ZeroDivisionError RangeError IOError EncodingError
                             RegexpError FloatDomainError Math::DomainError NoMatchingPatternError TypeError EOFError ThreadError
-                            SQLite3::Exception].concat(Stdlib::SQLITE3_EXCEPTIONS).freeze
+                            NoMethodError UncaughtThrowError
+                            SQLite3::Exception].concat(Stdlib::SQLITE3_EXCEPTIONS, Stdlib::OPENSSL_EXCEPTIONS).freeze
     NOT_RESCUABLE = %w[SystemStackError NotImplementedError LocalJumpError].freeze
     # Ruby's subclasses among the built-in exceptions: `rescue IndexError` also catches KeyError.
     BUILTIN_EXCEPTION_PARENT = { "KeyError" => "IndexError", "EOFError" => "IOError", "FloatDomainError" => "RangeError",
-                                 "Math::DomainError" => "ArgumentError" }.merge(Stdlib::SQLITE3_EXCEPTIONS.to_h { [_1, "SQLite3::Exception"] }).freeze
+                                 "Math::DomainError" => "ArgumentError", "UncaughtThrowError" => "ArgumentError" }
+                               .merge(Stdlib::SQLITE3_EXCEPTIONS.to_h { [_1, "SQLite3::Exception"] }, Stdlib::OPENSSL_EXCEPTION_PARENT).freeze
     CATCH_ALL = %w[StandardError Exception].freeze # Ruby's names for "any rescuable error" (a bare rescue in Sake)
     BUILTIN_TYPES = %w[Integer Float Rational Complex String Array Tuple Hash Set Range Symbol Regexp MatchData Time].freeze
 
@@ -1885,7 +1887,9 @@ module Sake
       candidates =
         if node.attribute_write?
           field = name.delete_suffix("=")
-          @struct_types.values.select { _1.fields.include?(field) }.map { "#{_1.name}.set_#{field}" }
+          # and the built-in setters (`c.key = k` on an OpenSSL::Cipher: OpenSSL::Cipher.set_key)
+          @struct_types.values.select { _1.fields.include?(field) }.map { "#{_1.name}.set_#{field}" } |
+            @registry.namespaces_defining("set_#{field}").reject { @struct_types.key?(_1) }.map { "#{_1}.set_#{field}" }
         else
           getters = @struct_types.values.select { _1.fields.include?(name) }.map { "#{_1.name}.#{name}" }
           ops = namespaces_defining(name)
@@ -1905,8 +1909,11 @@ module Sake
           end
           (getters + ops).uniq
         end
-      if node.attribute_write? # `p.x = v`: the chain form `p.Point.x = v`
-        return candidates.map { |c| "#{recv}.#{c.split(".").first}.#{name.delete_suffix("=")} = #{args.join(", ")}" }
+      if node.attribute_write? # `p.x = v`: the chain form `p.Point.x = v`; a built-in's setter is called
+        return candidates.map do |c|
+          t = c.split(".").first
+          @struct_types.key?(t) ? "#{recv}.#{t}.#{name.delete_suffix("=")} = #{args.join(", ")}" : "#{c}(#{[recv, *args].join(", ")})"
+        end
       end
       # After a rewritten step the chain goes on: `String.strip(s).upcase`, not nested calls. A step of the
       # type the chain names last leaves it out (`T.g(x).f` is `T.g(x).T.f`); another type is named.

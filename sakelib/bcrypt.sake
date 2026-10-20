@@ -1,0 +1,107 @@
+# bcrypt: the bcrypt gem's (bcrypt-ruby 3.1) BCrypt::Password and BCrypt::Engine, for ActiveModel::SecurePassword.
+#
+#   pw = BCrypt::Password.create("secret", cost: 4)   # Ruby: BCrypt::Password.create("secret", cost: 4)
+#   BCrypt::Password.is_password?(pw, "secret")       # Ruby: pw.is_password?("secret"), or pw == "secret"
+#   pw == "secret"                                    # the same
+#   BCrypt::Password.new(digest).salt                 # Ruby: BCrypt::Password.new(digest).salt
+#
+# The hash is the built-in String.crypt (Ruby's String#crypt, libxcrypt's bcrypt: openwall's crypt_blowfish,
+# which the gem bundles too), so the digests are the gem's. A salt is "$2a$" with the cost and 16 random bytes
+# (OpenSSL::Random) in bcrypt's base64, as the gem's. Where crypt has no bcrypt (macOS's libc), hash_secret raises
+# BCrypt::Errors::InvalidSalt.
+#
+# The gem's Password is a String; here it is a class holding the String (`to_s`/`"#{pw}"` give it). Engine.cost is
+# the default, 12 (no cost= setter: Sake has no global state). The gem's exception classes descend from
+# BCryptError: here BCryptError is a module they include, so `rescue BCrypt::Errors::BCryptError` catches them.
+
+module BCrypt
+  module Errors
+    module BCryptError
+    end
+    class InvalidSalt < StandardError
+      include BCryptError
+    end
+    class InvalidHash < StandardError
+      include BCryptError
+    end
+    class InvalidCost < StandardError
+      include BCryptError
+    end
+    class InvalidSecret < StandardError
+      include BCryptError
+    end
+  end
+
+  module Engine
+    module_function
+
+    def DEFAULT_COST = 12
+    def MIN_COST = 4
+    def MAX_COST = 31
+    def MAX_SALT_LENGTH = 16
+    def MAX_SECRET_BYTESIZE = 72
+
+    def cost = Engine.DEFAULT_COST
+
+    # The bcrypt of secret with salt ("$2a$12$" and 22 characters, or a whole hash): "$2a$12$", the salt, 31 more.
+    def hash_secret(secret, salt)
+      raise Errors::InvalidSalt, "invalid salt" unless valid_salt?(salt)
+      h = String.crypt(secret, salt)
+      raise Errors::InvalidSalt, "invalid salt" unless String.start_with?(h, "$2")
+      h
+    end
+
+    def generate_salt(cost = Engine.cost)
+      raise Errors::InvalidCost, "can't use a cost of 0 or less" if cost <= 0
+      cost = Engine.MIN_COST if cost < Engine.MIN_COST
+      "$2a$#{String.rjust(Integer.to_s(cost), 2, "0")}$#{encode_base64(OpenSSL::Random.random_bytes(Engine.MAX_SALT_LENGTH))}"
+    end
+
+    def valid_salt?(salt) = String.match?(salt, /\A\$[0-9a-z]{2,}\$[0-9]{2,}\$[A-Za-z0-9.\/]{22,}\z/)
+    def valid_secret?(secret) = true
+
+    # The cost a salt (or hash) was made with.
+    def autodetect_cost(salt) = String.to_i(String.slice(salt, 4, 2) || "")
+
+    # bcrypt's base64: the standard bit order with its own alphabet and no padding (16 bytes: 22 characters).
+    def encode_base64(bytes)
+      s = String.delete(Array.pack(Any[bytes], "m0"), "=")
+      String.tr(s, "A-Za-z0-9+/", "./A-Za-z0-9")
+    end
+  end
+
+  class Password
+    attr_reader raw, version, cost, salt, checksum
+
+    # Ruby's Password.new(raw_hash): a valid hash, split into its parts.
+    def initialize(pw)
+      raise Errors::InvalidHash, "invalid hash" unless Password.valid_hash?(@raw)
+      parts = String.split(@raw, "$")
+      @version = parts[1] || ""
+      @cost = String.to_i(parts[2] || "")
+      @salt = String.slice(@raw, 0, 29) || ""
+      @checksum = String.slice(@raw, -31, 31) || ""
+    end
+
+    def valid_hash?(h) = String.match?(h, /\A\$[0-9a-z]{2}\$[0-9]{2}\$[A-Za-z0-9.\/]{53}\z/)
+
+    def create(secret, cost: Engine.cost)
+      raise ArgumentError, "ArgumentError" if cost > Engine.MAX_COST
+      Password.new(Engine.hash_secret(secret, Engine.generate_salt(cost)))
+    end
+
+    # Ruby's pw == secret: the secret hashed with this salt gives this hash (another Password: the same hash).
+    def ==(pw, other)
+      case other
+      in String then @raw == Engine.hash_secret(other, @salt)
+      in Password then @raw == Password.raw(other)
+      else false
+      end
+    end
+
+    def is_password?(pw, secret) = @raw == Engine.hash_secret(secret, @salt)
+
+    def to_s(pw) = @raw
+    def inspect(pw) = Kernel.inspect(@raw)
+  end
+end

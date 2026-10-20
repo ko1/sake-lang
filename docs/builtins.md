@@ -502,6 +502,8 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.Rational(Integer|Float|Rational|String, [Integer|Rational])`
 - `Kernel.at_exit() { }`
 - `Kernel.block_given?()`
+- `Kernel.catch(Any) { }`
+- `Kernel.class_name(Any)`
 - `Kernel.dup(Any)`
 - `Kernel.equal?(Any, Any)`
 - `Kernel.exit([Integer|Boolean])`
@@ -520,6 +522,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Kernel.sprintf(String, *Any)`
 - `Kernel.srand([Integer])`
 - `Kernel.system(String, *String)`
+- `Kernel.throw(Any, [Any])`
 - `Kernel.to_s(Any)`
 - `Kernel.warn(*Any)`
 
@@ -595,6 +598,51 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Open3.capture2(String, *String)`
 - `Open3.capture2e(String, *String)`
 - `Open3.capture3(String, *String)`
+
+## OpenSSL::Cipher
+
+- `OpenSSL::Cipher.!=(x, Any)`
+- `OpenSSL::Cipher.==(x, Any)`
+- `OpenSSL::Cipher.auth_tag(x, [Integer])`
+- `OpenSSL::Cipher.authenticated?(x)`
+- `OpenSSL::Cipher.block_size(x)`
+- `OpenSSL::Cipher.ciphers()`
+- `OpenSSL::Cipher.decrypt(x)`
+- `OpenSSL::Cipher.encrypt(x)`
+- `OpenSSL::Cipher.final(x)`
+- `OpenSSL::Cipher.iv_len(x)`
+- `OpenSSL::Cipher.key_len(x)`
+- `OpenSSL::Cipher.name(x)`
+- `OpenSSL::Cipher.new(String)`
+- `OpenSSL::Cipher.random_iv(x)`
+- `OpenSSL::Cipher.random_key(x)`
+- `OpenSSL::Cipher.reset(x)`
+- `OpenSSL::Cipher.set_auth_data(x, String)`
+- `OpenSSL::Cipher.set_auth_tag(x, String)`
+- `OpenSSL::Cipher.set_iv(x, String)`
+- `OpenSSL::Cipher.set_iv_len(x, Integer)`
+- `OpenSSL::Cipher.set_key(x, String)`
+- `OpenSSL::Cipher.set_padding(x, Integer)`
+- `OpenSSL::Cipher.update(x, String)`
+
+## OpenSSL::HMAC
+
+- `OpenSSL::HMAC.base64digest(String, String, String)`
+- `OpenSSL::HMAC.digest(String, String, String)`
+- `OpenSSL::HMAC.hexdigest(String, String, String)`
+
+## OpenSSL::KDF
+
+- `OpenSSL::KDF.pbkdf2_hmac(String, [salt: String], [iterations: Integer], [length: Integer], [hash: String])`
+
+## OpenSSL::PKCS5
+
+- `OpenSSL::PKCS5.pbkdf2_hmac(String, String, Integer, Integer, String)`
+- `OpenSSL::PKCS5.pbkdf2_hmac_sha1(String, String, Integer, Integer)`
+
+## OpenSSL::Random
+
+- `OpenSSL::Random.random_bytes(Integer)`
 
 ## Process
 
@@ -741,6 +789,7 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `Regexp.named_captures(x)`
 - `Regexp.names(x)`
 - `Regexp.new(String, [String])`
+- `Regexp[*Any]`
 - `Regexp.options(x)`
 - `Regexp.source(x)`
 - `Regexp.timeout(x)`
@@ -758,7 +807,26 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 - `SQLite3::Database.execute_batch(x, String)`
 - `SQLite3::Database.last_insert_row_id(x)`
 - `SQLite3::Database.new(String)`
+- `SQLite3::Database.prepare(x, String)`
+- `SQLite3::Database.total_changes(x)`
 - `SQLite3::Database.transaction(x) { }`
+
+## SQLite3::Statement
+
+- `SQLite3::Statement.!=(x, Any)`
+- `SQLite3::Statement.==(x, Any)`
+- `SQLite3::Statement.bind_params(x, Array)`
+- `SQLite3::Statement.close(x)`
+- `SQLite3::Statement.closed?(x)`
+- `SQLite3::Statement.column_count(x)`
+- `SQLite3::Statement.columns(x)`
+- `SQLite3::Statement.done?(x)`
+- `SQLite3::Statement.execute(x, [Array])`
+- `SQLite3::Statement.new(SQLite3::Database, String)`
+- `SQLite3::Statement.reset!(x)`
+- `SQLite3::Statement.step(x)`
+- `SQLite3::Statement.to_a(x)`
+- `SQLite3::Statement.types(x)`
 
 ## Set
 
@@ -1150,4 +1218,4 @@ The operators are listed in [spec.md](spec.md) (`BinaryOp`, `Index`). Names foll
 
 ## Exception types
 
-Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError`, `EOFError`, `ThreadError` has `T.new(message)`, `T.message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception, `Exception.backtrace(e)` its backtrace (an Array of `"FILE:LINE:in 'FUNCTION'"`, nil before it is raised) and `Exception.cause(e)` the exception being rescued when it was raised (or nil); `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError`, `SQLite3::Exception`, `SQLite3::SQLException`, `SQLite3::ConstraintException`, `SQLite3::BusyException`, `SQLite3::LockedException`, `SQLite3::ReadOnlyException`, `SQLite3::MisuseException`, `SQLite3::RangeException`, `SQLite3::MismatchException`, `SQLite3::CantOpenException`, `SQLite3::NotADatabaseException`, `SQLite3::IOException`, `SQLite3::FullException`, `SQLite3::TooBigException`, `SQLite3::AbortException`, `SQLite3::InterruptException`, `SQLite3::PermissionException`, `SQLite3::CorruptException`, `SQLite3::InternalException`, `SQLite3::MemoryException`, `SQLite3::NotFoundException`, `SQLite3::ProtocolException`, `SQLite3::EmptyException`, `SQLite3::SchemaChangedException`, `SQLite3::AuthorizationException`, `SQLite3::FormatException`, `SQLite3::UnsupportedException` can only be named in `rescue`; `rescue SQLite3::Exception` catches every `SQLite3::` one.
+Each of `RuntimeError`, `ArgumentError`, `KeyError`, `IndexError`, `ZeroDivisionError`, `RangeError`, `IOError`, `EncodingError`, `RegexpError`, `FloatDomainError`, `NoMatchingPatternError`, `TypeError`, `EOFError`, `ThreadError`, `NoMethodError`, `UncaughtThrowError` has `T.new(message)`, `T.message(x)`, and `T.set_message(x, v)`. `Exception.message(e)` reads the message of any exception, `Exception.backtrace(e)` its backtrace (an Array of `"FILE:LINE:in 'FUNCTION'"`, nil before it is raised) and `Exception.cause(e)` the exception being rescued when it was raised (or nil); `Exception.new(:field, ...)` declares an exception type ([spec.md](spec.md) §13). `Math::DomainError`, `SQLite3::Exception`, `SQLite3::SQLException`, `SQLite3::ConstraintException`, `SQLite3::BusyException`, `SQLite3::LockedException`, `SQLite3::ReadOnlyException`, `SQLite3::MisuseException`, `SQLite3::RangeException`, `SQLite3::MismatchException`, `SQLite3::CantOpenException`, `SQLite3::NotADatabaseException`, `SQLite3::IOException`, `SQLite3::FullException`, `SQLite3::TooBigException`, `SQLite3::AbortException`, `SQLite3::InterruptException`, `SQLite3::PermissionException`, `SQLite3::CorruptException`, `SQLite3::InternalException`, `SQLite3::MemoryException`, `SQLite3::NotFoundException`, `SQLite3::ProtocolException`, `SQLite3::EmptyException`, `SQLite3::SchemaChangedException`, `SQLite3::AuthorizationException`, `SQLite3::FormatException`, `SQLite3::UnsupportedException`, `OpenSSL::OpenSSLError`, `OpenSSL::Digest::DigestError`, `OpenSSL::HMACError`, `OpenSSL::KDF::KDFError`, `OpenSSL::Cipher::CipherError`, `OpenSSL::Cipher::AuthTagError` can only be named in `rescue`; `rescue SQLite3::Exception` catches every `SQLite3::` one, `rescue OpenSSL::OpenSSLError` every `OpenSSL::` one.

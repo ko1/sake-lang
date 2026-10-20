@@ -1,0 +1,69 @@
+# Kernel's throw and catch (Ruby's): a throw ends the innermost catch of its tag, with the thrown value.
+def first_over(xs, limit)
+  catch(:found) do
+    Array.each(xs) { |x| throw :found, x if x > limit }
+    nil
+  end
+end
+p(first_over(Any[1, 5, 9], 4), first_over(Any[1, 2], 4))
+
+# Through function calls and ensure clauses; a rescue does not stop a throw.
+def deep(n, log)
+  return throw(:done, n) if n == 0
+  begin
+    deep(n - 1, log)
+  rescue => e
+    Array.push(log, "rescued #{Exception.message(e)}")
+  ensure
+    Array.push(log, "ensure #{n}")
+  end
+end
+log = String[]
+p(catch(:done) { deep(2, log) })
+p(log)
+
+# Nested catches: the tag picks one; the block gets the tag; throw without a value gives nil.
+r = catch(:outer) do |tag|
+  p(tag)
+  inner = catch(:inner) do
+    throw :outer, "from inner" if Array.size(log) > 10
+    throw :inner
+  end
+  p(inner)
+  catch(:inner) { throw :outer, "outer" }
+end
+p(r)
+
+# The value of catch: the block's or a thrown one, and the checker knows both.
+v = catch(:halt) do
+  throw :halt, "halted" if Array.size(log) == 3
+  42
+end
+case v
+in Integer then p(v + 1)
+in String then p(String.upcase(v))
+end
+
+# No catch for the tag: UncaughtThrowError (an ArgumentError, as Ruby's).
+begin
+  catch(:a) { throw :b, 1 }
+rescue UncaughtThrowError => e
+  p(e)
+end
+begin
+  throw "str"
+rescue ArgumentError => e
+  puts(Exception.message(e))
+end
+
+# A transaction left by a throw is committed, as the sqlite3 gem's.
+db = SQLite3::Database.new(":memory:")
+SQLite3::Database.execute(db, "create table t (x integer)")
+catch(:stop) do
+  SQLite3::Database.transaction(db) do |d|
+    SQLite3::Database.execute(d, "insert into t values (1)")
+    throw :stop
+  end
+end
+p(SQLite3::Database.execute(db, "select x from t"))
+throw :nobody

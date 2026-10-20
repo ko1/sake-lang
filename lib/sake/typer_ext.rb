@@ -315,6 +315,42 @@ module Sake
       when "SQLite3::Database.last_insert_row_id", "SQLite3::Database.changes" then t("Integer")
       when "SQLite3::Database.closed?" then t("Boolean")
       when "SQLite3::Database.transaction" then call_block(blk, [a0])
+      when "SQLite3::Database.total_changes", "SQLite3::Statement.column_count" then t("Integer")
+      when "SQLite3::Database.prepare" then t("SQLite3::Statement")
+      when "SQLite3::Statement.bind_params"
+        record(node, name, "binds", Stdlib::SQLITE3_BIND_TYPES, elem_of(args[1]))
+        a0
+      when "SQLite3::Statement.reset!" then a0
+      when "SQLite3::Statement.close" then t("Nil")
+      when "SQLite3::Statement.closed?", "SQLite3::Statement.done?" then t("Boolean")
+      when "SQLite3::Statement.columns" then new_site(node, " #{name}", t("String"))
+      when "SQLite3::Statement.types" then new_site(node, " #{name}", u(t("String"), t("Nil")))
+      when "SQLite3::Statement.step", "SQLite3::Statement.to_a", "SQLite3::Statement.execute"
+        record(node, name, "binds", Stdlib::SQLITE3_BIND_TYPES, elem_of(args[1])) if args[1]
+        row = new_site(node, " #{name} row", u(*%w[Integer Float String Nil].map { t(_1) }))
+        db_row_sites[row[0][1]] = true
+        if name == "SQLite3::Statement.step" then u(row, t("Nil")) # nil when no row is left
+        else aux_site(node, "#{name} rows", row).tap { db_row_sites[_1[0][1]] = true }
+        end
+      when /\AOpenSSL::/ then openssl_result(name, args, node)
+      when "Kernel.throw"
+        # catch's value is its block's or a thrown one: the types thrown per tag type (a literal Symbol is its own).
+        site = (@once_types ||= {}.compare_by_identity)
+        old = site[:thrown] || {}
+        now = a0.uniq.to_h { |k| [k, u(old[k] || [], args[1] || t("Nil"))] }
+        unless now.all? { |k, ty| ty.equal?(old[k]) }
+          site[:thrown] = old.merge(now).freeze
+          dirty(site)
+        end
+        [] # never returns
+      when "Kernel.catch"
+        site = (@once_types ||= {}.compare_by_identity)
+        read(site)
+        thrown = site[:thrown] || {}
+        sym = ->(a) { a.is_a?(Array) && a[0] == :sym }
+        tags = a0.flat_map { |a| sym.(a) ? [a, "Symbol"] : (a == "Symbol" ? thrown.keys.select { sym.(_1) || _1 == "Symbol" } : [a]) }
+        u(call_block(blk, [a0]), *tags.uniq.map { thrown[_1] || [] })
+      when "Kernel.class_name" then t("String")
       when "TCPServer.accept", "Socket.connect", "Socket.connect_ssl" then t("Socket")
       when "TCPServer.close", "Socket.close", "Socket.close_write" then t("Nil")
       when "Socket.gets", "Socket.read", "IO.gets" then u(t("String"), t("Nil"))
@@ -338,6 +374,19 @@ module Sake
       when "File.open" then blk ? call_block(blk, [t("IO")]) : t("IO")
       when "Dir.mktmpdir" then blk ? call_block(blk, [t("String")]) : t("String")
       else :none
+      end
+    end
+
+    # OpenSSL (stdlib_openssl.rb): digests and cipher output are binary Strings.
+    def openssl_result(name, args, node)
+      case name
+      when "OpenSSL::Cipher.new" then t("OpenSSL::Cipher")
+      when "OpenSSL::Cipher.encrypt", "OpenSSL::Cipher.decrypt", "OpenSSL::Cipher.reset" then args[0]
+      when /\AOpenSSL::Cipher\.set_/ then args[1]
+      when "OpenSSL::Cipher.key_len", "OpenSSL::Cipher.iv_len", "OpenSSL::Cipher.block_size" then t("Integer")
+      when "OpenSSL::Cipher.authenticated?" then t("Boolean")
+      when "OpenSSL::Cipher.ciphers" then new_site(node, " #{name}", t("String"))
+      else t("String")
       end
     end
 
