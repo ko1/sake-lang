@@ -1,0 +1,109 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/exception_wrapper.rb (partial: no source extracts, no
+# template errors' source map, no backtrace cleaner (the backtrace is shown as it is), no actionable errors)
+#
+# Rails keys rescue_responses by `exception.class.name`. Sake has no class objects; the class name is read from
+# Kernel.inspect(e) ("#<ActionController::RoutingError: No route matches ...>"), which is the one reflection on an
+# exception's type Sake gives. rescue_responses / rescue_templates are Hashes an app can add to (Rails' cattr_accessor
+# merge!), returned by functions with `once`.
+
+require "rack"
+
+module ActionDispatch
+  class ExceptionWrapper
+    attr_reader backtrace_cleaner, exception, exception_class_name, wrapped_causes
+
+    def rescue_responses = once do
+      Hash.of(
+        "ActionController::RoutingError" => :not_found,
+        "AbstractController::ActionNotFound" => :not_found,
+        "ActionController::MethodNotAllowed" => :method_not_allowed,
+        "ActionController::UnknownHttpMethod" => :method_not_allowed,
+        "ActionController::NotImplemented" => :not_implemented,
+        "ActionController::UnknownFormat" => :not_acceptable,
+        "ActionDispatch::Http::MimeNegotiation::InvalidType" => :not_acceptable,
+        "ActionController::MissingExactTemplate" => :not_acceptable,
+        "ActionController::InvalidAuthenticityToken" => :unprocessable_content,
+        "ActionController::InvalidCrossOriginRequest" => :unprocessable_content,
+        "ActionDispatch::Http::Parameters::ParseError" => :bad_request,
+        "ActionController::BadRequest" => :bad_request,
+        "ActionController::ParameterMissing" => :bad_request,
+        "ActionController::TooManyRequests" => :too_many_requests,
+        "Rack::QueryParser::ParameterTypeError" => :bad_request,
+        "Rack::QueryParser::InvalidParameterError" => :bad_request)
+    end
+
+    def rescue_templates = once do
+      Hash.of(
+        "ActionView::MissingTemplate" => "missing_template",
+        "ActionController::RoutingError" => "routing_error",
+        "AbstractController::ActionNotFound" => "unknown_action",
+        "ActiveRecord::StatementInvalid" => "invalid_statement",
+        "ActionView::Template::Error" => "template_error",
+        "ActionController::MissingExactTemplate" => "missing_exact_template")
+    end
+
+    def wrapper_exceptions = String["ActionView::Template::Error"]
+    def silent_exceptions = String["ActionController::RoutingError", "ActionDispatch::Http::MimeNegotiation::InvalidType"]
+
+    # Rails: exception.class.name
+    def class_name_of(e)
+      m = String.match(Kernel.inspect(e), /\A#<((?:\w|::)+)/)
+      m ? (m[1] || "Exception") : "Exception"
+    end
+
+    # Rails: ExceptionWrapper.new(backtrace_cleaner, exception)
+    def build(backtrace_cleaner, e)
+      causes = ExceptionWrapper[]
+      c = Exception.cause(e)
+      while c
+        Array.push(causes, ExceptionWrapper.new(backtrace_cleaner, c, class_name_of(c), ExceptionWrapper[]))
+        c = Exception.cause(c)
+      end
+      ExceptionWrapper.new(backtrace_cleaner, e, class_name_of(e), causes)
+    end
+
+    def routing_error?(w) = @exception_class_name == "ActionController::RoutingError"
+    def template_error?(w) = @exception_class_name == "ActionView::Template::Error"
+    def has_cause?(w) = Exception.cause(@exception) != nil
+
+    def unwrapped_exception(w)
+      if Array.include?(wrapper_exceptions, @exception_class_name)
+        Exception.cause(@exception) || @exception
+      else
+        @exception
+      end
+    end
+
+    def rescue_template(w) = rescue_templates[@exception_class_name] || "diagnostics"
+
+    def status_code(w) = status_code_for_exception(class_name_of(unwrapped_exception(w)))
+
+    def full_trace(w) = Exception.backtrace(@exception) || String[]
+    def application_trace(w) = full_trace(w)
+    def framework_trace(w) = String[]
+    def exception_trace(w) = application_trace(w)
+
+    # Rails: Response.rack_status_code(@@rescue_responses[class_name]) (default :internal_server_error)
+    def status_code_for_exception(class_name)
+      Rack::Utils.status_code(rescue_responses[class_name] || :internal_server_error)
+    end
+
+    # Rails: the request's "action_dispatch.show_exceptions" (:all, :rescuable, :none)
+    def show?(w, request)
+      case Request.show_exceptions(request)
+      in :none then false
+      in :rescuable then rescue_response?(w)
+      else true
+      end
+    end
+
+    def rescue_response?(w) = Hash.key?(rescue_responses, @exception_class_name)
+
+    def exception_name(w)
+      c = Exception.cause(@exception)
+      c ? class_name_of(c) : "NilClass"
+    end
+    def message(w) = Exception.message(@exception)
+    def exception_inspect(w) = Kernel.inspect(@exception)
+  end
+end

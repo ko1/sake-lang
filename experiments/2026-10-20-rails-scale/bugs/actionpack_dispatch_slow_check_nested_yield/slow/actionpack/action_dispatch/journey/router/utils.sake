@@ -1,0 +1,47 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/router/utils.rb
+#
+# Rails' UriEncoder is an object with the patterns as constants; here they are functions of Utils (Sake has no
+# value constants), and Utils' class methods are module functions.
+
+module ActionDispatch
+  module Journey
+    class Router
+      attr_accessor routes                     # (router.sake's field: this file is read first)
+      module Utils
+        module_function
+
+        # normalize_path("/foo/") # => "/foo"; normalize_path("") # => "/"; normalize_path("/%ab") # => "/%AB"
+        def normalize_path(path)
+          return "/" unless path
+          if path == "/" || (String.start_with?(path, "/") && !String.end_with?(path, "/") && !String.match?(path, %r{%|//}))
+            return dup(path)
+          end
+          path = String.squeeze("/#{path}", "/")
+          unless path == "/"
+            path = String.delete_suffix(path, "/")
+            path = String.gsub(path, /(%[a-f0-9]{2})/) { |m| String.upcase(m) }
+          end
+          path
+        end
+
+        # UriEncoder's patterns (RFC 3986)
+        def unreserved = "a-zA-Z0-9\\-\\._~"
+        def sub_delims = "!\\$&'\\(\\)\\*\\+,;="
+        def fragment_re = once { Regexp.new("[^#{unreserved}#{sub_delims}:@/?]") }
+        def segment_re = once { Regexp.new("[^#{unreserved}#{sub_delims}:@]") }
+        def path_re = once { Regexp.new("[^#{unreserved}#{sub_delims}:@/]") }
+
+        def escape(component, pattern)
+          String.gsub(component, pattern) { |unsafe| percent_encode(unsafe) }
+        end
+        def percent_encode(unsafe)
+          Array.join(Array.map(String.bytes(unsafe)) { |b| format("%%%02X", b) })
+        end
+
+        def escape_path(path) = escape(Kernel.to_s(path), path_re)
+        def escape_segment(segment) = escape(Kernel.to_s(segment), segment_re)
+        def escape_fragment(fragment) = escape(Kernel.to_s(fragment), fragment_re)
+      end
+    end
+  end
+end

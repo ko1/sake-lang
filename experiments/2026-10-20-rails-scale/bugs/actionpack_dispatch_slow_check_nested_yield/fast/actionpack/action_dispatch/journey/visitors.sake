@@ -1,0 +1,117 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/visitors.rb (partial: no Dot visitor)
+#
+# Rails' visitors dispatch with `send(DISPATCH_CACHE[node.type], node)` to visit_CAT, visit_SYMBOL, ...; here each
+# visitor is a function with a `case` over the node's class. Journey::Format's parameters carry a Symbol naming the
+# escaper (:path or :segment) instead of a lambda.
+
+require "router/utils"
+
+module ActionDispatch
+  module Journey
+    class Format
+      Parameter = Struct.new(:name, :escaper)
+      attr_reader parts
+      private attr_reader children, parameters
+
+      def required_path(symbol) = Parameter.new(symbol, :path)
+      def required_segment(symbol) = Parameter.new(symbol, :segment)
+
+      def make(parts)
+        f = Format.new(parts, Integer[], Integer[])
+        Array.each_with_index(parts) do |object, i|
+          case object
+          in Format then Array.push(Format.children(f), i)
+          in Parameter then Array.push(Format.parameters(f), i)
+          else
+          end
+        end
+        f
+      end
+
+      def escape(param, value)
+        case Parameter.escaper(param)
+        in :path then Router::Utils.escape_path(value)
+        else Router::Utils.escape_segment(value)
+        end
+      end
+
+      # evaluate(hash): the path, or "" when a parameter of this part has no value
+      def evaluate(f, hash)
+        parts = Array.dup(@parts)
+        Array.each(@parameters) do |index|
+          param = parts[index]
+          param => Parameter
+          value = hash[Parameter.name(param)]
+          return "" if value == nil
+          parts[index] = escape(param, value)
+        end
+        Array.each(@children) do |index|
+          child = parts[index]
+          child => Format
+          parts[index] = evaluate(child, hash)
+        end
+        Array.join(Array.map(parts) { |x| (x in String) ? x : "" })
+      end
+    end
+
+    module Visitors
+      # Visitors::Each: calls the block with each node, depth first, left before right
+      module Each
+        module_function
+        def accept(node, &block)
+          yield(node)
+          case node
+          in Nodes::Cat
+            accept(Nodes::Cat.left(node), &block)
+            accept(Nodes::Cat.right(node), &block)
+          in Nodes::Group then accept(Nodes::Group.left(node), &block)
+          in Nodes::Star then accept(Nodes::Star.left(node), &block)
+          in Nodes::Or then Array.each(Nodes::Or.children(node)) { |c| accept(c, &block) }
+          else
+          end
+          nil
+        end
+      end
+
+      # Visitors::String: the path spec back as a String ("/posts/:id(.:format)")
+      module String
+        module_function
+        def accept(node, seed)
+          case node
+          in Nodes::Dot | Nodes::Literal | Nodes::Symbol | Nodes::Slash then seed + (Nodes::Dot|Nodes::Literal|Nodes::Symbol|Nodes::Slash).left(node)
+          in Nodes::Cat then accept(Nodes::Cat.right(node), accept(Nodes::Cat.left(node), seed))
+          in Nodes::Star then accept(Nodes::Star.left(node), seed)
+          in Nodes::Or
+            children = Nodes::Or.children(node)
+            s = seed
+            Array.each_with_index(children) do |c, i|
+              s = accept(c, s)
+              s += "|" unless i == Array.size(children) - 1
+            end
+            s
+          in Nodes::Group then accept(Nodes::Group.left(node), seed + "(") + ")"
+          end
+        end
+      end
+
+      # Visitors::FormatBuilder: the Journey::Format a route generates its path with
+      module FormatBuilder
+        module_function
+        def accept(node) = Format.make(visit(node))
+
+        def visit(node)
+          case node
+          in Nodes::Cat then visit(Nodes::Cat.left(node)) + visit(Nodes::Cat.right(node))
+          in Nodes::Group then Any[Format.make(visit(Nodes::Group.left(node)))]
+          in Nodes::Star then Any[Format.required_path(Nodes::Node.to_sym(Nodes::Star.left(node)))]
+          in Nodes::Symbol
+            symbol = Nodes::Node.to_sym(node)
+            symbol == :controller ? Any[Format.required_path(symbol)] : Any[Format.required_segment(symbol)]
+          in Nodes::Or then Array.flat_map(Nodes::Or.children(node)) { |c| visit(c) }
+          in Nodes::Dot | Nodes::Literal | Nodes::Slash then Any[(Nodes::Dot|Nodes::Literal|Nodes::Symbol|Nodes::Slash).left(node)]
+          end
+        end
+      end
+    end
+  end
+end

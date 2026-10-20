@@ -1,0 +1,248 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/mime_type.rb (partial: no register_callback, no method_missing `html?`-style predicates other than html?/all?, AllType and NullType are flags of Mime::Type)
+#
+# Rails keeps the registry in constants (Mime::SET, Mime::LOOKUP, Mime::EXTENSION_LOOKUP) that `register` fills at
+# load time. Sake has no value constants, so each is a function returning one mutable value (`once`), and
+# mime_types.sake's top-level `Mime::Type.register(...)` statements fill them when the file is read, as in Rails.
+#
+#   Ruby                                  Sake
+#   Mime[:json]                           Mime.[](:json)          (`Mime[...]` would be an Array of Mime)
+#   Mime::ALL                             Mime.ALL
+#   Mime::Type.lookup("text/html")        the same
+#   request.format.json?                  Mime::Type.symbol(f) == :json   (method_missing predicates are not portable)
+#
+# AllType (`*/*`, all? and html? true) and NullType (the format of a request with none: to_s "", ref nil) are
+# subclasses in Rails; here they are Mime::Type values with the flag `kind` (:all, :null), so that a list of
+# formats has one element type.
+
+module Mime
+  class Mimes
+    attr_reader mimes, symbols, symbols_set
+    include Enum
+
+    def each(m) = Array.each(@mimes) { |x| yield(x) }
+    def <<(m, type)
+      Array.push(@mimes, type)
+      sym_type = Type.to_sym(type)
+      Array.push(@symbols, sym_type)
+      Set.add(@symbols_set, sym_type)
+      m
+    end
+    def delete_if(m)
+      Array.delete_if(@mimes) do |x|
+        if yield(x)
+          sym_type = Type.to_sym(x)
+          Array.delete(@symbols, sym_type)
+          Set.delete(@symbols_set, sym_type)
+          true
+        else
+          false
+        end
+      end
+      m
+    end
+    def valid_symbols?(m, symbols) = Array.all?(symbols) { |s| Set.include?(@symbols_set, s) }
+  end
+
+  class Type
+    attr_reader string, symbol, synonyms
+    private attr_reader kind                             # nil, :all (Rails' AllType) or :null (NullType)
+    class InvalidMimeType < StandardError
+    end
+
+    def initialize(t)
+      @synonyms = String[] if @synonyms == nil
+      unless @kind == :null || Regexp.match?(Type.mime_regexp, @string)
+        raise InvalidMimeType, "#{Kernel.inspect(@string)} is not a valid MIME type"
+      end
+    end
+
+    class AcceptItem
+      attr_accessor index, name, q
+      include Comparable
+      def initialize(item)
+        q = @q
+        q ||= "0.0" if @name == "*/*"                     # Default wildcard match to end of list.
+        @q = Float.to_i(String.to_f(q || "1.0") * 100)
+      end
+      def to_s(item) = @name
+      def <=>(a, item)
+        result = AcceptItem.q(item) <=> @q
+        result = @index <=> AcceptItem.index(item) if result == 0
+        result
+      end
+    end
+
+    module AcceptList
+      module_function
+      def sort!(list)
+        Array.sort!(list)
+        text_xml_idx = find_item_by_name(list, "text/xml")
+        app_xml_idx = find_item_by_name(list, Type.to_s(Mime.fetch(:xml)))
+        if text_xml_idx && app_xml_idx
+          app_xml = list[app_xml_idx]
+          text_xml = list[text_xml_idx]
+          app_xml.AcceptItem.q = Array.max(Integer[AcceptItem.q(text_xml), AcceptItem.q(app_xml)]) || 0  # Set the q value to the max of the two.
+          if app_xml_idx > text_xml_idx                     # Make sure app_xml is ahead of text_xml in the list.
+            list[app_xml_idx] = text_xml
+            list[text_xml_idx] = app_xml
+            app_xml_idx, text_xml_idx = text_xml_idx, app_xml_idx
+          end
+          Array.delete_at(list, text_xml_idx)               # Delete text_xml from the list.
+        elsif text_xml_idx
+          list[text_xml_idx].AcceptItem.name = Type.to_s(Mime.fetch(:xml))
+        end
+        if app_xml_idx
+          app_xml = list[app_xml_idx]
+          idx = app_xml_idx
+          while idx < Array.length(list)
+            type = list[idx]
+            break if AcceptItem.q(type) < AcceptItem.q(app_xml)
+            if String.end_with?(AcceptItem.name(type), "+xml")
+              list[app_xml_idx] = list[idx]
+              list[idx] = app_xml
+              app_xml_idx = idx
+            end
+            idx += 1
+          end
+        end
+        Array.map(list) { |i| Type.lookup(AcceptItem.name(i)) }.Array.uniq
+      end
+
+      def find_item_by_name(array, name) = Array.find_index(array) { |item| AcceptItem.name(item) == name }
+    end
+
+    def trailing_star_regexp = /^(text|application)\/\*/
+    def parameter_separator_regexp = /;\s*q="?/
+    def accept_header_regexp = /[^,\s"](?:[^,"]|"[^"]*")*/
+
+    def lookup(string)
+      l = Mime.LOOKUP[string]
+      return l if l
+      s = String.rstrip(String.split(string, ";", 2)[0] || "")
+      Mime.LOOKUP[s] || Type.new(s)
+    end
+
+    def lookup_by_extension(extension) = Mime.EXTENSION_LOOKUP[Kernel.to_s(extension)]
+
+    def register_alias(string, symbol, extension_synonyms = String[])
+      register(string, symbol, String[], extension_synonyms, true)
+    end
+
+    def register(string, symbol, mime_type_synonyms = String[], extension_synonyms = String[], skip_lookup = false)
+      new_mime = Type.new(string, symbol, mime_type_synonyms)
+      Mimes.<<(Mime.SET, new_mime)
+      Array.each(String[string] + mime_type_synonyms) { |str| Mime.LOOKUP[str] = new_mime } unless skip_lookup
+      Array.each(String[Symbol.to_s(symbol)] + extension_synonyms) { |ext| Mime.EXTENSION_LOOKUP[ext] = new_mime }
+      new_mime
+    end
+
+    def parse(accept_header)
+      if !String.include?(accept_header, ",")
+        index = String.index(accept_header, parameter_separator_regexp)
+        accept_header = String.strip(String.[](accept_header, 0, index) || "") if index
+        return Type[] if String.match?(accept_header, /\A[[:space:]]*\z/)
+        parse_trailing_star(accept_header) || Type[Type.lookup(accept_header)]
+      else
+        list = AcceptItem[]
+        index = 0
+        Array.each(String.scan(accept_header, accept_header_regexp)) do |header|
+          parts = String.split(Kernel.to_s(header), parameter_separator_regexp)
+          params = parts[0]
+          q = parts[1]
+          next unless params
+          params = String.strip(params)
+          next if String.empty?(params)
+          ps = parse_trailing_star(params)
+          names = ps ? Array.map(ps) { |m| Type.to_s(m) } : String[params]
+          Array.each(names) do |m|
+            Array.push(list, AcceptItem.new(index, m, q))
+            index += 1
+          end
+        end
+        AcceptList.sort!(list)
+      end
+    end
+
+    def parse_trailing_star(accept_header)
+      m = String.match(accept_header, trailing_star_regexp)
+      m ? parse_data_with_trailing_star(m[1] || "") : nil
+    end
+    def parse_data_with_trailing_star(type) = Mimes.select(Mime.SET) { |m| Type.match?(m, type) }
+
+    def unregister(symbol)
+      mime = Mime.fetch(Symbol.downcase(symbol))
+      if mime
+        Mimes.delete_if(Mime.SET) { |v| v == mime }
+        Hash.delete_if(Mime.LOOKUP) { |_, v| v == mime }
+        Hash.delete_if(Mime.EXTENSION_LOOKUP) { |_, v| v == mime }
+      end
+      nil
+    end
+
+    def mime_regexp = once do
+      name = "[a-zA-Z0-9][a-zA-Z0-9#{Regexp.escape('!#$&-^_.+')}]{0,126}"
+      value = "(?:#{name}|\"[^\"\r\\\\]*\")"
+      parameter = "\s*;\s*#{name}(?:=#{value})?"
+      Regexp.new("\\A(?:\\*\\/\\*|#{name}\\/(?:\\*|#{name})(?>#{parameter})*\\s*)\\z")
+    end
+
+    def to_s(t) = @string
+    def to_str(t) = @string
+    def to_sym(t) = @symbol
+    def ref(t)
+      return nil if @kind == :null
+      @symbol || @string
+    end
+
+    # Rails' ==: true when any synonym (or the type) has the other's string or symbol; the other may be a Type,
+    # a String or a Symbol.
+    def ==(t, mime_type)
+      return false if mime_type == nil
+      other_s, other_sym = case mime_type
+        in Type then [Type.to_s(mime_type), Type.to_sym(mime_type)]
+        in Symbol then [Symbol.to_s(mime_type), mime_type]
+        in String then [mime_type, String.to_sym(mime_type)]
+        end
+      return true if @string == other_s || (@symbol != nil && @symbol == other_sym)
+      Array.any?(@synonyms) { |synonym| synonym == other_s || String.to_sym(synonym) == other_sym }
+    end
+
+    # Rails' ===: an Array of types matches when it includes the type or a synonym.
+    def ===(t, list)
+      Array.any?(list) { |x| Type.==(t, x) }
+    end
+
+    def =~(t, mime_type) = match?(t, mime_type)
+    def match?(t, mime_type)
+      return false if mime_type == nil
+      regexp = Regexp.new(Regexp.escape(Kernel.to_s(mime_type)))
+      Array.any?(@synonyms) { |synonym| String.match?(synonym, regexp) } || String.match?(@string, regexp)
+    end
+
+    def html?(t) = @kind == :all || @symbol == :html || String.include?(@string, "html")
+    def all?(t) = @kind == :all
+    def null?(t) = @kind == :null
+    def inspect(t) = @kind == :null ? "#<Mime::NullType>" : "#<Mime::Type #{@string}>"
+  end
+
+  module_function
+
+  def SET = once { Mimes.new(Type[], Symbol[], Set.new) }
+  def EXTENSION_LOOKUP = once { Hash.new }
+  def LOOKUP = once { Hash.new }
+
+  # Mime::ALL (Rails' AllType.instance) and Mime::NullType.instance
+  def ALL = once { Type.new("*/*", nil, String[], :all) }
+  def NullType = once { Type.new("", nil, String[], :null) }
+
+  # Mime[:json] / Mime["json"]: by extension (nil when unknown)
+  def [](type) = fetch(type)
+  def fetch(type)
+    case type
+    in Type then type
+    else Type.lookup_by_extension(type)
+    end
+  end
+  def symbols = Mimes.symbols(Mime.SET)
+  def valid_symbols?(symbols) = Mimes.valid_symbols?(Mime.SET, symbols)
+end

@@ -1,0 +1,134 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/routing/inspector.rb (partial: the Sheet formatter and filters; no Expanded/HtmlTableFormatter, no engines)
+#
+# RouteWrapper is a SimpleDelegator over a Journey::Route in Rails; here a class holding the route.
+
+module ActionDispatch
+  module Routing
+    class RouteWrapper
+      attr_reader route
+
+      def endpoint(w)
+        app = Journey::Route.app(@route)
+        Endpoint.dispatcher?(app) ? "#{controller(w)}##{action(w)}" : Endpoint.inspect(Endpoint.rack_app(app))
+      end
+
+      def constraints(w) = Hash.except(Journey::Route.requirements(@route), :controller, :action)
+      def path(w) = Journey::Nodes::Node.to_s(Journey::Path::Pattern.spec(Journey::Route.path(@route)))
+      def name(w) = Kernel.to_s(Journey::Route.name(@route))
+      def verb(w) = Journey::Route.verb(@route)
+
+      def reqs(w)
+        reqs = endpoint(w)
+        c = constraints(w)
+        reqs += " #{Kernel.inspect(c)}" unless Hash.empty?(c)
+        reqs
+      end
+
+      def controller(w)
+        Array.include?(Journey::Route.parts(@route), :controller) ? ":controller" : Kernel.to_s(Journey::Route.requirements(@route)[:controller])
+      end
+      def action(w)
+        Array.include?(Journey::Route.parts(@route), :action) ? ":action" : Kernel.to_s(Journey::Route.requirements(@route)[:action])
+      end
+      def internal?(w) = Journey::Route.internal(@route)
+
+      def to_h(w) = Hash.of(name: name(w), verb: verb(w), path: path(w), reqs: reqs(w))
+
+      def matches_filter?(w, filter, value)
+        case filter
+        in :exact_path_match then Journey::Path::Pattern.match(Journey::Route.path(@route), Kernel.to_s(value)) != nil
+        in :controller then String.match?(controller(w), value)
+        in :action then String.match?(action(w), value)
+        in :verb then String.match?(verb(w), value)
+        in :name then String.match?(name(w), value)
+        in :path then String.match?(path(w), value)
+        else false
+        end
+      end
+    end
+
+    class RoutesInspector
+      attr_reader routes
+
+      def make(routes)
+        wrapped = Array.reject(Array.map(Journey::Routes.routes(routes)) { |r| RouteWrapper.new(r) }) { |w| RouteWrapper.internal?(w) }
+        RoutesInspector.new(wrapped)
+      end
+
+      # format(ConsoleFormatter::Sheet.new, filter): the `bin/rails routes` table
+      def format(ri, formatter, filter = Hash.new)
+        routes = Array.map(filter_routes(ri, @routes, normalize_filter(ri, filter))) { |w| RouteWrapper.to_h(w) }
+        if Array.empty?(routes)
+          ConsoleFormatter::Sheet.no_routes(formatter, nil, routes, filter)
+        else
+          ConsoleFormatter::Sheet.header(formatter, routes)
+          ConsoleFormatter::Sheet.section(formatter, routes)
+        end
+        ConsoleFormatter::Sheet.footer(formatter, routes)
+        ConsoleFormatter::Sheet.result(formatter)
+      end
+
+      def normalize_filter(ri, filter)
+        c = filter[:controller]
+        g = filter[:grep]
+        if c
+          Hash.of(controller: Regexp.new(String.sub(ActiveSupport::Inflector.underscore(c), /_?controller\z/, "")))
+        elsif g
+          grep_pattern = Regexp.new(g)
+          Hash.of(controller: grep_pattern, action: grep_pattern, verb: grep_pattern, name: grep_pattern, path: grep_pattern,
+                  exact_path_match: String.squeeze("/" + Rack::Utils.escape_path(g), "/"))
+        end
+      end
+
+      def filter_routes(ri, routes, filter)
+        return routes unless filter
+        Array.select(routes) { |w| Hash.any?(filter) { |t, v| RouteWrapper.matches_filter?(w, t, v) } }
+      end
+    end
+
+    module ConsoleFormatter
+      class Sheet
+        attr_reader buffer
+        def make = Sheet.new(String[])
+        def result(f) = Array.join(@buffer, "\n")
+        def section_title(f, title) = Array.push(@buffer, "#{title}:")
+        def section(f, routes) = Array.concat(@buffer, draw_section(f, routes))
+        def header(f, routes) = Array.push(@buffer, draw_header(f, routes))
+        def footer(f, routes) = Array.push(@buffer, "")
+
+        def no_routes(f, engine, routes, filter)
+          if Hash.key?(filter, :controller)
+            Array.push(@buffer, "No routes were found for this controller.")
+          elsif Hash.key?(filter, :grep)
+            Array.push(@buffer, "No routes were found for this grep pattern.")
+          else
+            Array.push(@buffer, "You don't have any routes defined!\n\nPlease add some routes in config/routes.rb.\n")
+          end
+          Array.push(@buffer, "For more information about routes, see the Rails guide: https://guides.rubyonrails.org/routing.html.")
+        end
+
+        def draw_section(f, routes)
+          name_width, verb_width, path_width = widths(f, routes)
+          name_width = Tuple.max([name_width, 6])
+          verb_width = Tuple.max([verb_width, 4])
+          path_width = Tuple.max([path_width, 11])
+          Array.map(routes) do |r|
+            "#{String.rjust(r[:name] || "", name_width)} #{String.ljust(r[:verb] || "", verb_width)} #{String.ljust(r[:path] || "", path_width)} #{r[:reqs]}"
+          end
+        end
+
+        def draw_header(f, routes)
+          name_width, verb_width, path_width = widths(f, routes)
+          "#{String.rjust("Prefix", name_width)} #{String.ljust("Verb", verb_width)} #{String.ljust("URI Pattern", path_width)} Controller#Action"
+        end
+
+        def widths(f, routes)
+          [Array.max(Array.map(routes) { |r| String.length(r[:name] || "") }) || 0,
+           Array.max(Array.map(routes) { |r| String.length(r[:verb] || "") }) || 0,
+           Array.max(Array.map(routes) { |r| String.length(r[:path] || "") }) || 0]
+        end
+      end
+    end
+  end
+end
+

@@ -1,0 +1,78 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/remote_ip.rb
+#
+# Rails stores a GetIp object in the env and computes the address when remote_ip is first read; here the
+# middleware computes it and stores the String (Request.set_remote_ip), so IpSpoofAttackError is raised by the
+# middleware rather than at the first read of remote_ip. sakelib's IPAddr errors are not ArgumentErrors, so
+# sanitize_ips rescues IPAddr::Error.
+
+require "ipaddr"
+require "../app"
+require "../http/request"
+
+module ActionDispatch
+  class RemoteIp
+    class IpSpoofAttackError < StandardError
+    end
+
+    attr_reader app, check_ip, proxies
+    include App
+
+    def trusted_proxies = once do
+      Array.map(String["127.0.0.0/8", "::1", "fc00::/7", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                       "169.254.0.0/16", "fe80::/10"]) { |proxy| IPAddr.new(proxy) }
+    end
+
+    # RemoteIp.new(app, ip_spoofing_check = true, custom_proxies = nil)
+    def make(app, ip_spoofing_check = true, custom_proxies = nil)
+      proxies = custom_proxies == nil || Array.empty?(custom_proxies) ? trusted_proxies : custom_proxies
+      RemoteIp.new(app, ip_spoofing_check, proxies)
+    end
+
+    def call(mw, req)
+      Request.set_remote_ip(req, GetIp.to_s(GetIp.new(req, @check_ip, @proxies)))
+      App.call(@app, req)
+    end
+
+    class GetIp
+      attr_reader req, check_ip, proxies
+
+      def calculate_ip(g)
+        remote_addr = Array.last(sanitize_ips(g, ips_from(g, Request.remote_addr(@req))))
+        client_ips = Array.reverse(sanitize_ips(g, ips_from(g, Request.client_ip(@req))))
+        forwarded_ips = Array.reverse(sanitize_ips(g, forwarded_for(g)))
+        should_check_ip = @check_ip && Array.last(client_ips) && Array.last(forwarded_ips)
+        if should_check_ip && !Array.include?(forwarded_ips, Array.last(client_ips))
+          raise IpSpoofAttackError, "IP spoofing attack?! " \
+            "HTTP_CLIENT_IP=#{Kernel.inspect(Request.client_ip(@req))} " \
+            "HTTP_X_FORWARDED_FOR=#{Kernel.inspect(Request.x_forwarded_for(@req))}" \
+            " HTTP_FORWARDED=" + Kernel.inspect(Array.join(Array.map(forwarded_for(g)) { |ip| "for=#{ip}" }, ", "))
+        end
+        ips = Array.compact(forwarded_ips + client_ips)
+        Array.first(filter_proxies(g, ips + Any[remote_addr])) || Array.last(ips) || remote_addr
+      end
+
+      def to_s(g) = Kernel.to_s(calculate_ip(g))
+
+      # Rack's forwarded_for: the X-Forwarded-For addresses (no Forwarded header in sakelib's Rack)
+      def forwarded_for(g) = ips_from(g, Request.x_forwarded_for(@req))
+
+      def ips_from(g, header)
+        return String[] unless header
+        String.split(String.strip(header), /[,\s]+/)
+      end
+
+      def sanitize_ips(g, ips)
+        Array.select(ips) do |ip|
+          range = IPAddr.to_range(IPAddr.new(ip))
+          range[0] == range[1]
+        rescue IPAddr::Error
+          false
+        end
+      end
+
+      def filter_proxies(g, ips)
+        Array.reject(ips) { |ip| ip == nil || Array.any?(@proxies) { |proxy| IPAddr.include?(proxy, Kernel.to_s(ip)) } }
+      end
+    end
+  end
+end

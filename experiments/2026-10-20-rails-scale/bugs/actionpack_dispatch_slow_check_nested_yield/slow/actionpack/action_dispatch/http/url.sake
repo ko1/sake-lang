@@ -1,0 +1,175 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/url.rb (partial: no custom domain_extractor)
+#
+# Rails' URL is a module with class methods (URL.url_for(options)) and instance methods included in Request
+# (request.host). The instance methods are written in http/request.sake, as Request's own functions: included
+# into Request they would lose to Rack's host/port/url pasted by `class Request < Rack::Request` (in Ruby the
+# later include wins). Here are the module functions: `URL.url_for(options)`.
+# The options are a Hash of Symbol keys, as Rails' (host:, port:, protocol:, path:, params:, anchor:, ...).
+#
+# mattr_accessor :secure_protocol / :tld_length are URL.secure_protocol / URL.tld_length, set with
+# URL.set_secure_protocol(true) / URL.set_tld_length(2) (one value for the program, as a module attribute).
+
+require "rack"
+
+module ActionDispatch
+  module Http
+    module URL
+      module_function
+
+      def ip_host_regexp = /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/
+      def host_regexp = /(^[^:]+:\/\/)?(\[[^\]]+\]|[^:]+)(?::(\d+$))?/
+      def protocol_regexp = /^([^:]+)(:)?(\/\/)?$/
+
+      def url_config = once { Hash.of(:secure_protocol => false, :tld_length => 1) }
+      def secure_protocol = url_config[:secure_protocol] == true
+      def set_secure_protocol(v) = url_config[:secure_protocol] = v
+      def tld_length
+        n = url_config[:tld_length]
+        (n in Integer) ? n : 1
+      end
+      def set_tld_length(n) = url_config[:tld_length] = n
+
+      # DomainExtractor
+      def domain_from(host, tld_length) = Array.join(Array.last(String.split(host, "."), 1 + tld_length), ".")
+      def subdomains_from(host, tld_length)
+        parts = String.split(host, ".")
+        Array.[](parts, 0..-(tld_length + 2)) || String[]
+      end
+
+      def extract_domain(host, tld_length) = named_host?(host) ? domain_from(host, tld_length) : nil
+      def extract_subdomains(host, tld_length) = named_host?(host) ? subdomains_from(host, tld_length) : String[]
+      def extract_subdomain(host, tld_length) = Array.join(extract_subdomains(host, tld_length), ".")
+
+      def url_for(options) = options[:only_path] ? path_for(options) : full_url_for(options)
+
+      def full_url_for(options)
+        host = options[:host]
+        unless host
+          raise ArgumentError, "Missing host to link to! Please provide the :host parameter, set default_url_options[:host], or set :only_path to true"
+        end
+        build_host_url(Kernel.to_s(host), options[:port], options[:protocol], options, path_for(options))
+      end
+
+      def path_for(options)
+        path = String.chomp(Kernel.to_s(options[:script_name]), "/")
+        path += Kernel.to_s(options[:path]) if Hash.key?(options, :path)
+        path = "/" if options[:trailing_slash] && String.strip(path) == ""
+        path = add_params(path, options[:params]) if Hash.key?(options, :params)
+        path = add_anchor(path, options[:anchor]) if Hash.key?(options, :anchor)
+        path
+      end
+
+      def add_params(path, params)
+        ps = (params in Hash) ? params : Hash.of(:params => params)
+        ps = Hash.reject(ps) { |_, v| to_param(v) == nil }
+        query = to_query(ps, nil)
+        String.empty?(query) ? path : "#{path}?#{query}"
+      end
+
+      def add_anchor(path, anchor)
+        return path unless anchor
+        "#{path}##{escape_fragment(Kernel.to_s(to_param(anchor)))}"
+      end
+
+      # Journey::Router::Utils.escape_fragment (RFC 3986 fragment)
+      def escape_fragment(s)
+        String.force_encoding(String.gsub(String.b(s), /[^a-zA-Z0-9\-._~!$&'()*+,;=:@\/?]/n) { |m| Array.join(Array.map(String.bytes(m)) { |b| format("%%%02X", b) }) }, "US-ASCII")
+      end
+
+      # ActiveSupport's Object#to_param: nil and true stay, an Array joins with "/", anything else is to_s.
+      def to_param(v)
+        case v
+        in nil then nil
+        in true then true
+        in Array then Array.join(Array.map(v) { |x| Kernel.to_s(to_param(x)) }, "/")
+        in Hash then to_query(v, nil)
+        else Kernel.to_s(v)
+        end
+      end
+
+      # ActiveSupport's Object#to_query(key) / Array#to_query / Hash#to_query (sorted, as Rails)
+      def to_query(v, key)
+        case v
+        in Hash
+          parts = String[]
+          Hash.each(v) do |k, x|
+            next if ((x in Hash) && Hash.empty?(x)) || ((x in Array) && Array.empty?(x))
+            Array.push(parts, to_query(x, key ? "#{key}[#{k}]" : Kernel.to_s(k)))
+          end
+          (Array.empty?(parts) && key) ? to_query(nil, key) : Array.join(Array.sort(parts), "&")
+        in Array
+          prefix = "#{key}[]"
+          Array.empty?(v) ? to_query(nil, prefix) : Array.join(Array.map(v) { |x| to_query(x, prefix) }, "&")
+        else
+          "#{escape(Kernel.to_s(key))}=#{escape(Kernel.to_s(to_param(v)))}"
+        end
+      end
+
+      def escape(s) = Rack::Utils.escape(s)
+
+      def build_host_url(host, port, protocol, options, path)
+        protocol_from_host = nil
+        match = String.match(host, host_regexp)
+        if match
+          protocol_from_host = match[1] if protocol == nil
+          host = match[2] || host
+          port = match[3] unless Hash.key?(options, :port)
+        end
+
+        proto = protocol_from_host || normalize_protocol(protocol)
+        host = normalize_host(host, options)
+        p = normalize_port(port, proto)
+
+        result = proto
+        if options[:user] && options[:password]
+          result += "#{Rack::Utils.escape(Kernel.to_s(options[:user]))}:#{Rack::Utils.escape(Kernel.to_s(options[:password]))}@"
+        end
+        result += host
+        result += ":#{p}" if p
+        result + path
+      end
+
+      def named_host?(host) = !Regexp.match?(ip_host_regexp, host)
+
+      def normalize_protocol(protocol)
+        case protocol
+        in nil then secure_protocol ? "https://" : "http://"
+        in false | "//" then "//"
+        else
+          m = String.match(Kernel.to_s(protocol), protocol_regexp)
+          raise ArgumentError, "Invalid :protocol option: #{Kernel.inspect(protocol)}" unless m
+          "#{m[1]}://"
+        end
+      end
+
+      def normalize_host(_host, options)
+        return _host unless named_host?(_host)
+        tl = options[:tld_length]
+        tld = (tl in Integer) ? tl : tld_length
+        subdomain = Hash.fetch(options, :subdomain, true)
+        domain = options[:domain]
+
+        host = ""
+        if subdomain == true
+          return _host if domain == nil
+          host += Array.join(subdomains_from(_host, tld), ".")
+        elsif subdomain
+          host += Kernel.to_s(to_param(subdomain))
+        end
+        host += "." unless String.empty?(host)
+        host += domain ? Kernel.to_s(domain) : domain_from(_host, tld)
+        host
+      end
+
+      def normalize_port(port, protocol)
+        return nil unless port
+        n = String.to_i(Kernel.to_s(port))
+        case protocol
+        in "//" then port
+        in "https://" then n == 443 ? nil : port
+        else n == 80 ? nil : port
+        end
+      end
+    end
+  end
+end

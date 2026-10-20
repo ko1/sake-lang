@@ -1,0 +1,91 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/router.rb
+#
+# The anchored routes are narrowed by the transition table built from all their trees (journey/gtg/, a DFA over
+# the path's tokens), as in Rails; then each candidate's regexp is matched. `recognize` yields each match.
+
+require "router/utils"
+require "routes"
+require "formatter"
+require "parser"
+require "cgi"
+
+module ActionDispatch
+  module Journey
+    class Router
+
+      def serve(rt, req)
+        recognize(rt, req) do |route, parameters|
+          Request.set_path_parameters(req, parameters)
+          Request.set_route(req, route)
+          response = Routing::Endpoint.serve(Route.app(route), req)
+          _status, headers, _body = response
+          return response unless headers["x-cascade"] == "pass"
+        end
+        [404, Hash.of("x-cascade" => "pass"), Any["Not Found"]]
+      end
+
+      def recognize(rt, req)
+        req_params = Request.path_parameters(req)
+        path_info = Request.path_info(req)
+        script_name = Request.script_name(req)
+
+        routes = filter_routes(rt, path_info)
+        Array.each(Routes.custom_routes(@routes)) { |r| Array.push(routes, r) if Path::Pattern.match?(Route.path(r), path_info) }
+
+        if Request.head?(req)
+          routes = match_head_routes(rt, routes, req)
+        else
+          Array.select!(routes) { |r| Route.matches?(r, req) }
+        end
+        routes = Array.sort_by(routes) { |r| Route.precedence(r) } if Array.size(routes) > 1
+
+        Array.each(routes) do |r|
+          match_data = Path::Pattern.match(Route.path(r), path_info)
+          next unless match_data
+          path_parameters = Hash.merge(req_params, Route.defaults(r))
+          index = 1
+          Array.each(Path::Pattern::MatchData.names(match_data)) do |name|
+            val = match_data[index]
+            if val
+              val = String.include?(val, "%") ? CGI.unescapeURIComponent(val) : val
+              path_parameters[String.to_sym(name)] = val
+            end
+            index += 1
+          end
+
+          if Path::Pattern.anchored(Route.path(r))
+            yield(r, path_parameters)
+          else
+            Request.set_script_name(req, String.chomp(script_name + Path::Pattern::MatchData.to_s(match_data), "/"))
+            pi = Path::Pattern::MatchData.post_match(match_data)
+            Request.set_path_info(req, String.start_with?(pi, "/") ? pi : "/" + pi)
+            yield(r, path_parameters)
+            Request.set_script_name(req, script_name)
+            Request.set_path_info(req, path_info)
+          end
+          Request.set_path_parameters(req, req_params)
+        end
+        nil
+      end
+
+      def simulator(rt) = Routes.simulator(@routes)
+      def eager_load!(rt)
+        simulator(rt)
+        nil
+      end
+
+      def filter_routes(rt, path) = GTG::Simulator.memos(simulator(rt), path) { Route[] }
+
+      def match_head_routes(rt, routes, req)
+        head_routes = Array.select(routes) { |r| Route.requires_matching_verb?(r) && Route.matches?(r, req) }
+        return head_routes unless Array.empty?(head_routes)
+        begin
+          Request.set_request_method(req, "GET")
+          Array.select(routes) { |r| Route.matches?(r, req) }
+        ensure
+          Request.set_request_method(req, "HEAD")
+        end
+      end
+    end
+  end
+end

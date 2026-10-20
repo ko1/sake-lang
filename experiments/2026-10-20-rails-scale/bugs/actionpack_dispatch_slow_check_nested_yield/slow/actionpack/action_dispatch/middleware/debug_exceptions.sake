@@ -1,0 +1,75 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/debug_exceptions.rb (partial: no interceptors, no logging,
+# no HTML page: Rails renders templates/rescues/*.html.erb with ActionView (DebugView), not ported; a browser
+# request gets the first lines of diagnostics.text.erb instead (class, controller#action, message); the API body has
+# no traces)
+#
+# The x-cascade "pass" of the router becomes ActionController::RoutingError, which ShowExceptions turns into a 404,
+# as in Rails. Detailed pages need the app's "action_dispatch.show_detailed_exceptions" (Request.env_config).
+
+require "json"
+require "active_support_inflector"
+require "../app"
+require "../http/request"
+require "../../action_controller/metal/exceptions"
+require "exception_wrapper"
+require "show_exceptions"
+require "cookies"
+
+module ActionDispatch
+  class DebugExceptions
+    attr_reader app
+    include App
+
+    def call(mw, req)
+      status, headers, body = App.call(@app, req)
+      if headers["x-cascade"] == "pass"
+        raise ActionController::RoutingError.new("No route matches [#{Request.raw_request_method(req)}] #{Kernel.inspect(Request.path_info(req))}", Any[])
+      end
+      [status, headers, body]
+    rescue => exception
+      wrapper = ExceptionWrapper.build(nil, exception)
+      raise exception unless ExceptionWrapper.show?(wrapper, req)
+      render_exception(mw, req, exception, wrapper)
+    end
+
+    def render_exception(mw, request, exception, wrapper)
+      raise exception unless Request.env_config(request)["action_dispatch.show_detailed_exceptions"] == true
+      content_type = Array.first(Request.formats(request))
+      sym = content_type ? Mime::Type.to_sym(content_type) : nil
+      if Request.raw_request_method(request) == "HEAD"
+        render(mw, ExceptionWrapper.status_code(wrapper), "", content_type ? Mime::Type.to_s(content_type) : "text/plain")
+      elsif api_request?(mw, sym)
+        render_for_api_request(mw, wrapper)
+      else
+        render_for_browser_request(mw, request, wrapper)
+      end
+    end
+
+    def api_request?(mw, sym) = sym == :json
+
+    # diagnostics.text.erb's header (the source, trace and request dumps need ActionView)
+    def render_for_browser_request(mw, request, wrapper)
+      ps = Request.path_parameters(request)
+      body = ExceptionWrapper.exception_class_name(wrapper)
+      c = ps[:controller]
+      if c
+        body += " in #{ActiveSupport::Inflector.camelize(Kernel.to_s(c))}Controller"
+        a = ps[:action]
+        body += "##{a}" if a
+      end
+      body += "\n\n#{ExceptionWrapper.message(wrapper)}\n"
+      render(mw, ExceptionWrapper.status_code(wrapper), body, "text/plain")
+    end
+
+    def render_for_api_request(mw, wrapper)
+      status = ExceptionWrapper.status_code(wrapper)
+      codes = Rack::Utils.http_status_codes
+      body = Hash.of(status: status, error: codes[status] || codes[500] || "", exception: ExceptionWrapper.exception_inspect(wrapper))
+      render(mw, status, JSON.generate(body), "application/json")
+    end
+
+    def render(mw, status, body, format)
+      [status, Hash.of("content-type" => "#{format}; charset=utf-8", "content-length" => Integer.to_s(String.bytesize(body))), String[body]]
+    end
+  end
+end

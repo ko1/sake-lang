@@ -121,6 +121,7 @@ module Sake
         READS[0] = nil
         @cur_inst = nil
         @yield_depth = Hash.new(0).compare_by_identity
+        @yield_memo = {}
         @instantiated = {}.compare_by_identity
         @path = Path.new(nil, nil)
         @raised = [{}]   # stack of {exception type name => [raise nodes]} for the code being analyzed
@@ -743,6 +744,8 @@ module Sake
       mark_instantiated(fn)
       args = args.map { Typer.intern(_1) }
       if fn.yields
+        key = yield_memo_key(fn, args, blk)
+        return call_yielding_memo(fn, args, blk, key) if key
         return unknown("recursive yield") if @yield_depth[fn] >= MAX_YIELD_DEPTH
         @yield_depth[fn] += 1
         (@inst_stack ||= []).push([fn, args, blk]) # the block tells a construction site apart (Result.map's Ok.new per caller)
@@ -801,6 +804,62 @@ module Sake
       ret = u(@returns[key] || [], r)
       dirty(key) unless ret.equal?(@returns[key])
       @returns[key] = ret
+    end
+
+    # A call of a function that yields runs its body with the block, once per call. Rails-shaped code passes
+    # its block on through itself (`resources(m) { yield }` from many places, recursing), which ran the body
+    # once per path: cubic in the call sites (experiments/2026-10-20-rails-scale, the ActionDispatch Mapper).
+    # A block that only passes its arguments on (`{ yield }`, `{ |a| yield(a) }`) is the block it passes to, so
+    # such calls with the same arguments in one instantiation run the body once; a call that recurses with the
+    # same key reads the result so far, and the body runs again until that result stops growing.
+    def yield_memo_key(fn, args, blk)
+      drop = false
+      while blk && (y = forwarding_yield(blk))
+        drop ||= y.args.empty? && !blk.params.empty?
+        outer = blk.env.frame&.block or break
+        blk = outer
+      end
+      [@cur_inst.__id__, fn.__id__, *args.map(&:__id__), drop, blk.__id__]
+    end
+
+    # The Yield of a block whose body is only `yield(p1, ...)` of its own parameters in order (or `yield` with none).
+    def forwarding_yield(blk)
+      body = blk.node.body
+      body = body.body[0] if body.is_a?(AST::Seq) && body.body.size == 1
+      return nil unless body.is_a?(AST::Yield) && !blk.node.rest && blk.node.locals.empty?
+      a = body.args
+      ok = a.empty? || (a.size == blk.params.size && a.each_with_index.all? { |x, i| x.is_a?(AST::LVarGet) && x.slot == blk.params[i] })
+      ok ? body : nil
+    end
+
+    MAX_YIELD_MEMO_ROUNDS = 4
+
+    def call_yielding_memo(fn, args, blk, key)
+      memo = (@yield_memo ||= {})[key]
+      if memo
+        memo[:recursed] = true if memo[:running]
+        merge_raised(memo[:raised])
+        return memo[:ret]
+      end
+      memo = @yield_memo[key] = { running: true, ret: [], raised: {}, recursed: false }
+      (@inst_stack ||= []).push([fn, args, blk])
+      begin
+        MAX_YIELD_MEMO_ROUNDS.times do
+          memo[:recursed] = false
+          @raised.push({})
+          r = run_body(fn, args, blk)
+          memo[:raised] = merge_into(memo[:raised], @raised.pop)
+          grown = u(memo[:ret], r)
+          done = !memo[:recursed] || grown == memo[:ret]
+          memo[:ret] = grown
+          break if done
+        end
+      ensure
+        @inst_stack.pop
+        memo[:running] = false
+      end
+      merge_raised(memo[:raised])
+      memo[:ret]
     end
 
     # Whether a pass may replay an instantiation's last evaluation instead of evaluating it again; a

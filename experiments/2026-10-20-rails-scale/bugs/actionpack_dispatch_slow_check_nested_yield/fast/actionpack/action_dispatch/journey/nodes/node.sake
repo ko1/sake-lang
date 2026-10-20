@@ -1,0 +1,153 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/nodes/node.rb (partial: no Dummy, no memo (the GTG's), no to_dot)
+#
+# Rails' node classes inherit from Node < Terminal < ...; here each is a class that includes the mixin
+# Journey::Nodes::Node, and `Node.type(n)`, `Node.left(n)` dispatch on the node's class. Node is Enumerable over
+# Visitors::Each in Rails; here `Node.each(n) { }` walks the tree (the same order), and `find_all` is written out.
+
+require "../visitors"
+
+module ActionDispatch
+  module Journey
+    class Ast
+      attr_reader names, path_params, tree, wildcard_options, terminals
+      private attr_reader symbols, stars
+
+      # Ast.new(tree, formatted)
+      def make(tree, formatted)
+        ast = Ast.new(String[], Symbol[], tree, Hash.new, Any[], Any[], Any[])
+        visit_tree(ast, formatted)
+        ast
+      end
+
+      def root(ast) = @tree
+
+      # Rails' requirements=: a regexp requirement of a symbol or star node becomes the node's regexp
+      def set_requirements(ast, requirements)
+        Array.each(@symbols + @stars) do |node|
+          re = requirements[Nodes::Node.to_sym(node)]
+          next unless re
+          case node
+          in Nodes::Symbol then Nodes::Symbol.set_regexp(node, re)
+          in Nodes::Star then Nodes::Star.set_regexp(node, re)
+          else
+          end
+        end
+        nil
+      end
+
+      def glob?(ast) = !Array.empty?(@stars)
+
+      def visit_tree(ast, formatted)
+        Nodes::Node.each(@tree) do |node|
+          if Nodes::Node.symbol?(node)
+            Array.push(@path_params, Nodes::Node.to_sym(node))
+            Array.push(@names, Nodes::Node.name(node))
+            Array.push(@symbols, node)
+          elsif Nodes::Node.star?(node)
+            Array.push(@stars, node)
+            # a wildcard is non-greedy so that the optional format still matches
+            @wildcard_options[String.to_sym(Nodes::Node.name(node))] ||= /.+?/m if formatted != false
+          end
+          Array.push(@terminals, node) if Nodes::Node.terminal?(node)
+        end
+        nil
+      end
+    end
+
+    module Nodes
+      module Node
+        def type(n) = raise(NotImplementedError)
+        def name(n) = raise(NotImplementedError)
+        def to_sym(n) = String.to_sym(name(n))
+        def symbol?(n) = type(n) == :SYMBOL
+        def literal?(n) = type(n) == :LITERAL
+        def terminal?(n)
+          t = type(n)
+          t == :LITERAL || t == :SYMBOL || t == :SLASH || t == :DOT
+        end
+        def star?(n) = type(n) == :STAR
+        def cat?(n) = type(n) == :CAT
+        def group?(n) = type(n) == :GROUP
+        def to_s(n) = Visitors::String.accept(n, "")
+
+        # Visitors::Each: the node, then its children left to right
+        def each(n, &block) = Visitors::Each.accept(n, &block)
+
+        def find_all(n)
+          found = Any[]
+          each(n) { |x| Array.push(found, x) if yield(x) }
+          found
+        end
+      end
+
+      # Terminal nodes: `left` is the String they stand for
+      class Literal
+        attr_reader left
+        include Node
+        def type(n) = :LITERAL
+        def name(n) = String.tr(@left, "*:", "")
+        def symbol(n) = @left
+      end
+
+      class Slash
+        attr_reader left
+        include Node
+        def type(n) = :SLASH
+        def name(n) = String.tr(@left, "*:", "")
+      end
+
+      class Dot
+        attr_reader left
+        include Node
+        def type(n) = :DOT
+        def name(n) = String.tr(@left, "*:", "")
+      end
+
+      # Symbol.new(":id") or Symbol.new("*path", GREEDY_EXP); `regexp` is the requirement once one is given
+      class Symbol
+        attr_reader left
+        attr_accessor regexp
+        include Node
+        def default_exp = /[^.\/?]+/
+        def greedy_exp = /(.+)/
+        def make(left, regexp = nil) = Symbol.new(left, regexp || default_exp)
+        def type(n) = :SYMBOL
+        def name(n) = String.tr(@left, "*:", "")
+      end
+
+      class Group
+        attr_reader left
+        include Node
+        def type(n) = :GROUP
+        def name(n) = Node.name(@left)
+        def children(n) = Any[@left]
+      end
+
+      # Star.new(Symbol): by default a wildcard is non-greedy and must match something
+      class Star
+        attr_reader left
+        attr_accessor regexp
+        include Node
+        def make(left) = Star.new(left, /.+?/m)
+        def type(n) = :STAR
+        def name(n) = String.tr(Node.name(@left), "*:", "")
+        def children(n) = Any[@left]
+      end
+
+      class Cat
+        attr_reader left, right
+        include Node
+        def type(n) = :CAT
+        def name(n) = Node.name(@left)
+        def children(n) = Any[@left, @right]
+      end
+
+      class Or
+        attr_reader children
+        include Node
+        def type(n) = :OR
+        def name(n) = ""
+      end
+    end
+  end
+end

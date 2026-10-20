@@ -1,0 +1,50 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/public_exceptions.rb (partial: no "#{status}.#{locale}.html"
+# (I18n.locale is not consulted), no XML body)
+#
+# Rails renders the body with `body.public_send("to_#{format}")` when the Hash responds to it (to_json, to_xml);
+# here a `case` over the format's Symbol: :json gives JSON.generate, others the public HTML page.
+
+require "json"
+require "../app"
+require "../http/request"
+
+module ActionDispatch
+  class PublicExceptions
+    attr_accessor public_path
+    include App
+
+    def call(pe, req)
+      status = String.to_i(String.[](Request.path_info(req), 1..) || "")
+      content_type = Array.first(Request.formats(req))
+      codes = Rack::Utils.http_status_codes
+      body = Hash.of(status: status, error: codes[status] || codes[500] || "")
+      if Request.original_request_method(req) == "HEAD"
+        render_format(pe, status, content_type ? Mime::Type.to_s(content_type) : "", "")
+      else
+        render(pe, status, content_type, body)
+      end
+    end
+
+    def render(pe, status, content_type, body)
+      sym = content_type ? Mime::Type.to_sym(content_type) : nil
+      case sym
+      in :json then render_format(pe, status, Mime::Type.to_s(content_type || Mime.NullType), JSON.generate(body))
+      else render_html(pe, status)
+      end
+    end
+
+    def render_format(pe, status, content_type, body)
+      [status, Hash.of("content-type" => "#{content_type}; charset=utf-8",
+                       "content-length" => Integer.to_s(String.bytesize(body))), String[body]]
+    end
+
+    def render_html(pe, status)
+      path = "#{@public_path}/#{status}.html"
+      if File.exist?(path)
+        render_format(pe, status, "text/html", File.read(path))
+      else
+        [404, Hash.of("x-cascade" => "pass"), String[]]
+      end
+    end
+  end
+end

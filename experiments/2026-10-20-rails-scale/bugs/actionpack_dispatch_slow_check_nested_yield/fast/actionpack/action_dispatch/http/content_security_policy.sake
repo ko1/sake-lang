@@ -1,0 +1,204 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/content_security_policy.rb (partial: no Proc sources (a lambda resolved with instance_exec on the controller), the nonce generator is named)
+#
+# Rails defines a method per directive with `DIRECTIVES.each { |name, directive| define_method(name) { ... } }`;
+# here the 22 one-line functions are written out (a fixed list, like Request's ENV_METHODS). The policy block of
+# config.content_security_policy (`do |policy| policy.default_src :self end`) is a function that receives the
+# policy, as Rails' block does. The nonce generator is a lambda in Rails (`->(request) { request.session.id.to_s }`,
+# the new-app default); here it is :session_id (that one) or :random (SecureRandom.base64(16)). The Request's
+# "action_dispatch.content_security_policy*" env keys are its fields; Request::... functions are added below.
+
+require "request"
+require "../app"
+require "../request/session"
+require "../middleware/session/abstract_store"   # Request::Session's store protocol
+require "securerandom"
+
+module ActionDispatch
+  class ContentSecurityPolicy
+    class InvalidDirectiveError < StandardError
+    end
+
+    attr_reader directives
+
+    def make = ContentSecurityPolicy.new(Hash.new)
+    def initialize_copy(p) = ContentSecurityPolicy.new(Hash.transform_values(@directives) { |v| (v in Array) ? Array.dup(v) : v })
+
+    class Middleware
+      attr_reader app
+      include App
+
+      def call(mw, req)
+        response = App.call(@app, req)
+        status, headers, _body = response
+        return response if status == 304
+        return response if policy_present?(mw, headers)
+        policy = Request.content_security_policy(req)
+        if policy
+          nonce = Request.content_security_policy_nonce(req)
+          nonce_directives = Request.content_security_policy_nonce_directives(req)
+          headers[header_name(mw, req)] = ContentSecurityPolicy.build(policy, req, nonce, nonce_directives)
+        end
+        response
+      end
+
+      def header_name(mw, request)
+        Request.content_security_policy_report_only(request) ? "content-security-policy-report-only" : "content-security-policy"
+      end
+
+      def policy_present?(mw, headers)
+        headers["content-security-policy"] != nil || headers["content-security-policy-report-only"] != nil
+      end
+    end
+
+    def mappings = once do
+      Hash.of(self: "'self'", unsafe_eval: "'unsafe-eval'", wasm_unsafe_eval: "'wasm-unsafe-eval'",
+              unsafe_hashes: "'unsafe-hashes'", unsafe_inline: "'unsafe-inline'", none: "'none'", http: "http:",
+              https: "https:", data: "data:", mediastream: "mediastream:", allow_duplicates: "'allow-duplicates'",
+              blob: "blob:", filesystem: "filesystem:", report_sample: "'report-sample'", script: "'script'",
+              strict_dynamic: "'strict-dynamic'", ws: "ws:", wss: "wss:")
+    end
+    def hash_source_algorithm_prefixes = String["sha256-", "sha384-", "sha512-"]
+    def default_nonce_directives = String["script-src", "style-src"]
+
+    # DIRECTIVES.each { |name, directive| define_method(name) { |*sources| ... } }
+    def base_uri(p, *sources) = directive(p, "base-uri", sources)
+    def child_src(p, *sources) = directive(p, "child-src", sources)
+    def connect_src(p, *sources) = directive(p, "connect-src", sources)
+    def default_src(p, *sources) = directive(p, "default-src", sources)
+    def font_src(p, *sources) = directive(p, "font-src", sources)
+    def form_action(p, *sources) = directive(p, "form-action", sources)
+    def frame_ancestors(p, *sources) = directive(p, "frame-ancestors", sources)
+    def frame_src(p, *sources) = directive(p, "frame-src", sources)
+    def img_src(p, *sources) = directive(p, "img-src", sources)
+    def manifest_src(p, *sources) = directive(p, "manifest-src", sources)
+    def media_src(p, *sources) = directive(p, "media-src", sources)
+    def object_src(p, *sources) = directive(p, "object-src", sources)
+    def prefetch_src(p, *sources) = directive(p, "prefetch-src", sources)
+    def require_trusted_types_for(p, *sources) = directive(p, "require-trusted-types-for", sources)
+    def script_src(p, *sources) = directive(p, "script-src", sources)
+    def script_src_attr(p, *sources) = directive(p, "script-src-attr", sources)
+    def script_src_elem(p, *sources) = directive(p, "script-src-elem", sources)
+    def style_src(p, *sources) = directive(p, "style-src", sources)
+    def style_src_attr(p, *sources) = directive(p, "style-src-attr", sources)
+    def style_src_elem(p, *sources) = directive(p, "style-src-elem", sources)
+    def trusted_types(p, *sources) = directive(p, "trusted-types", sources)
+    def worker_src(p, *sources) = directive(p, "worker-src", sources)
+
+    # the body of each defined method: sources.first ? set : delete
+    def directive(p, directive, sources)
+      if Array.first(sources)
+        @directives[directive] = apply_mappings(p, sources)
+      else
+        Hash.delete(@directives, directive)
+      end
+      nil
+    end
+
+    def block_all_mixed_content(p, enabled = true) = flag(p, "block-all-mixed-content", enabled)
+    def upgrade_insecure_requests(p, enabled = true) = flag(p, "upgrade-insecure-requests", enabled)
+    def flag(p, directive, enabled)
+      enabled ? @directives[directive] = true : Hash.delete(@directives, directive)
+      nil
+    end
+
+    def plugin_types(p, *types) = words(p, "plugin-types", types)
+    def require_sri_for(p, *types) = words(p, "require-sri-for", types)
+    def words(p, directive, values)
+      if Array.first(values)
+        @directives[directive] = Array.map(values) { |v| Kernel.to_s(v) }
+      else
+        Hash.delete(@directives, directive)
+      end
+      nil
+    end
+
+    def report_uri(p, uri) = @directives["report-uri"] = String[uri]
+
+    def sandbox(p, *values)
+      if Array.empty?(values)
+        @directives["sandbox"] = true
+      elsif Array.first(values)
+        @directives["sandbox"] = Array.map(values) { |v| Kernel.to_s(v) }
+      else
+        Hash.delete(@directives, "sandbox")
+      end
+      nil
+    end
+
+    # build(context = nil, nonce = nil, nonce_directives = nil): the header value
+    def build(p, context = nil, nonce = nil, nonce_directives = nil)
+      nd = nonce_directives || default_nonce_directives
+      Array.join(Array.compact(build_directives(p, context, nonce, nd)), "; ")
+    end
+
+    def apply_mappings(p, sources)
+      Array.map(sources) do |source|
+        case source
+        in Symbol then apply_mapping(p, source)
+        in String then hash_source?(p, source) ? "'#{source}'" : source
+        else raise ArgumentError, "Invalid content security policy source: #{Kernel.inspect(source)}"
+        end
+      end
+    end
+
+    def apply_mapping(p, source)
+      m = mappings[source]
+      raise ArgumentError, "Unknown content security policy source mapping: #{Kernel.inspect(source)}" unless m
+      m
+    end
+
+    def build_directives(p, context, nonce, nonce_directives)
+      Hash.map(@directives) do |directive, sources|
+        if sources in Array
+          if nonce && Array.include?(nonce_directives, directive)
+            "#{directive} #{Array.join(build_directive(p, directive, sources, context), " ")} 'nonce-#{nonce}'"
+          else
+            "#{directive} #{Array.join(build_directive(p, directive, sources, context), " ")}"
+          end
+        elsif sources
+          directive
+        end
+      end
+    end
+
+    def validate(p, directive, sources)
+      Array.each(sources) do |source|
+        if String.include?(source, ";") || source != String.gsub(source, /[[:space:]]/, "")
+          raise InvalidDirectiveError, "Invalid Content Security Policy #{directive}: \"#{source}\". " \
+            "Directive values must not contain whitespace or semicolons. " \
+            "Please use multiple arguments or other directive methods instead."
+        end
+      end
+      sources
+    end
+
+    def build_directive(p, directive, sources, context) = validate(p, directive, sources)
+
+    def hash_source?(p, source) = Array.any?(hash_source_algorithm_prefixes) { |prefix| String.start_with?(source, prefix) }
+  end
+
+  # ContentSecurityPolicy::Request, which Request includes in Rails
+  class Request
+    def content_security_policy(req) = @_content_security_policy
+    def set_content_security_policy(req, policy) = @_content_security_policy = policy
+    def content_security_policy_report_only(req) = @_content_security_policy_report_only == true
+    def set_content_security_policy_report_only(req, value) = @_content_security_policy_report_only = value
+    def content_security_policy_nonce_generator(req) = @_content_security_policy_nonce_generator
+    def set_content_security_policy_nonce_generator(req, generator) = @_content_security_policy_nonce_generator = generator
+    def content_security_policy_nonce_directives(req) = @_content_security_policy_nonce_directives
+    def set_content_security_policy_nonce_directives(req, d) = @_content_security_policy_nonce_directives = d
+
+    def content_security_policy_nonce(req)
+      return nil unless content_security_policy_nonce_generator(req)
+      @_content_security_policy_nonce ||= generate_content_security_policy_nonce(req)
+    end
+
+    # the generator lambda's body: :session_id is `->(request) { request.session.id.to_s }`
+    def generate_content_security_policy_nonce(req)
+      case content_security_policy_nonce_generator(req)
+      in :session_id then Kernel.to_s(Request::Session.id(session(req)))
+      else SecureRandom.base64(16)
+      end
+    end
+  end
+end

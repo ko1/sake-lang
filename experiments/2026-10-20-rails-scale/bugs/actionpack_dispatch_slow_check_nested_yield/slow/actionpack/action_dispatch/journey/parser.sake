@@ -1,0 +1,79 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/parser.rb
+
+require "scanner"
+require "nodes/node"
+
+module ActionDispatch
+  module Journey
+    class Parser
+      private attr_reader scanner
+      private attr_accessor next_token
+
+      # Parser.parse("/posts/:id(.:format)") is the tree: Cat(Slash, Cat(Literal, ...))
+      def parse_string(string) = parse(Parser.new(Scanner.new, nil), string)
+
+      def parse(ps, string)
+        Scanner.scan_setup(@scanner, string)
+        advance_token(ps)
+        parse_expressions(ps)
+      end
+
+      def advance_token(ps) = @next_token = Scanner.next_token(@scanner)
+
+      def parse_expressions(ps)
+        node = parse_expression(ps)
+        while @next_token
+          case @next_token
+          in :RPAREN then break
+          in :OR then node = parse_or(ps, node)
+          else node = Nodes::Cat.new(node, parse_expressions(ps))
+          end
+        end
+        node
+      end
+
+      def parse_or(ps, lhs)
+        advance_token(ps)
+        node = parse_expression(ps)
+        Nodes::Or.new(Any[lhs, node])
+      end
+
+      def parse_expression(ps)
+        if @next_token == :STAR
+          parse_star(ps)
+        elsif @next_token == :LPAREN
+          parse_group(ps)
+        else
+          parse_terminal(ps)
+        end
+      end
+
+      def parse_star(ps)
+        node = Nodes::Star.make(Nodes::Symbol.make(Scanner.last_string(@scanner), Nodes::Symbol.greedy_exp))
+        advance_token(ps)
+        node
+      end
+
+      def parse_group(ps)
+        advance_token(ps)
+        node = parse_expressions(ps)
+        raise ArgumentError, "missing right parenthesis." unless @next_token == :RPAREN
+        group = Nodes::Group.new(node)
+        advance_token(ps)
+        group
+      end
+
+      def parse_terminal(ps)
+        node = case @next_token
+        in :SYMBOL then Nodes::Symbol.make(Scanner.last_string(@scanner))
+        in :LITERAL then Nodes::Literal.new(Scanner.last_literal(@scanner))
+        in :SLASH then Nodes::Slash.new("/")
+        in :DOT then Nodes::Dot.new(".")
+        else raise ArgumentError, "unexpected token #{Kernel.inspect(@next_token)}"
+        end
+        advance_token(ps)
+        node
+      end
+    end
+  end
+end

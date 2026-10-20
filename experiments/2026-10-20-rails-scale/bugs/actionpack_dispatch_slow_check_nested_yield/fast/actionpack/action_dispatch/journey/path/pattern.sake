@@ -1,0 +1,129 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/path/pattern.rb
+#
+# AnchoredRegexp and UnanchoredRegexp are visitors (one subclassing the other) in Rails; here they are one
+# function with the `anchored` flag. Pattern::MatchData wraps Ruby's MatchData as in Rails.
+
+require "../nodes/node"
+
+module ActionDispatch
+  module Journey
+    module Path
+      class Pattern
+        attr_reader ast, spec, requirements, separators, anchored, names
+        private attr_accessor _optional_names, _required_names, _re, _offsets, _requirements_for_missing_keys_check
+        def initialize(pt) = nil
+
+        # Pattern.new(ast, requirements, separators, anchored)
+        def make(ast, requirements, separators, anchored)
+          Pattern.new(ast, Ast.root(ast), requirements, separators, anchored, Ast.names(ast))
+        end
+
+        def build_formatter(pt) = Visitors::FormatBuilder.accept(@spec)
+
+        # each required param must not be surrounded by a literal, otherwise it isn't simple to chunk-match the url
+        def requirements_anchored?(pt)
+          terminals = Ast.terminals(@ast)
+          Array.each_with_index(terminals) do |s, index|
+            next if index < 1
+            t = Nodes::Node.type(s)
+            next if t == :DOT || t == :SLASH
+            back = terminals[index - 1]
+            fwd = terminals[index + 1]
+            return false if back != nil && Nodes::Node.literal?(back)
+            return false if fwd != nil && Nodes::Node.literal?(fwd)
+          end
+          true
+        end
+
+        def required_names(pt) = @_required_names ||= @names - optional_names(pt)
+
+        def optional_names(pt)
+          @_optional_names ||= Array.flat_map(Nodes::Node.find_all(@spec) { |n| Nodes::Node.group?(n) }) { |group|
+            Nodes::Node.find_all(group) { |n| Nodes::Node.symbol?(n) }
+          }.Array.map { |n| Nodes::Node.name(n) }.uniq
+        end
+
+        # AnchoredRegexp / UnanchoredRegexp: the regexp source of a node
+        def visit(pt, node)
+          case node
+          in Nodes::Cat then visit(pt, Nodes::Cat.left(node)) + visit(pt, Nodes::Cat.right(node))
+          in Nodes::Symbol
+            re = @requirements[Nodes::Node.to_sym(node)]
+            re ? "(#{Regexp.union(re)})" : "([^#{@separators}]+)"
+          in Nodes::Group then "(?:#{visit(pt, Nodes::Group.left(node))})?"
+          in Nodes::Literal then Regexp.escape(Nodes::Literal.left(node))
+          in Nodes::Dot then Regexp.escape(Nodes::Dot.left(node))
+          in Nodes::Slash then Nodes::Slash.left(node)
+          in Nodes::Star
+            re = @requirements[Nodes::Node.to_sym(Nodes::Star.left(node))]
+            re ? "(#{re})" : "(.+)"
+          in Nodes::Or then "(?:#{Array.join(Array.map(Nodes::Or.children(node)) { |n| visit(pt, n) }, "|")})"
+          end
+        end
+
+        def to_regexp(pt)
+          re = @_re
+          return re if re
+          path = visit(pt, @spec)
+          re = if @anchored
+            Regexp.new("\\A#{path}\\Z")
+          else
+            path == "/" ? %r{\A/} : Regexp.new("\\A#{path}(?:\\b|\\Z|/)")
+          end
+          @_re = re
+          re
+        end
+
+        def match(pt, other)
+          m = Regexp.match(to_regexp(pt), other)
+          return nil unless m
+          MatchData.new(@names, offsets(pt), m)
+        end
+        def match?(pt, other) = Regexp.match?(to_regexp(pt), other)
+        def source(pt) = Regexp.source(to_regexp(pt))
+
+        def requirements_for_missing_keys_check(pt)
+          @_requirements_for_missing_keys_check ||= Hash.transform_values(@requirements) { |regex| Regexp.new("\\A#{regex}\\Z") }
+        end
+
+        # the number of groups each requirement's regexp adds before each symbol, to index the match by symbol
+        def offsets(pt)
+          o = @_offsets
+          return o if o
+          o = Integer[0]
+          Array.each(Nodes::Node.find_all(@spec) { |n| Nodes::Node.symbol?(n) }) do |node|
+            req = @requirements[Nodes::Node.to_sym(node)]
+            last = Array.last(o) || 0
+            if req
+              md = Regexp.match(Regexp.new("#{Regexp.union(req)}|"), "")
+              md => ::MatchData
+              Array.push(o, ::MatchData.length(md) - 1 + last)
+            else
+              Array.push(o, last)
+            end
+          end
+          @_offsets = o
+          o
+        end
+
+        class MatchData
+          attr_reader names
+          private attr_reader offsets, match
+          include Indexable
+
+          def captures(md) = Array.new(length(md) - 1) { |i| md[i + 1] }
+          def named_captures(md) = Array.zip(@names, captures(md)).Array.to_h
+
+          # md[x]: the capture of the x-th symbol
+          def [](md, x)
+            idx = (@offsets[x - 1] || 0) + x
+            @match[idx]
+          end
+          def length(md) = Array.size(@offsets)
+          def post_match(md) = ::MatchData.post_match(@match)
+          def to_s(md) = ::MatchData.to_s(@match)
+        end
+      end
+    end
+  end
+end

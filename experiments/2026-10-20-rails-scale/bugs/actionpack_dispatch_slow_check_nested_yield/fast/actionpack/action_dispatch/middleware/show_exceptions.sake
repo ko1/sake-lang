@@ -1,0 +1,89 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/show_exceptions.rb (Request#exception and #show_exceptions,
+# Rails' "action_dispatch.exception" and "action_dispatch.show_exceptions" keys, are fields)
+#
+# The error page is rendered from a copy of the request, as Rails' `render_exception(request.dup, wrapper)` (a
+# Request's dup copies its env): `Request.copy(req)`, below.
+#
+# `rescue Exception => exception` catches what the app raises; the exceptions app (Rails' config.exceptions_app,
+# PublicExceptions by default) is any ActionDispatch::App, called on the request rewritten to GET "/<status>".
+
+require "../app"
+require "../http/request"
+require "exception_wrapper"
+
+module ActionDispatch
+  class Request
+    def exception(req) = @_exception
+    def set_exception(req, e) = @_exception = e
+    def show_exceptions(req) = @_show_exceptions
+    def set_show_exceptions(req, v) = @_show_exceptions = v
+    def original_path(req) = @_original_path
+    def original_request_method(req) = @_original_request_method
+    def set_original_path(req, v) = @_original_path = v
+    def set_original_request_method(req, v) = @_original_request_method = v
+  end
+
+  class ShowExceptions
+    attr_reader app, exceptions_app
+    include App
+
+    def call(mw, req)
+      App.call(@app, req)
+    rescue => exception
+      wrapper = ExceptionWrapper.build(nil, exception)
+      Request.set_exception(req, ExceptionWrapper.unwrapped_exception(wrapper))
+      if ExceptionWrapper.show?(wrapper, req)
+        render_exception(mw, Request.copy(req), wrapper)
+      else
+        raise exception
+      end
+    end
+
+    def render_exception(mw, request, wrapper)
+      status = ExceptionWrapper.status_code(wrapper)
+      Request.set_original_path(request, Request.path_info(request))
+      Request.set_original_request_method(request, Request.raw_request_method(request))
+      fallback_to_html_format_if_invalid_mime_type(mw, request)
+      Request.set_path_info(request, "/#{status}")
+      Request.set_request_method(request, "GET")
+      response = App.call(@exceptions_app, request)
+      response[1]["x-cascade"] == "pass" ? pass_response(mw, status) : response
+    rescue => failsafe_error
+      warn("Error during failsafe response: #{Exception.message(failsafe_error)}\n  #{Array.join(Exception.backtrace(failsafe_error) || String[], "\n  ")}")
+      [500, Hash.of("content-type" => "text/plain; charset=utf-8"),
+        String["500 Internal Server Error\n" +
+        "If you are the administrator of this website, then please read this web " +
+        "application's log file and/or the web server's log file to find out what " +
+        "went wrong."]]
+    end
+
+    def fallback_to_html_format_if_invalid_mime_type(mw, request)
+      begin
+        Request.content_mime_type(request)
+      rescue ActionDispatch::Http::MimeNegotiation::InvalidType
+        Request.set_header(request, "CONTENT_TYPE", "text/html")
+      end
+      begin
+        Request.formats(request)
+      rescue ActionDispatch::Http::MimeNegotiation::InvalidType
+        Request.set_header(request, "HTTP_ACCEPT", "text/html")
+      end
+      nil
+    end
+
+    def pass_response(mw, status)
+      [status, Hash.of("content-type" => "text/html; charset=utf-8", "content-length" => "0"), String[]]
+    end
+  end
+end
+
+module ActionDispatch
+  class Request
+    # Rails' request.dup: the fields are shared as Ruby's dup shares instance variables, the env is copied
+    def copy(req)
+      c = dup(req)
+      Request.write_field(c, :env, Hash.dup(@env))
+      c
+    end
+  end
+end

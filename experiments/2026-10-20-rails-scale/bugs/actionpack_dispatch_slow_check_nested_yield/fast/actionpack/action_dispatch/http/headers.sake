@@ -1,0 +1,82 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/headers.rb
+#
+# Provides access to the request's HTTP headers from the environment: `headers["Content-Type"]` reads
+# CONTENT_TYPE, `headers["X-Request-Id"]` reads HTTP_X_REQUEST_ID, and an env name passes through.
+
+
+module ActionDispatch
+  module Http
+    class Headers
+      attr_reader req
+      include Indexable
+      include Enum
+
+      def cgi_variables = once do
+        Set.of("AUTH_TYPE", "CONTENT_LENGTH", "CONTENT_TYPE", "GATEWAY_INTERFACE", "HTTPS", "PATH_INFO",
+          "PATH_TRANSLATED", "QUERY_STRING", "REMOTE_ADDR", "REMOTE_HOST", "REMOTE_IDENT", "REMOTE_USER",
+          "REQUEST_METHOD", "SCRIPT_NAME", "SERVER_NAME", "SERVER_PORT", "SERVER_PROTOCOL", "SERVER_SOFTWARE")
+      end
+      def http_header = /\A[A-Za-z0-9-]+\z/
+
+      def from_hash(hash) = Headers.new(ActionDispatch::Request.new(hash))
+
+      # Returns the value for the given key mapped to @env.
+      def [](h, key) = Request.get_header(@req, env_name(h, key))
+
+      # Sets the given value for the key mapped to @env.
+      def []=(h, key, value)
+        Request.set_header(@req, env_name(h, key), value)
+      end
+
+      # Add a value to a multivalued header like `Vary` or `Accept-Encoding`.
+      def add(h, key, value)
+        name = env_name(h, key)
+        cur = Request.get_header(@req, name)
+        Request.set_header(@req, name, cur ? "#{cur},#{value}" : value)
+      end
+
+      def key?(h, key) = Request.has_header?(@req, env_name(h, key))
+      def include?(h, key) = key?(h, key)
+
+      # Returns the value for the given key mapped to @env (the default, or the block's value, when missing;
+      # without either, KeyError).
+      def fetch(h, key, default = nil)
+        name = env_name(h, key)
+        return Request.get_header(@req, name) if Request.has_header?(@req, name)
+        return default if default != nil
+        return yield(key) if block_given?
+        raise KeyError, key
+      end
+
+      def each(h)
+        Hash.each(Request.env(@req)) { |k, v| yield([k, v]) }
+        h
+      end
+
+      # Returns a new Http::Headers instance containing the contents of `headers_or_env` and the original instance.
+      def merge(h, headers_or_env)
+        headers = Headers.new(Request.new(Hash.dup(Request.env(@req))))
+        merge!(headers, headers_or_env)
+        headers
+      end
+
+      # Adds the contents of `headers_or_env` to original instance entries; duplicate keys are overwritten.
+      def merge!(h, headers_or_env)
+        Hash.each(headers_or_env) { |key, value| Request.set_header(@req, env_name(h, key), value) }
+        nil
+      end
+
+      def env(h) = Hash.dup(Request.env(@req))
+
+      # Converts an HTTP header name to an environment variable name if it is not contained within the headers hash.
+      def env_name(h, key)
+        key = Kernel.to_s(key)
+        if Regexp.match?(http_header, key)
+          key = String.tr(String.upcase(key), "-", "_")
+          key = "HTTP_" + key unless Set.include?(cgi_variables, key)
+        end
+        key
+      end
+    end
+  end
+end

@@ -1,0 +1,187 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/static.rb, with the part of rack-3.2/lib/rack/files.rb and
+# rack/mime.rb it serves through (Rack::Files and Rack::Mime are not in sakelib/rack.sake) (partial: no byte
+# ranges, no multipart; Rack::Mime knows only common extensions; the body is the file read whole)
+
+require "time"
+require "../app"
+require "../http/request"
+
+module Rack
+  module Mime
+    module_function
+    def mime_types = once do
+      Hash.of(".html" => "text/html", ".htm" => "text/html", ".txt" => "text/plain", ".css" => "text/css",
+              ".js" => "text/javascript", ".mjs" => "text/javascript", ".json" => "application/json",
+              ".xml" => "application/xml", ".svg" => "image/svg+xml", ".png" => "image/png", ".jpg" => "image/jpeg",
+              ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".ico" => "image/vnd.microsoft.icon",
+              ".webp" => "image/webp", ".pdf" => "application/pdf", ".csv" => "text/csv", ".gz" => "application/gzip",
+              ".zip" => "application/zip", ".woff" => "application/font-woff", ".woff2" => "application/font-woff2",
+              ".map" => "application/json", ".wasm" => "application/wasm", ".md" => "text/markdown")
+    end
+    def mime_type(ext, fallback = "application/octet-stream")
+      mime_types[String.downcase(ext)] || fallback
+    end
+  end
+
+  # Rack::Files: GET/HEAD of a file under root
+  class Files
+    attr_reader root, headers, default_mime
+
+    def allowed_verbs = String["GET", "HEAD", "OPTIONS"]
+    def allow_header = "GET, HEAD, OPTIONS"
+
+    def call(f, env)
+      method = env["REQUEST_METHOD"] || "GET"
+      return fail(f, 405, "Method Not Allowed", Hash.of("allow" => allow_header)) unless Array.include?(allowed_verbs, method)
+      path_info = Utils.unescape_path(env["PATH_INFO"] || "")
+      return fail(f, 400, "Bad Request", Hash.new) unless Utils.valid_path?(path_info)
+      path = File.join(@root, Utils.clean_path_info(path_info))
+      if File.file?(path) && File.readable?(path)
+        serving(f, env, method, path)
+      else
+        fail(f, 404, "File not found: #{path_info}", Hash.new)
+      end
+    end
+
+    def serving(f, env, method, path)
+      return [200, Hash.of("allow" => allow_header, "content-length" => "0"), String[]] if method == "OPTIONS"
+      last_modified = Time.strftime(Time.utc(File.mtime(path)), "%a, %d %b %Y %H:%M:%S GMT")
+      return [304, Hash.new, String[]] if env["HTTP_IF_MODIFIED_SINCE"] == last_modified
+      headers = Hash.of("last-modified" => last_modified)
+      headers["content-type"] = Mime.mime_type(File.extname(path), @default_mime)
+      Hash.merge!(headers, @headers)
+      headers["content-length"] = Integer.to_s(File.size(path))
+      body = method == "HEAD" ? String[] : String[File.read(path)]
+      [200, headers, body]
+    end
+
+    def fail(f, status, body, headers)
+      b = body + "\n"
+      h = Hash.of("content-type" => "text/plain", "content-length" => Integer.to_s(String.bytesize(b)), "x-cascade" => "pass")
+      Hash.merge!(h, headers)
+      [status, h, String[b]]
+    end
+  end
+end
+
+module ActionDispatch
+  class Static
+    attr_reader app, file_handler
+    include App
+
+    # Rails: Static.new(app, path, index: "index", headers: {})
+    def new_static(app, path, index: "index", headers: Hash.new)
+      Static.new(app, FileHandler.build(path, index: index, headers: headers))
+    end
+
+    def call(mw, req) = FileHandler.attempt(@file_handler, req) || App.call(@app, req)
+  end
+
+  class FileHandler
+    attr_reader root, index, precompressed, compressible_content_types, file_server
+
+    def precompressed_exts = once { Hash.of("br" => ".br", "gzip" => ".gz", "identity" => "") }
+
+    # Rails: FileHandler.new(root, index: "index", headers: {}, precompressed: %i[ br gzip ], compressible_content_types: ...)
+    def build(root, index: "index", headers: Hash.new, precompressed: Any[:br, :gzip], compressible_content_types: /\A(?:text\/|application\/javascript|image\/svg\+xml)/)
+      r = String.b(String.chomp(root, "/"))
+      pre = Array.map(precompressed) { Kernel.to_s(it) }.Array.union(String["identity"])
+      FileHandler.new(r, index, pre, compressible_content_types, Rack::Files.new(File.expand_path(r), headers, "text/plain"))
+    end
+
+    def call(fh, req) = attempt(fh, req) || Rack::Files.call(@file_server, Request.env(req))
+
+    def attempt(fh, req)
+      if Request.get?(req) || Request.head?(req)
+        found = find_file(fh, Request.path_info(req), Rack::Utils.parse_http_accept_header(Request.get_header(req, "HTTP_ACCEPT_ENCODING")))
+        if found
+          filepath, content_headers = found
+          return serve(fh, req, filepath, content_headers)
+        end
+      end
+      nil
+    end
+
+    def serve(fh, req, filepath, content_headers)
+      original = Request.path_info(req)
+      Request.set_path_info(req, String.b(Rack::Utils.escape_path(filepath)))
+      status, headers, body = Rack::Files.call(@file_server, Request.env(req))
+      Hash.merge!(headers, content_headers) if status != 304
+      [status, headers, body]
+    ensure
+      Request.set_path_info(req, original || "")
+    end
+
+    def find_file(fh, path_info, accept_encoding)
+      each_candidate_filepath(fh, path_info) do |filepath, content_type|
+        response = try_files(fh, filepath, content_type, accept_encoding)
+        return response if response
+      end
+      nil
+    end
+
+    def try_files(fh, filepath, content_type, accept_encoding)
+      headers = Hash.of("content-type" => content_type)
+      if compressible?(fh, content_type)
+        try_precompressed_files(fh, filepath, headers, accept_encoding)
+      elsif file_readable?(fh, filepath)
+        [filepath, headers]
+      end
+    end
+
+    def try_precompressed_files(fh, filepath, headers, accept_encoding)
+      each_precompressed_filepath(fh, filepath) do |content_encoding, precompressed_filepath|
+        if file_readable?(fh, precompressed_filepath)
+          if content_encoding == "identity"
+            return [precompressed_filepath, headers]
+          else
+            headers["vary"] = "accept-encoding"
+            if Array.any?(accept_encoding) { |enc, _| String.match?(enc, Regexp.new("\\b#{content_encoding}\\b", "i")) }
+              headers["content-encoding"] = content_encoding
+              return [precompressed_filepath, headers]
+            end
+          end
+        end
+      end
+      nil
+    end
+
+    def file_readable?(fh, path)
+      file_path = File.join(@root, String.b(path))
+      File.file?(file_path) && File.readable?(file_path)
+    end
+
+    def compressible?(fh, content_type) = Regexp.match?(@compressible_content_types, content_type)
+
+    def each_precompressed_filepath(fh, filepath)
+      Array.each(@precompressed) do |content_encoding|
+        yield(content_encoding, "#{filepath}#{precompressed_exts[content_encoding] || ""}")
+      end
+      nil
+    end
+
+    def default_static_extension = ".html"                # ActionController::Base.default_static_extension
+
+    def each_candidate_filepath(fh, path_info)
+      path = clean_path(fh, path_info)
+      return nil unless path
+      ext = File.extname(path)
+      content_type = Rack::Mime.mime_type(ext, nil)
+      yield(path, content_type || "text/plain")
+      unless content_type
+        default_ext = default_static_extension
+        if ext != default_ext
+          default_content_type = Rack::Mime.mime_type(default_ext, "text/plain") || "text/plain"
+          yield("#{path}#{default_ext}", default_content_type)
+          yield("#{path}/#{@index}#{default_ext}", default_content_type)
+        end
+      end
+      nil
+    end
+
+    def clean_path(fh, path_info)
+      path = Rack::Utils.unescape_path(String.chomp(path_info, "/"))
+      Rack::Utils.valid_path?(path) ? Rack::Utils.clean_path_info(path) : nil
+    end
+  end
+end

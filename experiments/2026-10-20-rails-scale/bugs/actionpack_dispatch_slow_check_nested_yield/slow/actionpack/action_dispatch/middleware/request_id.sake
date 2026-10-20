@@ -1,0 +1,35 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/request_id.rb
+#
+# Request#request_id / request_id= are in http/request.rb.
+
+require "securerandom"
+require "../app"
+
+module ActionDispatch
+  class RequestId
+    attr_reader app, header, env_header
+    include App
+
+    # Rails: RequestId.new(app, header: "X-Request-Id")
+    def initialize(mw)
+      @env_header = "HTTP_#{String.upcase(@header)}".String.tr("-", "_")
+    end
+
+    def call(mw, req)
+      Request.set_request_id(req, make_request_id(mw, Request.get_header(req, @env_header)))
+      status, headers, body = App.call(@app, req)
+      headers[String.downcase(@header)] = Request.request_id(req) || ""
+      [status, headers, body]
+    end
+
+    def make_request_id(mw, request_id)
+      if request_id && !String.empty?(request_id)
+        String.gsub(request_id, /[^\w\-@]/, "")[0, 255] || ""
+      else
+        internal_request_id(mw)
+      end
+    end
+
+    def internal_request_id(mw) = SecureRandom.uuid
+  end
+end

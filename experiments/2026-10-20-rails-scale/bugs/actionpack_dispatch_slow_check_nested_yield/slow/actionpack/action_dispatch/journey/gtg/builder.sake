@@ -1,0 +1,180 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/gtg/builder.rb
+#
+# Rails keys its followpos table and its states by object identity (`compare_by_identity`) on the tree's
+# terminal nodes. Sake values have no identity, so the builder first copies the routes' trees into GTG::Position
+# nodes that carry a number: a terminal's position is its number, a state is an Array of positions, and
+# DUMMY_END_NODE is position 0.
+
+require "transition_table"
+
+module ActionDispatch
+  module Journey
+    module GTG
+      # a copy of a Journey node with its terminal's number (kind is the node's type)
+      class Position
+        attr_reader kind, id, left, right, children, symbol, memo
+      end
+
+      class Builder
+        attr_reader root, ast
+        private attr_reader followpos, terminals
+
+        # Builder.new(Nodes::Or.new(anchored routes' asts)): here the routes, each tree tagged with its route
+        def make(routes)
+          terminals = Hash.new
+          dummy = Position.new(:DUMMY, 0, nil, nil, Any[], "", nil)
+          children = Array.map(routes) { |r| copy(terminals, Route.ast(r), r) }
+          root = Position.new(:OR, -1, nil, nil, children, "", nil)
+          b = Builder.new(root, Position.new(:CAT, -1, root, dummy, Any[], "", nil), Hash.new, terminals)
+          build_followpos(b)
+          b
+        end
+
+        def copy(terms, node, route)
+          case node
+          in Nodes::Cat then Position.new(:CAT, -1, copy(terms, Nodes::Cat.left(node), route), copy(terms, Nodes::Cat.right(node), route), Any[], "", nil)
+          in Nodes::Or then Position.new(:OR, -1, nil, nil, Array.map(Nodes::Or.children(node)) { |c| copy(terms, c, route) }, "", nil)
+          in Nodes::Group then Position.new(:GROUP, -1, copy(terms, Nodes::Group.left(node), route), nil, Any[], "", nil)
+          in Nodes::Star then Position.new(:STAR, -1, copy(terms, Nodes::Star.left(node), route), nil, Any[], Nodes::Star.regexp(node), nil)
+          in Nodes::Symbol then terminal(terms, :SYMBOL, Nodes::Symbol.regexp(node), route)
+          in Nodes::Literal then terminal(terms, :LITERAL, Nodes::Literal.left(node), route)
+          in Nodes::Slash then terminal(terms, :SLASH, Nodes::Slash.left(node), route)
+          in Nodes::Dot then terminal(terms, :DOT, Nodes::Dot.left(node), route)
+          end
+        end
+
+        def terminal(terms, kind, symbol, route)
+          id = Hash.size(terms) + 1
+          pos = Position.new(kind, id, nil, nil, Any[], symbol, route)
+          terms[id] = pos
+          pos
+        end
+
+        def transition_table(b)
+          dtrans = TransitionTable.make
+          next_state = 1
+          state_id = Hash.new                          # a state (by its place in dstates) => its number
+          dstates = Any[[0, firstpos(b, @root)]]       # [state number, positions]; the first state is 0
+          until Array.empty?(dstates)
+            from, s = Array.shift(dstates)
+            # Rails groups by the symbol itself; a Regexp cannot be a Hash key in Sake, so by its spelling
+            groups = Array.group_by(s) { |pos| symbol_key(b, pos) }
+            Hash.each(groups) do |_key, ps|
+              sym = symbol_of(b, ps[0] || 0)
+              u = Array.uniq(Array.flat_map(ps) { |l| @followpos[l] || Integer[] })
+              next if Array.empty?(u)
+              to = next_state
+              next_state += 1
+              TransitionTable.set(dtrans, from, to, sym)
+              if Array.all?(u) { |pos| pos == 0 }
+                TransitionTable.add_accepting(dtrans, to)
+                Array.each(ps) { |state| TransitionTable.add_memo(dtrans, to, memo_of(b, state)) }
+              else
+                if Array.include?(u, 0)
+                  Array.each(ps) do |state|
+                    TransitionTable.add_memo(dtrans, to, memo_of(b, state)) if Array.include?(@followpos[state] || Integer[], 0)
+                  end
+                  TransitionTable.add_accepting(dtrans, to)
+                end
+              end
+              Array.push(dstates, [to, u])
+            end
+          end
+          dtrans
+        end
+
+        def nullable?(b, node)
+          case Position.kind(node)
+          in :GROUP then true
+          in :STAR
+            re = Position.symbol(node)
+            (re in Regexp) ? Regexp.match?(re, "") : false
+          in :OR then Array.any?(Position.children(node)) { |c| nullable?(b, c) }
+          in :CAT then nullable?(b, left!(node)) && nullable?(b, right!(node))
+          else false                                   # a terminal: `!node.left`, never nil here
+          end
+        end
+
+        def firstpos(b, node)
+          case Position.kind(node)
+          in :STAR | :GROUP then firstpos(b, left!(node))
+          in :CAT
+            if nullable?(b, left!(node))
+              Array.union(firstpos(b, left!(node)), firstpos(b, right!(node)))
+            else
+              firstpos(b, left!(node))
+            end
+          in :OR then Array.uniq(Array.flat_map(Position.children(node)) { |c| firstpos(b, c) })
+          else nullable?(b, node) ? Integer[] : Integer[Position.id(node)]
+          end
+        end
+
+        def lastpos(b, node)
+          case Position.kind(node)
+          in :STAR | :GROUP then lastpos(b, left!(node))
+          in :OR then Array.uniq(Array.flat_map(Position.children(node)) { |c| lastpos(b, c) })
+          in :CAT
+            if nullable?(b, right!(node))
+              Array.union(lastpos(b, left!(node)), lastpos(b, right!(node)))
+            else
+              lastpos(b, right!(node))
+            end
+          else nullable?(b, node) ? Integer[] : Integer[Position.id(node)]
+          end
+        end
+
+        def left!(node)
+          l = Position.left(node)
+          l => Position
+          l
+        end
+        def right!(node)
+          r = Position.right(node)
+          r => Position
+          r
+        end
+
+        def build_followpos(b)
+          each_node(b, @ast) do |n|
+            if Position.kind(n) == :CAT
+              firsts = firstpos(b, right!(n))
+              Array.each(lastpos(b, left!(n))) { |i| @followpos[i] = (@followpos[i] || Integer[]) + firsts }
+            end
+          end
+          nil
+        end
+
+        def each_node(b, node, &block)
+          yield(node)
+          l = Position.left(node)
+          each_node(b, l, &block) if l
+          r = Position.right(node)
+          each_node(b, r, &block) if r
+          Array.each(Position.children(node)) { |c| each_node(b, c, &block) }
+          nil
+        end
+
+        # symbol(edge): a symbol's regexp, else the terminal's String
+        def symbol_of(b, pos)
+          t = @terminals[pos]
+          t ? Position.symbol(t) : ""
+        end
+        def symbol_key(b, pos)
+          sym = symbol_of(b, pos)
+          case sym
+          in Regexp then "/#{Regexp.options(sym)}/#{Regexp.source(sym)}"
+          in String then "\"#{sym}"
+          end
+        end
+
+        def memo_of(b, pos)
+          t = @terminals[pos]
+          t => Position
+          m = Position.memo(t)
+          m => Route
+          m
+        end
+      end
+    end
+  end
+end

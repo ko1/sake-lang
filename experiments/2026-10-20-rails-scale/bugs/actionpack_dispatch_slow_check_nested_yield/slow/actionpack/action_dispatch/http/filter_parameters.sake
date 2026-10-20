@@ -1,0 +1,67 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/filter_parameters.rb
+#
+# Rails' FilterParameters is a module Request includes, with memos in instance variables; here its functions are
+# added to Request (this file reopens it) and the memos are Request's fields. The filters are the app's
+# "action_dispatch.parameter_filter" (config.filter_parameters) in Request.env_config.
+
+require "request"
+require "rails/activesupport/active_support/parameter_filter"
+
+module ActionDispatch
+  class Request
+    def env_match = Any[/RAW_POST_DATA/, "rack.request.form_vars"]
+    def null_param_filter = once { ActiveSupport::ParameterFilter.of(Any[]) }
+    def null_env_filter = once { ActiveSupport::ParameterFilter.of(Any[/RAW_POST_DATA/, "rack.request.form_vars"]) }
+
+    # filtered_parameters: the parameters with the filtered ones masked, for the log
+    def filtered_parameters(req)
+      fp = @_filtered_parameters
+      return fp if fp
+      fp = begin
+        ActiveSupport::ParameterFilter.filter(parameter_filter(req), parameters(req))
+      rescue Http::Parameters::ParseError
+        Hash.new
+      end
+      @_filtered_parameters = fp
+      fp
+    end
+
+    def filtered_env(req) = @_filtered_env ||= ActiveSupport::ParameterFilter.filter(env_filter(req), @env)
+
+    def filtered_path(req)
+      @_filtered_path ||= query_string(req) == "" ? path(req) : "#{path(req)}?#{filtered_query_string(req)}"
+    end
+
+    def parameter_filter(req)
+      pf = @_parameter_filter
+      return pf if pf
+      filters = env_config(req)["action_dispatch.parameter_filter"]
+      pf = (filters in Array) ? parameter_filter_for(req, filters) : null_param_filter
+      @_parameter_filter = pf
+      pf
+    end
+
+    def env_filter(req)
+      filters = env_config(req)["action_dispatch.parameter_filter"]
+      return null_env_filter unless filters in Array
+      parameter_filter_for(req, filters + env_match)
+    end
+
+    def parameter_filter_for(req, filters) = ActiveSupport::ParameterFilter.of(filters)
+
+    def filtered_query_string(req)
+      parts = String.split(query_string(req), /([&;])/)
+      filtered_parts = Array.map(parts) do |part|
+        if String.include?(part, "=")
+          key, value = String.split(part, "=", 2)
+          filtered = ActiveSupport::ParameterFilter.filter(parameter_filter(req), Hash.of(key => value))
+          k, v = Array.first(Hash.to_a(filtered)) || ["", ""]
+          "#{k}=#{v}"
+        else
+          part
+        end
+      end
+      Array.join(filtered_parts, "")
+    end
+  end
+end

@@ -1,0 +1,134 @@
+# Port of rack-test-2.2.0/lib/rack/test/cookie_jar.rb (partial: no to_h of a cookie, no initialize_copy) — the cookie
+# jar of Rails' integration sessions (ActionDispatch::Integration::Session keeps a Rack::MockSession, whose jar is this)
+#
+# A cookie's options are a Hash of downcased String names, as rack-test's; `expires` is parsed from the HTTP date with
+# Time.httpdate. A URI is sakelib's URI.
+
+require "rack"
+require "time"
+require "uri"
+
+module Rack
+  module Test
+    def default_host = "example.org"
+
+    class Cookie
+      attr_reader name, value, raw
+      private attr_reader options, exact_domain_match, default_host
+      include Comparable
+
+      # Cookie.new(raw, uri = nil, default_host = DEFAULT_HOST)
+      def make(raw, uri, default_host)
+        u = uri || default_uri(default_host)
+        raw_part, _sep, rest = String.partition(raw, /[;,] */)
+        name, value = Hash.to_a(Rack::Utils.parse_query(raw_part, ";"))[0] || ["", nil]
+        options = Hash.new
+        Hash.each(Rack::Utils.parse_query(rest, ";")) { |k, v| options[String.downcase(k)] = v }
+        exact = true
+        d = options["domain"]
+        if d in String
+          exact = false
+          options["domain"] = String.delete_prefix(d, ".")
+        else
+          options["domain"] = URI.host(u) || default_host
+        end
+        options["path"] ||= String.sub(URI.path(u) || "", /\/[^\/]*\Z/, "")
+        Cookie.new(name, value, raw_part, options, exact, default_host)
+      end
+
+      def default_uri(default_host) = URI.parse("//" + default_host + "/")
+
+      def replaces?(c, other)
+        [String.downcase(@name), domain(c), path(c)] == [String.downcase(Cookie.name(other)), Cookie.domain(other), Cookie.path(other)]
+      end
+
+      def empty?(c) = @value == nil || @value == ""
+      def domain(c) = Kernel.to_s(@options["domain"])
+      def secure?(c) = Hash.key?(@options, "secure")
+      def http_only?(c) = Hash.key?(@options, "httponly")
+      def path(c) = String.strip(Array.first(String.split(Kernel.to_s(@options["path"]), ",")) || "/")
+
+      def expires(c)
+        e = @options["expires"]
+        (e in String) ? Time.httpdate(e) : nil
+      end
+
+      def expired?(c)
+        e = expires(c)
+        e != nil && e < Time.now
+      end
+
+      def valid?(c, uri)
+        u = uri || default_uri(@default_host)
+        host = URI.host(u) || @default_host
+        re = Regexp.new("#{@exact_domain_match ? "^" : ""}#{Regexp.escape(domain(c))}$", "i")
+        (!secure?(c) || URI.scheme(u) == "https") && Regexp.match?(re, host)
+      end
+
+      def matches?(c, uri) = !expired?(c) && valid?(c, uri) && String.start_with?(URI.path(uri) || "", path(c))
+
+      def <=>(a, b)
+        [@name, path(a), String.reverse(domain(a))] <=> [Cookie.name(b), Cookie.path(b), String.reverse(Cookie.domain(b))]
+      end
+    end
+
+    class CookieJar
+      private attr_reader cookies, default_host
+      include Indexable
+
+      def delimiter = "; "
+      def make(default_host) = CookieJar.new(Cookie[], default_host)
+
+      def [](jar, name)
+        n = Kernel.to_s(name)
+        Array.each(@cookies) { |cookie| return Cookie.value(cookie) if Cookie.name(cookie) == n }
+        nil
+      end
+
+      def []=(jar, name, value)
+        merge(jar, "#{name}=#{Rack::Utils.escape(value)}")
+      end
+
+      def get_cookie(jar, name) = Array.find(@cookies) { |cookie| Cookie.name(cookie) == name }
+
+      def delete(jar, name)
+        Array.reject!(@cookies) { |cookie| Cookie.name(cookie) == name }
+        nil
+      end
+
+      # merge(raw_cookies, uri = nil): a set-cookie header (lines) or an Array of them
+      def merge(jar, raw_cookies, uri = nil)
+        return nil unless raw_cookies
+        list = (raw_cookies in String) ? String.split(raw_cookies, "\n") : raw_cookies
+        Array.each(list) do |raw_cookie|
+          raw = Kernel.to_s(raw_cookie)
+          next if raw == ""
+          cookie = Cookie.make(raw, uri, @default_host)
+          add(jar, cookie) if Cookie.valid?(cookie, uri)
+        end
+        nil
+      end
+
+      # Rails' `<<`
+      def add(jar, new_cookie)
+        Array.reject!(@cookies) { |existing| Cookie.replaces?(new_cookie, existing) }
+        Array.push(@cookies, new_cookie)
+        Array.sort!(@cookies)
+        nil
+      end
+
+      # for(uri): the Cookie header for a request to uri
+      def for(jar, uri)
+        parts = String[]
+        Array.each(@cookies) { |cookie| Array.push(parts, Cookie.raw(cookie)) if uri == nil || Cookie.matches?(cookie, uri) }
+        Array.join(parts, delimiter)
+      end
+
+      def to_hash(jar)
+        h = Hash.new
+        Array.each(@cookies) { |cookie| h[Cookie.name(cookie)] = Cookie.value(cookie) }
+        h
+      end
+    end
+  end
+end

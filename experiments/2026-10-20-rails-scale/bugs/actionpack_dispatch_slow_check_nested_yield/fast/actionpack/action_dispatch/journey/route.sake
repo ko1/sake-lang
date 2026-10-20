@@ -1,0 +1,131 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/route.rb (partial: no source_location, ip)
+#
+# Rails' VerbMatchers are classes made with class_eval per verb (GET, POST, ...) and called with `req.get?`; here a
+# matcher is a Struct of the verbs (upcased Strings) and `all`. `constraints` (the request conditions such as
+# subdomain:) are matched by `request.send(method)` in Rails; here by Request.condition_value, a `case` over the
+# Request functions a route condition can name.
+
+require "../http/request"
+require "path/pattern"
+
+module ActionDispatch
+  module Journey
+    class Route
+      module VerbMatchers
+        Matcher = Struct.new(:verbs, :all)
+        module_function
+        def verb_list = String["DELETE", "GET", "HEAD", "OPTIONS", "LINK", "PATCH", "POST", "PUT", "TRACE", "UNLINK"]
+
+        # VerbMatchers.for([:get, :post]); an unknown verb is dasherized and upcased (VerbMatchers::Unknown)
+        def for(verbs)
+          if Array.any?(verbs) { |v| v == :all || v == "all" }
+            Matcher.new(String[], true)
+          else
+            Matcher.new(Array.map(verbs) { |v| String.upcase(String.tr(Kernel.to_s(v), "_", "-")) }, false)
+          end
+        end
+        def verb(m) = Matcher.all(m) ? "" : Array.join(Matcher.verbs(m), "|")
+        def call(m, req) = Matcher.all(m) || Array.include?(Matcher.verbs(m), Request.request_method(req))
+      end
+
+      attr_reader name, app, path, defaults, constraints, precedence, scope_options, internal, ast
+      private attr_reader request_method_match, _required_defaults_list, path_formatter
+      private attr_accessor _required_defaults, _required_parts, _parts
+      def initialize(r) = nil
+
+      # Route.new(name:, app:, path:, constraints:, required_defaults:, defaults:, via:, precedence:, scope_options:, internal:)
+      def make(name:, app:, path:, constraints: Hash.new, required_defaults: Symbol[], defaults: Hash.new, via: nil, precedence: 0, scope_options: Hash.new, internal: false)
+        r = Route.new(name, app, path, defaults, constraints, precedence, scope_options, internal, Path::Pattern.ast(path).Ast.root,
+                      via ? VerbMatchers.for(via) : nil, required_defaults, Path::Pattern.build_formatter(path))
+        r
+      end
+
+      def conditions(r) = @constraints
+
+      # for `bin/rails routes`: the defaults and the path's requirements, without the default wildcard regexp
+      def requirements(r)
+        Hash.merge(@defaults, Path::Pattern.requirements(@path)).Hash.reject { |_k, v| v == /.+?/m }
+      end
+
+      def segments(r) = Path::Pattern.names(@path)
+      def required_keys(r) = required_parts(r) + Hash.keys(required_defaults(r))
+
+      def score(r, supplied_keys)
+        Array.each(Path::Pattern.required_names(@path)) do |k|
+          return -1 unless Hash.key?(supplied_keys, k)
+        end
+        Hash.size(required_defaults(r)) * 2 + Array.count(Path::Pattern.names(@path)) { |k| Hash.key?(supplied_keys, k) }
+      end
+
+      def parts(r) = @_parts ||= Array.map(segments(r)) { |s| String.to_sym(s) }
+      def segment_keys(r) = parts(r)
+
+      def format(r, path_options) = Format.evaluate(@path_formatter, path_options)
+
+      def required_parts(r) = @_required_parts ||= Array.map(Path::Pattern.required_names(@path)) { |s| String.to_sym(s) }
+      def required_default?(r, key) = Array.include?(@_required_defaults_list, key)
+
+      def required_defaults(r)
+        rd = @_required_defaults
+        return rd if rd
+        ps = parts(r)
+        rd = Hash.reject(@defaults) { |k, _v| Array.include?(ps, k) || !required_default?(r, k) }
+        @_required_defaults = rd
+        rd
+      end
+
+      def glob?(r) = Path::Pattern.ast(@path).Ast.glob?
+      def dispatcher?(r) = Routing::Endpoint.dispatcher?(@app)
+
+      def matches?(r, request)
+        m = @request_method_match
+        return false unless m == nil || VerbMatchers.call(m, request)
+        Hash.all?(@constraints) do |method, value|
+          v = Request.condition_value(request, method)
+          case value
+          in Regexp then Regexp.match?(value, Kernel.to_s(v))
+          in String then value == Kernel.to_s(v)
+          in Array then Array.include?(value, v)
+          in true then v != nil && v != "" && v != false
+          in false then v == nil || v == "" || v == false
+          else value == v
+          end
+        end
+      end
+
+      def requires_matching_verb?(r)
+        m = @request_method_match
+        m != nil && !VerbMatchers::Matcher.all(m)
+      end
+
+      def verb(r)
+        m = @request_method_match
+        m ? VerbMatchers.verb(m) : ""
+      end
+    end
+  end
+
+  # Route#matches? reads a condition with `request.send(method)`; these are the Request functions a condition can name
+  class Request
+    def condition_value(req, method)
+      case method
+      in :subdomain then subdomain(req)
+      in :domain then domain(req)
+      in :host then host(req)
+      in :port then port(req)
+      in :protocol then protocol(req)
+      in :ip then ip(req)
+      in :remote_ip then remote_ip(req)
+      in :request_method then request_method(req)
+      in :user_agent then user_agent(req)
+      in :path then path(req)
+      in :fullpath then fullpath(req)
+      in :format then Kernel.to_s(format(req))
+      in :xhr? then xhr?(req)
+      in :ssl? then ssl?(req)
+      in :local? then local?(req)
+      else raise ArgumentError, "unknown request condition #{Kernel.inspect(method)}"
+      end
+    end
+  end
+end

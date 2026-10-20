@@ -1,0 +1,111 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/routing/redirection.rb (partial: no block redirects (Redirect with a stored block), no instrumentation)
+#
+# Redirect < Endpoint with PathRedirect and OptionRedirect as subclasses in Rails; here the two classes include
+# Endpoint and the module Redirect (build_response, the shared part). Mapper.redirect (mapper.sake) makes them.
+
+require "endpoint"
+require "../journey/router/utils"
+
+module ActionDispatch
+  module Routing
+    module Redirect
+      def status(r) = raise(NotImplementedError)
+      def path(r, params, request) = raise(NotImplementedError)
+
+      def redirect?(r) = true
+      def serve(r, req) = build_response(r, req)
+
+      def build_response(r, req)
+        uri = URI.parse(path(r, Request.path_parameters(req), req))
+        unless URI.host(uri)
+          up = URI.path(uri) || ""
+          if relative_path?(r, up)
+            URI.set_path(uri, "#{Request.script_name(req)}/#{up}")
+          elsif up == ""
+            URI.set_path(uri, Request.script_name(req) == "" ? "/" : Request.script_name(req))
+          end
+        end
+        location = URI.to_s(uri)
+        unless URI.host(uri)
+          # uri.scheme ||= req.scheme; uri.host ||= req.host; uri.port ||= req.port unless req.standard_port?
+          port = Request.standard_port?(req) ? "" : ":#{Request.port(req)}"
+          location = "#{Request.scheme(req)}://#{Request.host(req)}#{port}#{location}"
+        end
+        body = ""
+        headers = Hash.of("location" => location, "content-type" => "text/html; charset=utf-8",
+                          "content-length" => Integer.to_s(String.length(body)))
+        [status(r), headers, Any[body]]
+      end
+
+      def relative_path?(r, path) = path != "" && !String.start_with?(path, "/")
+      def escape(r, params) = Hash.transform_values(params) { |v| Rack::Utils.escape(Kernel.to_s(v)) }
+      def escape_fragment(r, params) = Hash.transform_values(params) { |v| Journey::Router::Utils.escape_fragment(v) }
+      def escape_path(r, params) = Hash.transform_values(params) { |v| Journey::Router::Utils.escape_path(v) }
+
+      # Ruby's `string % params` with %{name} references
+      def interpolate(r, string, params)
+        String.gsub(string, /%\{(\w*)\}/) do |m|
+          key = String.to_sym(String.[](m, 2, String.length(m) - 3) || "")
+          raise KeyError, "key<#{key}> not found" unless Hash.key?(params, key)
+          Kernel.to_s(params[key])
+        end
+      end
+    end
+
+    class PathRedirect
+      attr_reader status, block
+      include Endpoint
+      include Redirect
+
+      def url_parts = /\A([^?]+)?(\?[^#]+)?(#.+)?\z/
+
+      def path(r, params, request)
+        m = String.match(@block, url_parts)
+        if m
+          path = interpolation_required?(r, m[1], params) ? interpolate(r, m[1] || "", escape_path(r, params)) : m[1]
+          query = interpolation_required?(r, m[2], params) ? interpolate(r, m[2] || "", escape(r, params)) : m[2]
+          fragment = interpolation_required?(r, m[3], params) ? interpolate(r, m[3] || "", escape_fragment(r, params)) : m[3]
+          "#{path}#{query}#{fragment}"
+        else
+          interpolation_required?(r, @block, params) ? interpolate(r, @block, escape(r, params)) : @block
+        end
+      end
+
+      def inspect(r) = "redirect(#{@status}, #{@block})"
+
+      def interpolation_required?(r, string, params)
+        !Hash.empty?(params) && string != nil && String.match?(string, /%\{\w*\}/)
+      end
+    end
+
+    class OptionRedirect
+      attr_reader status, options
+      include Endpoint
+      include Redirect
+
+      def path(r, params, request)
+        url_options = Hash.of(protocol: Request.protocol(request), host: Request.host(request),
+                              port: Request.optional_port(request), path: Request.path(request),
+                              params: Request.query_parameters(request))
+        Hash.merge!(url_options, @options)
+        up = Kernel.to_s(url_options[:path])
+        url_options[:path] = interpolate(r, up, escape_path(r, params)) if !Hash.empty?(params) && String.match?(up, /%\{\w*\}/)
+        unless @options[:host] || @options[:domain]
+          up = Kernel.to_s(url_options[:path])
+          if relative_path?(r, up)
+            url_options[:path] = "/#{up}"
+            url_options[:script_name] = Request.script_name(request)
+          elsif up == ""
+            url_options[:path] = Request.script_name(request) == "" ? "/" : ""
+            url_options[:script_name] = Request.script_name(request)
+          end
+        end
+        Http::URL.url_for(url_options)
+      end
+
+      def inspect(r)
+        "redirect(#{@status}, #{Array.join(Hash.map(@options) { |k, v| "#{k}: #{v}" }, ", ")})"
+      end
+    end
+  end
+end

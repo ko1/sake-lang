@@ -1,0 +1,86 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/session/cookie_store.rb (partial: no stale-session check)
+#
+# The session is kept in `cookie_jar.signed_or_encrypted` (../cookies_signed.sake): the signed jar, since the
+# encrypted one (../cookies_encrypted.sake) waits for activesupport's MessageEncryptor; Rails uses the encrypted jar
+# whenever secret_key_base is set.
+
+require "../../app"
+require "abstract_store"
+require "../cookies_signed"
+
+module ActionDispatch
+  module Session
+    class CookieStore
+      attr_reader app
+      attr_accessor default_options, key, same_site, cookie_only
+      include App
+      include AbstractStore
+
+      # Rails' CookieStore::SessionId: the id and the session data, which is the cookie's value
+      class SessionId
+        attr_reader public_id, cookie_value
+      end
+
+      # Rails: CookieStore.new(app, options): cookie_only forced, same_site from the request unless given
+      def initialize(s)
+        o = @default_options || Hash.new
+        o[:cookie_only] = true
+        @default_options = o
+        AbstractStore.setup(s)
+      end
+
+      def same_site_for(s, req) = @same_site || Request.cookies_same_site_protection(req)
+
+      def delete_session(s, req, session_id, options)
+        new_sid = options[:drop] ? nil : AbstractStore.generate_sid(s)
+        Request.env_config(req)["action_dispatch.request.unsigned_session_cookie"] =
+          new_sid ? Hash.of("session_id" => Rack::Session::SessionId.public_id(new_sid)) : Hash.new
+        new_sid
+      end
+
+      def load_session(s, req)
+        data = persistent_session_id!(s, unpacked_cookie_data(s, req))
+        sid = data["session_id"]
+        sid => String
+        [Rack::Session::SessionId.new(sid), data]
+      end
+
+      def find_session(s, req, sid) = load_session(s, req)
+      def write_session(s, req, sid, session_data, options)
+        session_data["session_id"] = Rack::Session::SessionId.public_id(sid)
+        session_data
+      end
+
+      def extract_session_id(s, req)
+        sid = unpacked_cookie_data(s, req)["session_id"]
+        (sid in String) ? Rack::Session::SessionId.new(sid) : nil
+      end
+
+      # Rails caches it in "action_dispatch.request.unsigned_session_cookie"
+      def unpacked_cookie_data(s, req)
+        cached = Request.env_config(req)["action_dispatch.request.unsigned_session_cookie"]
+        return cached if cached in Hash
+        data = get_cookie(s, req)
+        v = Hash.new
+        Hash.each(data) { |k, x| v[Kernel.to_s(k)] = x } if data in Hash
+        Request.env_config(req)["action_dispatch.request.unsigned_session_cookie"] = v
+        v
+      end
+
+      def persistent_session_id!(s, data)
+        data["session_id"] ||= Rack::Session::SessionId.public_id(AbstractStore.generate_sid(s))
+        data
+      end
+
+      def set_cookie(s, req, cookie)
+        jar = Cookies::CookieJar.signed_or_encrypted(Request.cookie_jar(req))
+        Cookies::SignedKeyRotatingCookieJar.[]=(jar, @key, cookie)
+      end
+
+      def get_cookie(s, req)
+        jar = Cookies::CookieJar.signed_or_encrypted(Request.cookie_jar(req))
+        Cookies::SignedKeyRotatingCookieJar.[](jar, @key)
+      end
+    end
+  end
+end

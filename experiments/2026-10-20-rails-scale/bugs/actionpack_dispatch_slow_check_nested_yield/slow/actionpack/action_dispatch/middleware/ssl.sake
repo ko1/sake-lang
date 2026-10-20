@@ -1,0 +1,98 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/ssl.rb (partial: no `exclude` lambda (redirect: false
+# turns redirects off, as Rails' default exclude does), Rack 3 headers only)
+#
+#   Ruby                                            Sake
+#   SSL.new(app, redirect: { host: "x" }, hsts: { preload: true })
+#                                                   SSL.build(app, redirect: Hash.of(host: "x"), hsts: Hash.of(preload: true))
+
+require "../app"
+require "../http/request"
+
+module ActionDispatch
+  class SSL
+    attr_reader app, redirect, secure_cookies, hsts_header, ssl_default_redirect_status
+    include App
+
+    def hsts_expires_in = 63072000
+    def permanent_redirect_request_methods = String["GET", "HEAD"]
+    def default_hsts_options = Hash.of(expires: hsts_expires_in, subdomains: true, preload: false)
+
+    # Rails: SSL.new(app, redirect: {}, hsts: {}, secure_cookies: true, ssl_default_redirect_status: nil);
+    # redirect: false (or nil) means no redirect, as Rails' default exclude `proc { !@redirect }`
+    def build(app, redirect: Hash.new, hsts: Hash.new, secure_cookies: true, ssl_default_redirect_status: nil)
+      SSL.new(app, redirect, secure_cookies, build_hsts_header(normalize_hsts_options(hsts)), ssl_default_redirect_status)
+    end
+
+    def excluded?(mw) = !(@redirect in Hash)
+
+    def call(mw, req)
+      if Request.ssl?(req)
+        status, headers, body = App.call(@app, req)
+        set_hsts_header!(mw, headers)
+        flag_cookies_as_secure!(mw, headers) if @secure_cookies && !excluded?(mw)
+        [status, headers, body]
+      else
+        r = @redirect
+        return redirect_to_https(mw, req, r) if r in Hash
+        App.call(@app, req)
+      end
+    end
+
+    def set_hsts_header!(mw, headers)
+      headers["strict-transport-security"] ||= @hsts_header
+      nil
+    end
+
+    def normalize_hsts_options(options)
+      case options
+      in false then Hash.merge(default_hsts_options, Hash.of(expires: 0))
+      in nil | true then default_hsts_options
+      in Hash then Hash.merge(default_hsts_options, options)
+      end
+    end
+
+    def build_hsts_header(hsts)
+      ex = hsts[:expires]
+      value = "max-age=#{(ex in Integer) ? ex : 0}"
+      value += "; includeSubDomains" if hsts[:subdomains]
+      value += "; preload" if hsts[:preload]
+      value
+    end
+
+    def flag_cookies_as_secure!(mw, headers)
+      cookies = headers["set-cookie"]
+      return nil unless cookies
+      list = (cookies in Array) ? cookies : String[cookies]
+      headers["set-cookie"] = Array.map(list) do |cookie|
+        String.match?(cookie, /;\s*secure\s*(;|$)/i) ? cookie : "#{cookie}; secure"
+      end
+      nil
+    end
+
+    def redirect_to_https(mw, request, r)
+      st = r[:status]
+      body = r[:body]
+      [(st in Integer) ? st : redirection_status(mw, request),
+        Hash.of("content-type" => "text/html; charset=utf-8", "location" => https_location_for(mw, request, r)),
+        (body in Array) ? body : String[]]
+    end
+
+    def redirection_status(mw, request)
+      if Array.include?(permanent_redirect_request_methods, Request.raw_request_method(request))
+        301                                                # a permanent redirect via a GET request
+      else
+        @ssl_default_redirect_status || 307                # a fresh request redirect to preserve the HTTP method
+      end
+    end
+
+    def https_location_for(mw, request, r)
+      h = r[:host]
+      host = (h in String) ? h : Request.host(request)
+      pt = r[:port]
+      port = (pt in Integer) ? pt : Request.port(request)
+      location = "https://#{host}"
+      location += ":#{port}" if port != 80 && port != 443
+      location + Request.fullpath(request)
+    end
+  end
+end

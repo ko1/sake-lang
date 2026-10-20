@@ -1,0 +1,113 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/middleware/cookies.rb, the signed jar (ChainedCookieJars#signed and
+# #signed_or_encrypted, SerializedCookieJars, SignedKeyRotatingCookieJar), on activesupport's KeyGenerator and
+# MessageVerifier (sakelib/rails/activesupport/) (partial: no rotations, the :json cookie serializer only (no
+# Marshal); the encrypted jar is cookies_encrypted.sake, which needs a MessageEncryptor not ported yet)
+#
+# Rails' cookie jars give the verifier a NullSerializer and serialize the value themselves (JSON), and with a
+# NullSerializer ActiveSupport's Messages::Metadata writes its pre-7.1 envelope:
+#   base64(JSON {"_rails" => {"message" => base64(JSON value), "exp" => nil, "pur" => "cookie.NAME"}}) + "--" + HMAC
+# sakelib's MessageVerifier serializes with JSON and writes the 7.1 envelope ({"data" => value}) only, so this jar
+# builds the envelope as Metadata's legacy path does and uses the verifier for the signature
+# (MessageVerifier.sign_encoded / extract_encoded): the cookies are byte for byte Rails'.
+
+require "json"
+require "base64"
+require "cookies"
+require "rails/activesupport/active_support/key_generator"
+require "rails/activesupport/active_support/message_verifier"
+
+module ActionDispatch
+  class Request
+    # Rails: Rails.application.key_generator, put in the env by the app ("action_dispatch.key_generator");
+    # a KeyGenerator or a CachingKeyGenerator
+    def key_generator(req)
+      kg = env_config(req)[Cookies.generator_key]
+      return kg if kg in ActiveSupport::KeyGenerator | ActiveSupport::CachingKeyGenerator
+      kg = ActiveSupport::CachingKeyGenerator.new(ActiveSupport::KeyGenerator.new(secret_key_base(req) || "", iterations: 1000))
+      env_config(req)[Cookies.generator_key] = kg
+      kg
+    end
+  end
+
+  class Cookies
+    class CookieJar
+      def signed(jar) = @_signed ||= SignedKeyRotatingCookieJar.new(jar)
+      # Rails: encrypted when secret_key_base is set, else signed; the encrypted jar is in cookies_encrypted.sake
+      def signed_or_encrypted(jar) = signed(jar)
+    end
+
+    class PermanentCookieJar
+      def signed(j) = @_signed ||= SignedKeyRotatingCookieJar.new(j)     # cookies.permanent.signed
+    end
+
+    # SerializedCookieJars: the value is serialized (JSON) before it is signed
+    module SerializedCookieJars
+      def digest(j) = Request.cookies_digest(request(j)) || "SHA1"
+      def serialize(j, value) = JSON.generate(value)
+      def deserialize(j, dumped)
+        JSON.parse(dumped)
+      rescue JSON::ParserError
+        nil
+      end
+      def check_for_overflow!(j, name, options)
+        total_size = String.bytesize(Kernel.to_s(name)) + String.bytesize(Kernel.to_s(options[:value]))
+        if total_size > Cookies.max_cookie_size
+          raise CookieOverflow, "#{name} cookie overflowed with size #{total_size} bytes"
+        end
+        nil
+      end
+    end
+
+    class SignedKeyRotatingCookieJar
+      attr_reader parent_jar
+      private attr_accessor verifier
+      include AbstractCookieJar
+      include SerializedCookieJars
+      include Indexable
+
+      def initialize(j)
+        req = request(j)
+        kg = Request.key_generator(req)
+        secret = (ActiveSupport::KeyGenerator|ActiveSupport::CachingKeyGenerator).generate_key(kg, Request.signed_cookie_salt(req) || "signed cookie")
+        @verifier = ActiveSupport::MessageVerifier.new(secret, digest: Request.signed_cookie_digest(req) || "SHA1")
+      end
+
+      def request(j) = (CookieJar|PermanentCookieJar).request(@parent_jar)
+
+      # Rails: @verifier.verified(signed_message, purpose:) then the serializer's load
+      def parse(j, name, signed_message, purpose)
+        encoded = ActiveSupport::MessageVerifier.extract_encoded(@verifier, signed_message)
+        data = JSON.parse(Base64.strict_decode64(encoded))
+        if (data in Hash) && Hash.key?(data, "_rails")
+          meta = data["_rails"]
+          return nil unless meta in Hash
+          return nil unless meta["pur"] == purpose
+          ex = meta["exp"]
+          return nil if (ex in String) && Time.iso8601(Time.utc(Time.now), 3) > ex     # both UTC ISO 8601
+          message = meta["message"]
+          return nil unless message in String
+          deserialize(j, Base64.strict_decode64(message))
+        else
+          purpose == nil ? data : nil
+        end
+      rescue ActiveSupport::Messages::InvalidMessageFormat, JSON::ParserError, ArgumentError
+        nil
+      end
+
+      # Rails: options[:value] = @verifier.generate(serializer.dump(value), expires_at:, purpose:)
+      def commit(j, name, options)
+        md = cookie_metadata(j, name, options)
+        dumped = serialize(j, options[:value])
+        payload = if Hash.key?(md, :purpose) || md[:expires_at] != nil
+          ex = md[:expires_at]
+          JSON.generate(Hash.of("_rails" => Hash.of("message" => Base64.strict_encode64(dumped),
+            "exp" => (ex in Time) ? Time.iso8601(Time.utc(ex), 3) : nil, "pur" => md[:purpose])))
+        else
+          dumped
+        end
+        options[:value] = ActiveSupport::MessageVerifier.sign_encoded(@verifier, Base64.strict_encode64(payload))
+        check_for_overflow!(j, name, options)
+      end
+    end
+  end
+end

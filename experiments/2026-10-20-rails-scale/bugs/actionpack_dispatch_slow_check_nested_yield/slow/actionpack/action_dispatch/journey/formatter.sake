@@ -1,0 +1,181 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/journey/formatter.rb
+#
+# Rails' cache is a tree of Hashes keyed by [key, value] pairs of the routes' required defaults, with the routes
+# under the key :___routes; here a tree of Formatter::CacheNode. `generate` returns a RouteWithParams or a
+# MissingRoute, as in Rails; `(RouteWithParams|MissingRoute).path(r, method_name)` raises for the missing one.
+
+require "../../action_controller/metal/exceptions"
+require "routes"
+
+module ActionDispatch
+  module Journey
+    class Formatter
+      attr_reader routes                        # the Routing::RouteSet
+      private attr_accessor cache
+
+      class RouteWithParams
+        attr_reader route, parameterized_parts, params
+        def path(rp, _method_name) = Route.format(@route, @parameterized_parts)
+      end
+
+      class MissingRoute
+        attr_reader constraints, missing_keys, unmatched_keys, routes, name
+
+        def path(mr, method_name)
+          raise ActionController::UrlGenerationError.new(message(mr), @routes, @name, method_name)
+        end
+        def params(mr) = path(mr, "unknown")
+
+        def message(mr)
+          sorted = Array.sort_by(Hash.to_a(@constraints)) { |k, _v| Kernel.to_s(k) }
+          msg = "No route matches #{Kernel.inspect(Array.to_h(sorted))}"
+          msg += ", missing required keys: #{Kernel.inspect(Array.sort(@missing_keys))}" unless Array.empty?(@missing_keys)
+          msg += ", possible unmatched constraints: #{Kernel.inspect(Array.sort(@unmatched_keys))}" unless Array.empty?(@unmatched_keys)
+          msg
+        end
+      end
+
+      class CacheNode
+        attr_reader routes, children           # [index, Route] pairs; [key, value] => CacheNode
+      end
+
+      def make(routes) = Formatter.new(routes, nil)
+
+      # generate(name, options, path_parameters): the route and the parts of the options it takes, or a MissingRoute
+      def generate(f, name, options, path_parameters)
+        original_options = Hash.dup(options)
+        path_params = options[:path_params]
+        Hash.delete(options, :path_params)
+        if path_params in Hash
+          options = Hash.merge(path_params, options)
+        else
+          path_params = nil
+          options = Hash.dup(options)
+        end
+        constraints = Hash.merge(path_parameters, options)
+        missing_keys = nil
+
+        match_route(f, name, constraints) do |route|
+          parameterized_parts = extract_parameterized_parts(f, route, options, path_parameters)
+          # skip a route without a name unless it is a standard Rails route (the options cannot say which Rack app)
+          next unless name || Route.dispatcher?(route)
+
+          missing_keys = missing_keys(f, route, parameterized_parts)
+          next if missing_keys && !Array.empty?(missing_keys)
+          params = Hash.reject(options) do |key, _|
+            # a top-level param keeps generating a query param even if it is also a bind param
+            Hash.key?(parameterized_parts, key) || Hash.key?(Route.defaults(route), key) ||
+              (path_params != nil && Hash.key?(path_params, key) && !Hash.key?(original_options, key))
+          end
+
+          defaults = Route.defaults(route)
+          required_parts = Route.required_parts(route)
+          Array.reverse_each(Route.parts(route)) do |key|
+            part = parameterized_parts[key]
+            break if defaults[key] == nil && part != nil && part != ""
+            next if Kernel.to_s(part) != Kernel.to_s(defaults[key])
+            break if Array.include?(required_parts, key)
+            Hash.delete(parameterized_parts, key)
+          end
+
+          return RouteWithParams.new(route, parameterized_parts, params)
+        end
+
+        mk = missing_keys || Symbol[]
+        unmatched_keys = Array.intersection(mk, Hash.keys(constraints))
+        MissingRoute.new(constraints, mk - unmatched_keys, unmatched_keys, @routes, name)
+      end
+
+      def clear(f) = @cache = nil
+
+      # Object#to_param: a record's to_param, else to_s (nil stays nil)
+      def to_param(value)
+        case value
+        in nil then nil
+        in String then value
+        in Routing::ToParam then Routing::ToParam.to_param(value)
+        in Array then Array.join(Array.map(value) { |v| to_param(v) }, "/")
+        else Kernel.to_s(value)
+        end
+      end
+
+      def extract_parameterized_parts(f, route, options, recall)
+        parameterized_parts = Hash.merge(recall, options)
+        scope_options = Route.scope_options(route)
+        kept = Array.drop_while(Array.reverse(Route.parts(route))) { |part|
+          !(Hash.key?(options, part) || Hash.key?(scope_options, part)) || (options[part] == nil && recall[part] == nil)
+        }
+        keys_to_keep = Array.union(kept, Route.required_parts(route))
+        Hash.delete_if(parameterized_parts) { |bad_key, _| !Array.include?(keys_to_keep, bad_key) }
+        result = Hash.new
+        Hash.each(parameterized_parts) do |k, v|
+          tp = k == :controller ? v : to_param(v)
+          result[k] = tp if tp != nil
+        end
+        result
+      end
+
+      def match_route(f, name, options)
+        named = name ? Routing::RouteSet::NamedRouteCollection.get(Routing::RouteSet.named_routes(@routes), name) : nil
+        if named
+          yield(named)
+        else
+          routes = non_recursive(f, cache(f), options)
+          supplied_keys = Hash.new
+          Hash.each(options) { |k, v| supplied_keys[Kernel.to_s(k)] = true if v }
+          hash = Array.group_by(routes) { |_i, r| Route.score(r, supplied_keys) }
+          Array.reverse_each(Array.sort(Hash.keys(hash))) do |score|
+            break if score < 0
+            Array.each(Array.sort_by(hash[score] || Any[]) { |i, _r| i }) { |_i, route| yield(route) }
+          end
+        end
+        nil
+      end
+
+      def non_recursive(f, cache, options)
+        routes = Any[]
+        queue = Any[cache]
+        until Array.empty?(queue)
+          c = Array.shift(queue)
+          c => CacheNode
+          Array.concat(routes, CacheNode.routes(c))
+          Hash.each(options) do |k, v|
+            child = CacheNode.children(c)[[k, v]]
+            Array.push(queue, child) if child
+          end
+        end
+        routes
+      end
+
+      # missing_keys: the required parts with no value, or one that does not match its requirement
+      def missing_keys(f, route, parts)
+        missing = nil
+        tests = Path::Pattern.requirements_for_missing_keys_check(Route.path(route))
+        Array.each(Route.required_parts(route)) do |key|
+          test = tests[key]
+          part = parts[key]
+          ok = test == nil ? part != nil : (part != nil && Regexp.match?(test, Kernel.to_s(part)))
+          unless ok
+            missing ||= Symbol[]
+            Array.push(missing, key)
+          end
+        end
+        missing
+      end
+
+      def build_cache(f)
+        root = CacheNode.new(Any[], Hash.new)
+        Array.each_with_index(Routing::RouteSet.set(@routes).Journey::Routes.routes) do |route, i|
+          leaf = Hash.reduce(Route.required_defaults(route), root) do |h, tuple|
+            children = CacheNode.children(h)
+            children[tuple] ||= CacheNode.new(Any[], Hash.new)
+          end
+          Array.push(CacheNode.routes(leaf), [i, route])
+        end
+        root
+      end
+
+      def cache(f) = @cache ||= build_cache(f)
+    end
+  end
+end

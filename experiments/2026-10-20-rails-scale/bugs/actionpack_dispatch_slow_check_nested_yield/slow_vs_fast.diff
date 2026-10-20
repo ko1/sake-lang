@@ -1,0 +1,521 @@
+--- fast/actionpack/action_dispatch/routing/mapper.sake	2026-10-20 19:34:31.807468178 +0000
++++ slow/actionpack/action_dispatch/routing/mapper.sake	2026-10-20 19:38:24.298799814 +0000
+@@ -451,27 +451,34 @@
+         _push(m, s)
+       end
+ 
+-      # namespace :admin do ... end: path "admin", module "admin", as "admin" (inside resources: nested first)
+-      def namespace(m, name, as: :__default__, path: :__default__, shallow_path: :__default__, shallow_prefix: :__default__, **options)
+-        old = @scope
+-        begin
+-          _enter_nested(m) if resource_scope?(m)
+-          name = Kernel.to_s(name)
+-          options[:module] ||= name
+-          as = name if as == :__default__
+-          path = name if path == :__default__
+-          shallow_path = path if shallow_path == :__default__
+-          shallow_prefix = as if shallow_prefix == :__default__
+-          _enter_path(m, Kernel.to_s(path))
++      # namespace :admin do ... end (inside resources: nested first)
++      def namespace(m, name, as: :__default__, path: :__default__, shallow_path: :__default__, shallow_prefix: :__default__, **options, &block)
++        if resource_scope?(m)
++          nested(m) { namespace_(m, name, as, path, shallow_path, shallow_prefix, options, &block) }
++        else
++          namespace_(m, name, as, path, shallow_path, shallow_prefix, options, &block)
++        end
++      end
++
++      def namespace_(m, name, as, path, shallow_path, shallow_prefix, options)
++        name = Kernel.to_s(name)
++        options[:module] ||= name
++        as = name if as == :__default__
++        path = name if path == :__default__
++        shallow_path = path if shallow_path == :__default__
++        shallow_prefix = as if shallow_prefix == :__default__
++        path_scope(m, Kernel.to_s(path)) do
+           options[:as] = as
+           options[:shallow_path] = shallow_path
+           options[:shallow_prefix] = shallow_prefix
+-          _enter_scope(m, options, nil, nil)
+-          yield
+-        ensure
+-          @scope = old
++          scope_with(m, options) { yield }
+         end
+-        m
++      end
++
++      def scope_with(m, options)
++        scope(m, path: options[:path], module: options[:module], as: options[:as], shallow_path: options[:shallow_path],
++              shallow_prefix: options[:shallow_prefix], constraints: options[:constraints], defaults: options[:defaults],
++              controller: options[:controller], shallow: options[:shallow], format: options[:format]) { yield }
+       end
+ 
+       def constraints(m, constraints = Hash.new)
+@@ -589,104 +596,85 @@
+       def resources_path_names(m, options) = Hash.merge!(Scope.path_names(@scope), options)
+ 
+       # resource :session, only: [...] do ... end
+-      def resource(m, *resources, concerns: nil, **options)
+-        if block_given?
+-          _resources(m, true, resources, concerns, options) { yield }
+-        else
+-          _resources(m, true, resources, concerns, options)
++      def resource(m, *resources, concerns: nil, **options, &block) = resource_(m, resources, concerns, options, &block)
++
++      def resource_(m, resources, concerns, options, &block)
++        return m if apply_common_behavior_for(m, :resource, resources, concerns, options, &block)
++        with_scope_level(m, :resource) do
++          options = apply_action_options(m, :resource, options)
++          res = Resources::SingletonResource.make(Array.pop(resources), api_only?(m), Scope.shallow(@scope), options)
++          resource_scope(m, res) do
++            yield if block_given?
++            concerns(m, concerns) if concerns
++            new_(m) { get(m, :new) } if Array.include?(Resources::Resource.actions(res), :new)
++            set_member_mappings_for_resource(m)
++            collection(m) { post(m, :create) } if Array.include?(Resources::Resource.actions(res), :create)
++          end
+         end
+         m
+       end
+ 
+-      # resources :posts, only: [...], except: [...], path:, controller:, as:, param:, shallow:, concerns: do ... end
+-      def resources(m, *resources, concerns: nil, **options)
+-        if block_given?
+-          _resources(m, false, resources, concerns, options) { yield }
+-        else
+-          _resources(m, false, resources, concerns, options)
++      def resources(m, *resources, concerns: nil, **options, &block) = resources_(m, resources, concerns, options, &block)
++
++      def resources_(m, resources, concerns, options, &block)
++        return m if apply_common_behavior_for(m, :resources, resources, concerns, options, &block)
++        with_scope_level(m, :resources) do
++          options = apply_action_options(m, :resources, options)
++          res = Resources::Resource.make(Array.pop(resources), api_only?(m), Scope.shallow(@scope), false, options)
++          resource_scope(m, res) do
++            yield if block_given?
++            concerns(m, concerns) if concerns
++            collection(m) do
++              get(m, :index) if Array.include?(Resources::Resource.actions(res), :index)
++              post(m, :create) if Array.include?(Resources::Resource.actions(res), :create)
++            end
++            new_(m) { get(m, :new) } if Array.include?(Resources::Resource.actions(res), :new)
++            set_member_mappings_for_resource(m)
++          end
+         end
+         m
+       end
+ 
+-      # Rails' apply_common_behavior_for calls resource(s) again for each name, inside `shallow`, `nested` and `scope`
+-      # blocks; here those frames are entered one after the other, then the resource is drawn once.
+-      def _resources(m, singleton, resources, concerns, options)
+-        Array.each(resources) do |r|
+-          old = @scope
+-          begin
+-            opts = Hash.dup(options)
+-            shallow = opts[:shallow]
+-            Hash.delete(opts, :shallow)
+-            if shallow
+-              _enter_shallow(m)
+-              shallow = nil
+-            end
+-            _enter_nested(m) if resource_scope?(m)
+-            Array.each(Hash.keys(opts)) do |k|
+-              v = opts[k]
+-              if v in Regexp
+-                c = opts[:constraints]
+-                c = Hash.new unless c in Hash
+-                c[k] = v
+-                opts[:constraints] = c
+-                Hash.delete(opts, k)
+-              end
+-            end
+-            scope_options = Hash.reject(opts) { |k, _v| Array.include?(Resources.resource_options, k) }
+-            Array.each(Hash.keys(scope_options)) { |k| Hash.delete(opts, k) }
+-            scope_options[:shallow] = shallow unless shallow == nil
+-            _enter_scope(m, scope_options, nil, nil) unless Hash.empty?(scope_options)
+-            if block_given?
+-              _draw_resource(m, singleton, r, concerns, opts) { yield }
+-            else
+-              _draw_resource(m, singleton, r, concerns, opts)
+-            end
+-          ensure
+-            @scope = old
+-          end
++      def collection(m)
++        raise ArgumentError, "can't use collection outside resource(s) scope" unless resource_scope?(m)
++        with_scope_level(m, :collection) do
++          path_scope(m, Resources::Resource.collection_scope(parent_resource!(m))) { yield }
+         end
+-        nil
+       end
+ 
+-      # the body of Rails' resource / resources after apply_common_behavior_for
+-      def _draw_resource(m, singleton, name, concerns, options)
+-        old = _enter_level(m, singleton ? :resource : :resources)
+-        begin
+-          options = apply_action_options(m, singleton ? :resource : :resources, options)
+-          res = if singleton
+-            Resources::SingletonResource.make(name, api_only?(m), Scope.shallow(@scope), options)
++      def member(m)
++        raise ArgumentError, "can't use member outside resource(s) scope" unless resource_scope?(m)
++        with_scope_level(m, :member) do
++          if shallow?(m)
++            shallow_scope(m) { path_scope(m, Resources::Resource.member_scope(parent_resource!(m))) { yield } }
+           else
+-            Resources::Resource.make(name, api_only?(m), Scope.shallow(@scope), false, options)
++            path_scope(m, Resources::Resource.member_scope(parent_resource!(m))) { yield }
+           end
+-          _enter_resource_scope(m, res)
+-          yield if block_given?
+-          concerns(m, concerns) if concerns
+-          actions = Resources::Resource.actions(res)
+-          unless singleton
+-            o = _enter_collection(m)
+-            get(m, :index) if Array.include?(actions, :index)
+-            post(m, :create) if Array.include?(actions, :create)
+-            @scope = o
+-          end
+-          if Array.include?(actions, :new)
+-            o = _enter_new(m)
+-            get(m, :new)
+-            @scope = o
+-          end
+-          set_member_mappings_for_resource(m)
+-          if singleton && Array.include?(actions, :create)
+-            o = _enter_collection(m)
+-            post(m, :create)
+-            @scope = o
++        end
++      end
++
++      def new_(m)
++        raise ArgumentError, "can't use new outside resource(s) scope" unless resource_scope?(m)
++        with_scope_level(m, :new) do
++          path_scope(m, Resources::Resource.new_scope(parent_resource!(m), action_path(m, "new"))) { yield }
++        end
++      end
++
++      def nested(m)
++        raise ArgumentError, "can't use nested outside resource(s) scope" unless resource_scope?(m)
++        with_scope_level(m, :nested) do
++          if shallow?(m) && shallow_nesting_depth(m) >= 1
++            shallow_scope(m) do
++              path_scope(m, Resources::Resource.nested_scope(parent_resource!(m))) { scope_with(m, nested_options(m)) { yield } }
++            end
++          else
++            path_scope(m, Resources::Resource.nested_scope(parent_resource!(m))) { scope_with(m, nested_options(m)) { yield } }
+           end
+-        ensure
+-          @scope = old
+         end
+-        nil
+       end
+ 
+-      def collection(m)
+-        old = _enter_collection(m)
++      def shallow(m)
++        old = _enter_shallow(m)
+         begin
+           yield
+         ensure
+@@ -694,33 +682,99 @@
+         end
+       end
+ 
+-      def _enter_collection(m)
+-        raise ArgumentError, "can't use collection outside resource(s) scope" unless resource_scope?(m)
+-        old = _enter_level(m, :collection)
+-        _enter_path(m, Resources::Resource.collection_scope(parent_resource!(m)))
+-        old
++      def _enter_shallow(m)
++        s = Scope.child(@scope)
++        s.Scope.shallow = true
++        _push(m, s)
+       end
+ 
+-      def member(m)
+-        old = _enter_member(m)
+-        begin
+-          yield
+-        ensure
+-          @scope = old
++      def shallow?(m)
++        r = parent_resource(m)
++        r != nil && !Resources::Resource.singleton?(r) && Scope.shallow(@scope) == true
++      end
++
++      def apply_common_behavior_for(m, method, resources, concerns, options)
++        shallow = options[:shallow]
++        Hash.delete(options, :shallow)
++        if Array.size(resources) > 1
++          Array.each(resources) do |r|
++            opts = Hash.dup(options)
++            opts[:shallow] = shallow if shallow != nil
++            if block_given?
++              public_send_resource(m, method, r, concerns, opts) { yield }
++            else
++              public_send_resource(m, method, r, concerns, opts)
++            end
++          end
++          return true
++        end
++        if shallow
++          shallow(m) do
++            if block_given?
++              public_send_resource(m, method, Array.pop(resources), concerns, options) { yield }
++            else
++              public_send_resource(m, method, Array.pop(resources), concerns, options)
++            end
++          end
++          return true
++        end
++        if resource_scope?(m)
++          opts = Hash.dup(options)
++          opts[:shallow] = shallow if shallow != nil
++          nested(m) do
++            if block_given?
++              public_send_resource(m, method, Array.pop(resources), concerns, opts) { yield }
++            else
++              public_send_resource(m, method, Array.pop(resources), concerns, opts)
++            end
++          end
++          return true
+         end
++        Array.each(Hash.keys(options)) do |k|
++          v = options[k]
++          if v in Regexp
++            c = options[:constraints]
++            c = Hash.new unless c in Hash
++            c[k] = v
++            options[:constraints] = c
++            Hash.delete(options, k)
++          end
++        end
++        scope_options = Hash.reject(options) { |k, _v| Array.include?(Resources.resource_options, k) }
++        Array.each(Hash.keys(scope_options)) { |k| Hash.delete(options, k) }
++        scope_options[:shallow] = shallow unless shallow == nil
++        unless Hash.empty?(scope_options)
++          scope_with(m, scope_options) do
++            if block_given?
++              public_send_resource(m, method, Array.pop(resources), concerns, options) { yield }
++            else
++              public_send_resource(m, method, Array.pop(resources), concerns, options)
++            end
++          end
++          return true
++        end
++        false
+       end
+ 
+-      def _enter_member(m)
+-        raise ArgumentError, "can't use member outside resource(s) scope" unless resource_scope?(m)
+-        old = _enter_level(m, :member)
+-        _enter_shallow_scope(m) if shallow?(m)
+-        _enter_path(m, Resources::Resource.member_scope(parent_resource!(m)))
+-        old
++      def public_send_resource(m, method, r, concerns, options)
++        if method == :resource
++          if block_given?
++            resource_(m, Any[r], concerns, options) { yield }
++          else
++            resource_(m, Any[r], concerns, options)
++          end
++        else
++          if block_given?
++            resources_(m, Any[r], concerns, options) { yield }
++          else
++            resources_(m, Any[r], concerns, options)
++          end
++        end
+       end
+ 
+-      # Rails' `new do ... end` (`new` is the constructor in Sake)
+-      def new_(m)
+-        old = _enter_new(m)
++      def with_scope_level(m, kind)
++        old = @scope
++        @scope = Scope.new_level(old, kind)
+         begin
+           yield
+         ensure
+@@ -728,15 +782,24 @@
+         end
+       end
+ 
+-      def _enter_new(m)
+-        raise ArgumentError, "can't use new outside resource(s) scope" unless resource_scope?(m)
+-        old = _enter_level(m, :new)
+-        _enter_path(m, Resources::Resource.new_scope(parent_resource!(m), action_path(m, "new")))
+-        old
++      def resource_scope(m, resource)
++        old = @scope
++        s = Scope.child(old)
++        s.Scope.scope_level_resource = resource
++        @scope = s
++        begin
++          controller(m, Resources::Resource.resource_scope(resource)) { yield }
++        ensure
++          @scope = old
++        end
+       end
+ 
+-      def nested(m)
+-        old = _enter_nested(m)
++      def shallow_scope(m)
++        old = @scope
++        s = Scope.child(old)
++        s.Scope.as = Scope.shallow_prefix(old)
++        s.Scope.path = Scope.shallow_path(old)
++        @scope = s
+         begin
+           yield
+         ensure
+@@ -744,17 +807,11 @@
+         end
+       end
+ 
+-      def _enter_nested(m)
+-        raise ArgumentError, "can't use nested outside resource(s) scope" unless resource_scope?(m)
+-        old = _enter_level(m, :nested)
+-        _enter_shallow_scope(m) if shallow?(m) && shallow_nesting_depth(m) >= 1
+-        _enter_path(m, Resources::Resource.nested_scope(parent_resource!(m)))
+-        _enter_scope(m, nested_options(m), nil, nil)
+-        old
+-      end
+-
+-      def shallow(m)
+-        old = _enter_shallow(m)
++      def path_scope(m, path)
++        old = @scope
++        s = Scope.child(old)
++        s.Scope.path = merge_path_scope(Scope.path(old), path)
++        @scope = s
+         begin
+           yield
+         ensure
+@@ -762,17 +819,6 @@
+         end
+       end
+ 
+-      def _enter_shallow(m)
+-        s = Scope.child(@scope)
+-        s.Scope.shallow = true
+-        _push(m, s)
+-      end
+-
+-      def shallow?(m)
+-        r = parent_resource(m)
+-        r != nil && !Resources::Resource.singleton?(r) && Scope.shallow(@scope) == true
+-      end
+-
+       # match "path", to: "c#a", via: [:get, :post], as:, on:, constraints:, defaults:, format:, anchor:
+       def match(m, *path_or_actions, as: :__default__, via: nil, to: nil, controller: nil, action: nil, on: nil, defaults: nil, constraints: nil, anchor: nil, format: nil, path: nil, internal: nil, **mapping)
+         match_all(m, path_or_actions, as, via, to, controller, action, on, defaults, constraints, anchor, format, path, internal, mapping)
+@@ -815,10 +861,9 @@
+           raise ArgumentError, "must be called with a path and/or options"
+         end
+         if Scope.resources?(@scope)
+-          old = _enter_level(m, :root)
+-          _enter_path(m, Resources::Resource.path(parent_resource!(m)))
+-          match_root_route(m, options)
+-          @scope = old
++          with_scope_level(m, :root) do
++            path_scope(m, Resources::Resource.path(parent_resource!(m))) { match_root_route(m, options) }
++          end
+         else
+           match_root_route(m, options)
+         end
+@@ -938,16 +983,50 @@
+ 
+       def set_member_mappings_for_resource(m)
+         r = parent_resource!(m)
+-        old = _enter_member(m)
+-        actions = Resources::Resource.actions(r)
+-        get(m, :edit) if Array.include?(actions, :edit)
+-        get(m, :show) if Array.include?(actions, :show)
+-        if Array.include?(actions, :update)
+-          patch(m, :update)
+-          put(m, :update)
++        member(m) do
++          actions = Resources::Resource.actions(r)
++          get(m, :edit) if Array.include?(actions, :edit)
++          get(m, :show) if Array.include?(actions, :show)
++          if Array.include?(actions, :update)
++            patch(m, :update)
++            put(m, :update)
++          end
++          delete(m, :destroy) if Array.include?(actions, :destroy)
+         end
+-        delete(m, :destroy) if Array.include?(actions, :destroy)
+-        @scope = old
++      end
++
++      # (the fast form's frame functions, unused here; kept so that variants can swap single functions)
++      def _enter_collection(m)
++        raise ArgumentError, "can't use collection outside resource(s) scope" unless resource_scope?(m)
++        old = _enter_level(m, :collection)
++        _enter_path(m, Resources::Resource.collection_scope(parent_resource!(m)))
++        old
++      end
++
++      def _enter_member(m)
++        raise ArgumentError, "can't use member outside resource(s) scope" unless resource_scope?(m)
++        old = _enter_level(m, :member)
++        _enter_shallow_scope(m) if shallow?(m)
++        _enter_path(m, Resources::Resource.member_scope(parent_resource!(m)))
++        old
++      end
++
++      # Rails' `new do ... end` (`new` is the constructor in Sake)
++
++      def _enter_new(m)
++        raise ArgumentError, "can't use new outside resource(s) scope" unless resource_scope?(m)
++        old = _enter_level(m, :new)
++        _enter_path(m, Resources::Resource.new_scope(parent_resource!(m), action_path(m, "new")))
++        old
++      end
++
++      def _enter_nested(m)
++        raise ArgumentError, "can't use nested outside resource(s) scope" unless resource_scope?(m)
++        old = _enter_level(m, :nested)
++        _enter_shallow_scope(m) if shallow?(m) && shallow_nesting_depth(m) >= 1
++        _enter_path(m, Resources::Resource.nested_scope(parent_resource!(m)))
++        _enter_scope(m, nested_options(m), nil, nil)
++        old
+       end
+ 
+       def api_only?(m) = RouteSet.api_only?(@set)
+@@ -992,26 +1071,19 @@
+       def using_match_shorthand?(m, path) = String.match?(path, %r{^/?[-\w]+/[-\w/]+$})
+ 
+       def decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping, on = nil)
+-        old = @scope
+         if on
+           case on
+-          in :member then _enter_member(m)
+-          in :collection then _enter_collection(m)
+-          else _enter_new(m)
++          in :member then member(m) { decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping) }
++          in :collection then collection(m) { decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping) }
++          else new_(m) { decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping) }
+           end
+         else
+           case Scope.scope_level(@scope)
+-          in :resources then _enter_nested(m)
+-          in :resource then _enter_member(m)
+-          else
+-            return add_route(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping)
++          in :resources then nested(m) { decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping) }
++          in :resource then member(m) { decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping) }
++          else add_route(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping)
+           end
+         end
+-        begin
+-          decomposed_match(m, path, controller, as, action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping)
+-        ensure
+-          @scope = old
+-        end
+       end
+ 
+       def add_route(m, action, controller, as, options_action, _path, to, via, formatted, anchor, options_constraints, internal, options_mapping)

@@ -1,0 +1,140 @@
+# Port of actionpack-8.1.3/lib/action_dispatch/http/mime_negotiation.rb (partial: variant is an Array of Symbols, not an ArrayInquirer)
+#
+# A mixin that ActionDispatch::Request includes, as in Rails (`include ActionDispatch::Http::MimeNegotiation`);
+# the caches Rails keeps in env keys ("action_dispatch.request.formats", ...) are the Request's fields.
+# mattr_accessor :ignore_accept_header is MimeNegotiation.ignore_accept_header / set_ignore_accept_header.
+
+require "mime_type"
+require "mime_types"
+
+module ActionDispatch
+  module Http
+    module MimeNegotiation
+      class InvalidType < StandardError
+      end
+
+      # The MIME type of the HTTP request, such as Mime[:xml].
+      def content_mime_type(req)
+        cached = @_content_mime_type
+        return cached if cached
+        m = String.match(@env["CONTENT_TYPE"] || "", /^([^,;]*)/)
+        return nil unless m && @env["CONTENT_TYPE"]
+        v = begin
+          Mime::Type.lookup(String.downcase(String.strip(m[1] || "")))
+        rescue Mime::Type::InvalidMimeType => e
+          raise InvalidType, Exception.message(e)
+        end
+        @_content_mime_type = v
+        v
+      end
+
+      def has_content_type?(req) = @env["CONTENT_TYPE"]
+
+      # Returns the accepted MIME type for the request.
+      def accepts(req)
+        cached = @_accepts
+        return cached if cached
+        header = String.strip(@env["HTTP_ACCEPT"] || "")
+        v = begin
+          if String.empty?(header)
+            ct = content_mime_type(req)
+            ct ? Mime::Type[ct] : Mime::Type[]
+          else
+            Mime::Type.parse(header)
+          end
+        rescue Mime::Type::InvalidMimeType => e
+          raise InvalidType, Exception.message(e)
+        end
+        @_accepts = v
+        v
+      end
+
+      # Returns the MIME type for the format used in the request (Mime::NullType when there is none).
+      def format(req, _view_path = nil) = Array.first(formats(req)) || Mime.NullType
+
+      def formats(req)
+        cached = @_formats
+        return cached if cached
+        v = if params_readable?(req)
+          f = Mime.fetch(Kernel.to_s(parameters(req)["format"]))
+          f ? Mime::Type[f] : Mime::Type[]
+        elsif MimeNegotiation.use_accept_header && valid_accept_header(req)
+          Array.dup(accepts(req))
+        elsif (extension_format = format_from_path_extension(req))
+          Mime::Type[extension_format]
+        elsif xhr?(req)
+          Mime::Type[Mime.fetch(:js) || Mime.ALL]
+        else
+          Mime::Type[Mime.fetch(:html) || Mime.ALL]
+        end
+        v = Array.select(v) { |format| Mime::Type.symbol(format) != nil || Mime::Type.ref(format) == "*/*" }
+        @_formats = v
+        v
+      end
+
+      # Sets the variant for template (Rails' variant=).
+      def set_variant(req, variant)
+        @_variant = (variant in Symbol) ? Symbol[variant] : variant
+      end
+      def variant(req) = @_variant ||= Symbol[]
+
+      # Sets the format by string extension (Rails' format=).
+      def set_format(req, extension)
+        parameters(req)["format"] = Kernel.to_s(extension)
+        f = Mime::Type.lookup_by_extension(Kernel.to_s(extension))
+        @_formats = f ? Mime::Type[f] : Mime::Type[]
+      end
+
+      # Sets the formats by string extensions (Rails' formats=).
+      def set_formats(req, extensions)
+        parameters(req)["format"] = Kernel.to_s(Array.first(extensions))
+        @_formats = Array.filter_map(extensions) { |extension| Mime::Type.lookup_by_extension(Kernel.to_s(extension)) }
+      end
+
+      # Returns the first MIME type that matches the provided array of MIME types.
+      def negotiate_mime(req, order)
+        Array.each(formats(req)) do |priority|
+          if Mime::Type.==(priority, Mime.ALL)
+            return Array.first(order)
+          elsif Array.any?(order) { |o| Mime::Type.==(o, priority) }
+            return priority
+          end
+        end
+        Array.any?(order) { |o| Mime::Type.==(o, Mime.ALL) } ? format(req) : nil
+      end
+
+      def should_apply_vary_header?(req)
+        !params_readable?(req) && MimeNegotiation.use_accept_header && valid_accept_header(req)
+      end
+
+      # We use normal content negotiation unless you include */* in your list, in which case we assume you're a
+      # browser and send HTML.
+      def params_readable?(req)
+        parameters(req)["format"] != nil
+      rescue ActionController::BadRequest, ActionDispatch::Http::Parameters::ParseError
+        false
+      end
+
+      def valid_accept_header(req)
+        accept = @env["HTTP_ACCEPT"] || ""
+        present = !String.match?(accept, /\A[[:space:]]*\z/)
+        (xhr?(req) && (present || content_mime_type(req) != nil)) ||
+          (present && !String.match?(accept, MimeNegotiation.browser_like_accepts))
+      end
+
+      def format_from_path_extension(req)
+        path = @_original_path || @env["PATH_INFO"]
+        m = path ? String.match(path, /\.(\w+)\z/) : nil
+        m ? Mime.fetch(m[1] || "") : nil
+      end
+
+      module_function
+
+      def browser_like_accepts = /,\s*\*\/\*|\*\/\*\s*,/
+      def negotiation_config = once { Hash.of(:ignore_accept_header => false) }
+      def ignore_accept_header = negotiation_config[:ignore_accept_header] == true
+      def set_ignore_accept_header(v) = negotiation_config[:ignore_accept_header] = v
+      def use_accept_header = !ignore_accept_header
+    end
+  end
+end
