@@ -203,7 +203,7 @@ p(String.upcase(Heap.top(words)))    # => "JOB"
 - A のフィールドが先、次に B のフィールドが並びます。
 - A の関数は B の関数でもあります。その中の型無しの名前と `@x` は B のものです。
 - A の `include` は B のものです。
-- B 自身の定義が A のものに勝ちます。
+- B 自身の定義が A のものに勝ちます。B 自身が include したモジュールの関数も A のものに勝ちます（Ruby の祖先の順が B、B が include したモジュール、A であるのと同じです）。
 - その後 A と B は無関係です。B は A ではなく、`A.f(b)` は型エラーで、`b in A` は偽です。
 - `<` はプログラムのどの class でも取り、その場に書いた `Struct.new(...)` も取ります（`class P < Struct.new(:x)`）。module は `include` します。
 

@@ -77,6 +77,7 @@ module Sake
     def format_arg(x)
       case x
       when Tuple then x.elems
+      when Array then x
       when RecordValue then x.shape.fields.zip(x.values).to_h { |k, v| [k.to_sym, v] }
       else x
       end
@@ -92,7 +93,8 @@ module Sake
       reg.define_binary(:=~, "String", "Regexp") { |s, r| s =~ r }
       reg.define_binary(:=~, "Regexp", "String") { |r, s| r =~ s }
       reg.define_binary(:!~, "String", "Regexp") { |s, r| s !~ r }
-      %w[Integer Float String Symbol Tuple Record Hash Nil Boolean].each do |t|
+      # An Array gives its elements as the arguments, as a Tuple does (Ruby's `"%s-%s" % xs`).
+      %w[Integer Float String Symbol Tuple Array Record Hash Nil Boolean].each do |t|
         reg.define_binary(:%, "String", t) do |f, x|
           ruby_error("ArgumentError") { f % format_arg(x) }
         end

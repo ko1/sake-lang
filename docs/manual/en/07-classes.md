@@ -203,7 +203,7 @@ p(String.upcase(Heap.top(words)))    # => "JOB"
 - A's fields come first, then B's.
 - A's functions are B's too. Inside them, unqualified names and `@x` mean B's.
 - A's `include`s are B's.
-- B's own definition of a function wins over A's.
+- B's own definition of a function wins over A's, and so does a function of a module B includes itself (as in Ruby, whose ancestors are B, the modules B includes, then A).
 - Nothing relates A and B afterwards. A B is not an A: `A.f(b)` is a type error, and `b in A` is false.
 - `<` takes any class of the program, also `Struct.new(...)` written in place (`class P < Struct.new(:x)`). A module is included with `include`.
 

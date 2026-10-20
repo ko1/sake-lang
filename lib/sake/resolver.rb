@@ -185,7 +185,8 @@ module Sake
     end
 
     # `class B < A`: A's definitions written again in B (its fields first, its functions, its includes).
-    # Nothing relates A and B afterwards. B's own definitions win over the pasted ones.
+    # Nothing relates A and B afterwards. B's own definitions, and the modules B itself includes, win over the
+    # pasted ones (Ruby's ancestors: B, B's modules, A).
     def apply_pastes
       done = {}
       paste = lambda do |name|
@@ -197,6 +198,7 @@ module Sake
           next if fn.origin || @functions.dig(name, fname)
           (@functions[name] ||= {})[fname] = fn.dup.tap { _1.namespace = name; _1.pasted = true }
         end
+        (@own_includes ||= {})[name] = @includes.fetch(name, []).map(&:first)
         @includes[name] = [*@includes.fetch(parent, []), *@includes.fetch(name, [])] if @includes.key?(parent)
       end
       @class_specs.each_key { paste.(_1) }
@@ -224,7 +226,10 @@ module Sake
         (@linearized[ns] = linearize(ns, [])).each do |mod, node|
           next if node.nil? # the prelude's Enum on a built-in type: the type answers with its own operations only
           (@functions[mod] || {}).each do |name, fn|
-            next if fn.origin || lookup(ns, name)
+            next if fn.origin
+            # As Ruby's ancestors (B, B's modules, A): a module B includes itself wins over what `B < A` pasted.
+            have = lookup(ns, name)
+            next if have && !(have.is_a?(UserFunction) && have.pasted && @own_includes&.dig(ns)&.include?(mod))
             (@functions[ns] ||= {})[name] = fn.dup.tap do |c|
               c.namespace = ns
               c.origin = mod
@@ -1062,8 +1067,8 @@ module Sake
         return if @struct_types.key?(name) || PATTERN_TYPES.include?(name)
         if @modules.key?(name) # `in M`: the types that include M
           members = @linearized.select { |ns, l| (@struct_types.key?(ns) || PATTERN_TYPES.include?(ns)) && l.any? { _1[0] == name } }.keys.sort
-          return @pattern_members[name] = members unless members.empty?
-          return error(pat, "`in #{name}`: no type includes #{name}", ["a module in a pattern takes the types that `include #{name}`"])
+          # No type includes M (yet: a library's module): the pattern matches nothing, as Ruby's `M === x`.
+          return @pattern_members[name] = members
         end
         error(pat, "`#{name}` is not a type", spell(name, PATTERN_TYPES + @struct_types.keys).map { "did you mean `#{_1}`?" })
       when Prism::NilNode, Prism::TrueNode, Prism::FalseNode, Prism::IntegerNode, Prism::FloatNode, Prism::StringNode, Prism::SymbolNode

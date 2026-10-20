@@ -300,7 +300,8 @@ module Sake
       when Prism::ConstantReadNode, Prism::ConstantPathNode
         name = @program.const_names.fetch(pat) { pat.name.to_s }
         # A module (or a built-in exception with Ruby subclasses) takes each of its types: `A | B | ...`.
-        types = @program.pattern_members.fetch(name) { [name] }.map { PType.new(name: _1, origin: pat) }
+        # A module no type includes is its own name, which no value has: the pattern matches nothing.
+        types = @program.pattern_members.fetch(name) { [name] }.then { _1.empty? ? [name] : _1 }.map { PType.new(name: _1, origin: pat) }
         types.reduce { |l, r| PAlt.new(left: l, right: r, origin: pat) }
       when Prism::AlternationPatternNode then PAlt.new(left: pattern(pat.left), right: pattern(pat.right), origin: pat)
       when Prism::HashPatternNode

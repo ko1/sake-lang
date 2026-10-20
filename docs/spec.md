@@ -552,7 +552,7 @@ table**:
 | `&` `\|` `^` `<<` `>>` | (Integer, Integer) → Integer |
 | `\|` `&` `-` | (Set, Set) → Set (union, intersection, difference) |
 | `=~` | (String, Regexp), (Regexp, String) → Integer or nil; `!~` (String, Regexp) → true/false |
-| `%` | (String, Integer / Float / String / Symbol / Tuple / nil / true / false) → String, Ruby's format (`"%d items" % 3`, `"%s-%s" % [a, b]`) |
+| `%` | (String, Integer / Float / String / Symbol / Tuple / Array / Record / Hash / nil / true / false) → String, Ruby's format (`"%d items" % 3`, `"%s-%s" % [a, b]`; an Array gives its elements, as a Tuple) |
 
 - **No matching row.** If no row matches the operand types, the operation raises `TypeError`. The
   message lists the rows that do exist. There is no implicit conversion.
@@ -696,7 +696,8 @@ Every `class` is a type. Its fields are declared in the body of its first `class
   built from values (`Value.new(a + b)` inside a function taking Values) stay one type per place.
 - **`class B < A`.** Shorthand for writing A's definitions in B: A's fields come first (then B's),
   A's functions are B's too (with unqualified names and `@x` inside them meaning B's), and A's
-  `include`s are B's. B's own definition of a function wins over A's. Nothing relates A and B
+  `include`s are B's. B's own definition of a function wins over A's, and so does a function of a
+  module B includes itself (Ruby's ancestors: B, the modules B includes, A). Nothing relates A and B
   afterwards: a B is not an A, and `A.f(b)` is a type error. `<` takes any class of the program (also
   `Struct.new(...)` written in place); a module is included with `include`.
 - **`class E < Exception`** (or `< StandardError`) declares an exception type: `message` is its first
