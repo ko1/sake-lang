@@ -114,3 +114,18 @@ ActionFilter#match?（全クラスのコールバック連鎖が一つの生成�
 （`~/ruby/install/bench-40`）、bench-lease で占有、governor performance、負荷 0.00）: **60.2 秒（62.4 / 60.0 / 60.2）、最大 RSS
 976〜1,038 MB**、3 回とも OK。同じ木で articles/show.html.erb に `String.upcase(42)` を足すと 18 行目のエラーが出る（検査が
 テンプレートまで届いている）。生の出力は `sp4/blog_check-d6fd7ed9.out`。
+
+## 7. Sake で型がどれくらい広がるか（ブログ）
+
+Sake には poly（実行時に型を見る値）が無い。型は合併として持ち続け、その値への操作は合併のどの型でも成り立つかを検査する
+（成り立たない型があればエラー）。それでも何でも入る値に近いものがどれくらいあるかを、フィールドの型で数えた:
+`bin/sake --types blog/bin/rails.sake`（64e161d8、ローカル 129 秒）の fields 節を `poly/union_widths.rb` が読み、
+フィールドごとに合併の種類の数（割り当て地点・要素型を落とす。Symbol のリテラルは Symbol、nil は数えない）を出す。
+結果は `poly/blog-64e161d8.txt`。
+
+宣言されたフィールド（型.フィールド）1,503 個のうち、種類 0（nil だけ）10.4%、**1 種類 83.6%**、2〜5 種類 2.4%、
+**6 種類以上 3.5%（53 個）**。6 種類以上は、Rails がもともと多態にしている所だった: ミドルウェアの `app`（10 種類、次の
+ミドルウェアのどれか）、ActiveModel::Type の `type`/`cast_type`（13 種類の列の型）、Journey の構文木のノード（8 種類）、
+ExceptionWrapper の例外（11 種類）、属性の値（`Boolean | Float | Integer | String | Time | Date | BigDecimal | ...`）。
+属性の値に Regexp や ActionController::Parameters が入っているのは、検査器が値を区別しきれていない可能性がある（未確認）。
+数えたのはフィールドだけで、式や関数の引数の型は数えていない。
