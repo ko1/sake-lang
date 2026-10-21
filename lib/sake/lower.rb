@@ -215,15 +215,16 @@ module Sake
       when Prism::IndexTargetNode then TIndex.new(recv: lower(t.receiver), key: lower(t.arguments.arguments[0]), origin: t)
       when Prism::InstanceVariableTargetNode
         fa = target(t) or return unresolved(t)
-        TField.new(type: fa.setter.namespace, field: field_name(fa.setter), fn: fa.setter, subject: get(0, t), origin: t)
+        TField.new(type: fa.setter.namespace, field: setter_field(fa.setter), fn: fa.setter, subject: get(0, t), origin: t)
       end
     end
 
     def unresolved(n) = Unresolved.new(message: "#{n.slice} was not resolved in #{@ns || "the top level"}", origin: n)
 
-    def field_name(fn) = fn.name.sub(/\Aset_/, "")
-    def field_get(fn, subject, o) = FieldGet.new(type: fn.namespace, field: field_name(fn), fn:, subject:, origin: o)
-    def field_set(fn, subject, value, o) = FieldSet.new(type: fn.namespace, field: field_name(fn), fn:, subject:, value:, origin: o)
+    # A getter is named as its field and a setter `set_` and the field (a field may itself be named set_x).
+    def field_get(fn, subject, o) = FieldGet.new(type: fn.namespace, field: fn.name, fn:, subject:, origin: o)
+    def field_set(fn, subject, value, o) = FieldSet.new(type: fn.namespace, field: setter_field(fn), fn:, subject:, value:, origin: o)
+    def setter_field(fn) = fn.name.delete_prefix("set_")
 
     def regexp_options(n)
       opts = 0
@@ -446,9 +447,8 @@ module Sake
       when Builtin
         return BlockGiven.new(origin: n) if t.full_name == "Kernel.block_given?"
         if (dt = @program.struct_types[t.namespace]) && blk.nil?
-          f = field_name(t)
-          return field_get(t, xs[0], n) if t.name == f && dt.fields.include?(f) && xs.size == 1
-          return field_set(t, xs[0], xs[1], n) if t.name == "set_#{f}" && dt.fields.include?(f) && xs.size == 2
+          return field_get(t, xs[0], n) if dt.fields.include?(t.name) && xs.size == 1
+          return field_set(t, xs[0], xs[1], n) if t.name.start_with?("set_") && dt.fields.include?(setter_field(t)) && xs.size == 2
           # `T.read_field(x, :f)` / `T.write_field(x, :f, v)` with a literal: `@f` / `@f = v`.
           lit = xs[1].is_a?(Lit) && xs[1].value.is_a?(Symbol) && dt.fields.include?(xs[1].value.to_s) ? xs[1].value.to_s : nil
           return field_get(dt.getters[lit], xs[0], n) if lit && t.name == "read_field" && xs.size == 2
