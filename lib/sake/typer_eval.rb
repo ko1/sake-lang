@@ -71,7 +71,7 @@ module Sake
         r = t("Nil")
         n.body.each do |st|
           # After return/next/break (or a branch block_given? rules out), the rest does not run.
-          break r = [] if env.dead
+          break r = [] if env.dead || env.void
           r = ev(st, env)
         end
         r
@@ -98,7 +98,7 @@ module Sake
         l = ev(n.left, env)
         right_env = env.dup_level
         narrow(right_env, n.left, n.is_a?(And))
-        r = ev(n.right, right_env)
+        r = right_env.void ? [] : ev(n.right, right_env) # `x && f(x)` with x only nil: f is not called
         # The path that skips the right side knows the left's truthiness too (`@x ||= v` in initialize).
         left_env = env.dup_level
         narrow(left_env, n.left, n.is_a?(Or))
@@ -277,17 +277,8 @@ module Sake
     end
 
     # Paths that ended in return/next/break do not reach the join point.
-    # A void path (no value takes it) adds no variable types either, unless every path is void.
-    def join_into(env, a, b)
-      live = [a, b].reject(&:dead)
-      if live.empty?
-        env.dead = true
-        live = [a, b]
-      end
-      live = live.reject(&:void) if live.any?(&:void) && !live.all?(&:void)
-      join_vars(env, live)
-      env.links = common_links(live)
-    end
+    # A void path (no value takes it) adds no variable types either; when every path is void, so is the join.
+    def join_into(env, a, b) = join_many(env, [a, b])
 
     def branch(env, pred, then_node, else_node)
       # Whether a block was given is known for each call (a yielding function is analyzed per call).
@@ -304,13 +295,9 @@ module Sake
       e2 = env.dup_level
       narrow(e1, pred, true)
       narrow(e2, pred, false)
-      # A branch the test leaves no value for (`if x in String` when x is a String: the else) adds no result.
-      # Its body is still analyzed: in an early pass of a fixpoint, "no value yet" looks the same.
-      d1 = e1.void
-      d2 = e2.void
-      r1 = ev(then_node, e1)
-      r2 = ev(else_node, e2)
-      r = u(d1 ? [] : r1, d2 ? [] : r2)
+      # A branch the test leaves no value for (`if x in String` when x is a String: the else) is not run:
+      # its calls would run on the empty value and add types (a later pass that gives x a type runs it).
+      r = u(e1.void ? [] : ev(then_node, e1), e2.void ? [] : ev(else_node, e2))
       join_into(env, e1, e2)
       r
     end
@@ -331,7 +318,7 @@ module Sake
         body = env.dup_level
         narrow(body, n.cond, !n.until_)
         @jumps[-1] = []
-        ev(n.body, body)
+        ev(n.body, body) unless body.void
         join_many(env, [env.dup_level, body, *@jumps[-1]])
         env.dead = false # the loop may not run at all
         next unless env.chain_snapshot == before
@@ -444,7 +431,6 @@ module Sake
       narrow(e2, pred.left, !truthy)
       narrow(e2, pred.right, truthy)
       join_into(env, e1, e2)
-      env.void = true if e1.void && e2.void
     end
 
     # `x == :sym` / `x != :sym` (either side): x is that Symbol on one path, any other value on the other.
@@ -592,14 +578,14 @@ module Sake
         set_narrowed(e, var, of_atoms(m)) if var
         narrow_by_position(e, tuple_var, pos, m) if tuple_var
         bind_pattern(e, pat, m)
-        results << ev(body, e)
+        results << (e.void ? [] : ev(body, e))
         envs << e
       end
       if n.else_ && (!remaining.empty? || v.empty?) # an else no value reaches is not analyzed
         e = env.dup_level
         set_narrowed(e, var, of_atoms(remaining)) if var
         narrow_by_position(e, tuple_var, pos, remaining) if tuple_var
-        results << ev(n.else_, e)
+        results << (e.void ? [] : ev(n.else_, e))
         envs << e
       elsif !n.else_ && !remaining.empty? && !unknown?(v)
         # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
@@ -631,6 +617,10 @@ module Sake
       if live.empty?
         env.dead = true
         live = envs
+      elsif live.all?(&:void) # `raise if x == nil` with x only nil: no value goes on
+        env.void = true
+      else
+        live = live.reject(&:void)
       end
       join_vars(env, live)
       env.links = common_links(live)
@@ -701,8 +691,8 @@ module Sake
     # Sets a narrowed type of a local variable on this path (an enclosing variable's is kept in this
     # env's vars), then narrows the variables taken from the same Tuple variants.
     def set_narrowed(env, slot, ty, follow: true)
-      # No type is left on this path (`if x in String` when x is an Integer): no value takes it, so its
-      # result is left out. Not `dead`: joins keep its variables (in an early pass, "no value yet" looks the same).
+      # No type is left on this path (`if x in String` when x is an Integer): no value takes it, so its code
+      # is not run. Not `dead`: when every path is void, joins keep its variables.
       env.void = true if ty.empty? && !(env.lookup(slot) || []).empty?
       env.vars[slot] = ty
       return unless follow && (link = env.level(slot).links[slot])
