@@ -1,0 +1,70 @@
+# Port of railties-8.1.3/lib/rails/rack/logger.rb (partial: no log tags (TaggedLogging's push_tags), no BodyProxy: the request's instrumentation finishes when the app returns)
+#
+# Rails::Rack::Logger is not one of ActionDispatch's middleware, so it is built through MiddlewareStack's builders:
+# Rails::Rack::Logger::Builder is registered when railties loads the stack (DefaultMiddlewareStack).
+
+module Rails
+  module Rack
+    class Logger
+      attr_reader app, taggers
+      include ActionDispatch::App
+
+      def call(l, req)
+        handle = ActiveSupport::Notifications::Fanout.build_handle(ActiveSupport::Notifications.notifier, "request.action_dispatch",
+                                                                  ActiveSupport::Notifications::Instrumenter.id(ActiveSupport::Notifications.instrumenter), Hash.of(request: req))
+        ActiveSupport::Notifications::Fanout::Handle.start(handle)
+        lg = Rails.logger
+        ActiveSupport::Logger.info(lg, started_request_message(l, req)) if lg
+        begin
+          response = ActionDispatch::App.call(@app, req)
+        ensure
+          ActiveSupport::Notifications::Fanout::Handle.finish(handle)
+        end
+        response
+      end
+
+      def started_request_message(l, req)
+        format("Started %s \"%s\" for %s at %s", ActionDispatch::Request.raw_request_method(req), ActionDispatch::Request.filtered_path(req),
+               ActionDispatch::Request.remote_ip(req), Time.strftime(Time.now, "%Y-%m-%d %H:%M:%S %z"))
+      end
+
+      class Builder
+        include ActionDispatch::MiddlewareStack::Builder
+        def build_middleware(b, klass, args, app)
+          return nil unless klass == "Rails::Rack::Logger"
+          t = args[0]
+          Logger.new(app, (t in Array) ? t : Any[])
+        end
+      end
+      def register = once { ActionDispatch::MiddlewareStack.add_builder(Builder.new) }
+    end
+  end
+end
+
+module ActionDispatch
+  # Port of actionpack-8.1.3/lib/action_dispatch/middleware/executor.rb with ActiveSupport::Railtie's
+  # active_support.reset_execution_context hooks (partial: the executor's only hooks are CurrentAttributes'
+  # reset: Rails' `app.executor.to_run/to_complete { ActiveSupport::CurrentAttributes.clear_all }`). Ruby keeps the
+  # hooks as blocks; here the app's generated `Rails.clear_current_attributes` resets each CurrentAttributes class
+  # the boot generator found.
+  class Executor
+    attr_reader app
+    include ActionDispatch::App
+
+    def call(e, req)
+      Rails.clear_current_attributes
+      begin
+        response = ActionDispatch::App.call(@app, req)
+      ensure
+        Rails.clear_current_attributes
+      end
+      response
+    end
+
+    class Builder
+      include ActionDispatch::MiddlewareStack::Builder
+      def build_middleware(b, klass, args, app) = klass == "ActionDispatch::Executor" ? Executor.new(app) : nil
+    end
+    def register = once { ActionDispatch::MiddlewareStack.add_builder(Builder.new) }
+  end
+end

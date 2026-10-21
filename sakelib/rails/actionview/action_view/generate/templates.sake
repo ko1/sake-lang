@@ -31,6 +31,12 @@ module ActionView
 
     def method_base(identifier) = "_" + String.gsub(identifier, /[^a-z_]/, "_")
 
+    # Ruby: ActionView::Base.annotate_rendered_view_with_filenames, read by the ERB handler when it compiles a
+    # template. Templates are compiled before the program runs, so the generator program sets it (railties reads
+    # config.action_view.annotate_rendered_view_with_filenames): the root that short_identifier is relative to.
+    def annotate_root = once { String[] }
+    def set_annotate_rendered_view_with_filenames(root) = Array.replace(Generate.annotate_root, String[root])
+
     def compile_file(view_path, file)
       rel = String.[](file, (String.size(view_path) + 1)..) || ""
       parsed = Resolver::PathParser.parse(rel)
@@ -46,6 +52,13 @@ module ActionView
       base = method_base(identifier)
       e = Template::Handlers::ERB.call(identifier, source, TemplateDetails.format(details), "#{base}_render")
       code = Template::Handlers::ERB::Erubi.code(e)
+      root = Array.first(Generate.annotate_root)
+      if root && TemplateDetails.format(details) == :html
+        # Ruby: options[:preamble] / [:postamble] of the Erubi engine
+        short = String.delete_prefix(identifier, "#{root}/")
+        code = "  ActionView::OutputBuffer.safe_append(output_buffer, #{Kernel.inspect("<!-- BEGIN #{short}\n-->")})\n" + code +
+               "\n  ActionView::OutputBuffer.safe_append(output_buffer, #{Kernel.inspect("<!-- END #{short} -->")})\n"
+      end
       Compiled.new(identifier, virtual, TemplatePath.partial(tp), strict, code, Template::Handlers::ERB::Erubi.calls(e),
                    Template::Handlers::ERB::Erubi.yields?(e), base, String.to_sym(TemplatePath.name(tp)))
     end

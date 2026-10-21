@@ -1,0 +1,105 @@
+# Port of railties-8.1.3/lib/rails/generators/base.rb and actions.rb, with thor-1.5.0's Thor::Actions (create_file, empty_directory, inject_into_file) and Thor::Shell::Basic#say_status (partial: :invoke behavior only (no revoke/destroy), no templates directory lookup (templates are Sake functions), no prompts on conflict (skipped unless --force))
+#
+# Ruby's generator is a Thor::Group subclass whose public methods run in order and whose `hook_for` lines invoke
+# other generators by class; Sake has no class values, so a generator is a module with `run(g, ...)`, `g` the
+# one value that holds what Thor's instance holds (destination_root, the shell's padding, options), and a
+# hook is an explicit `Base.invoke(g, "erb") { ... }` in Rails' order.
+#
+#   Ruby (Thor::Actions)                       Sake
+#   create_file "app/x.rb", content            Base.create_file(g, "app/x.rb", content)
+#   route "resources :posts"                   Base.route(g, "resources :posts", "resources map, :posts")
+#   invoke "erb" (hook_for :template_engine)   Base.invoke(g, "erb") { ErbScaffold.run(g, ...) }
+
+require "fileutils"
+
+module Rails
+  module Generators
+    class Error < StandardError
+    end
+
+    class Base
+      attr_reader destination_root, invoked
+      attr_accessor padding, force, last_migration_number
+      attr_accessor log   # nil: the lines go to stdout (Thor's shell); a test passes an Array to read them
+
+      def make(destination_root, force: false, log: nil) = Base.new(destination_root, Set.new, 0, force, nil, log)
+
+      # Thor::Shell::Basic#say_status: the status right-aligned in 12 columns, indented by the invocation depth
+      def say_status(g, status, message)
+        spaces = "  " * (@padding + 1)
+        st = String.rjust(Kernel.to_s(status), 12)
+        margin = " " * String.size(st) + spaces
+        lines = String.lines(String.chomp(Kernel.to_s(message)))
+        body = Array.join(Array.each_with_index(lines).Array.map { |l, i| i == 0 ? l : margin + l }, "")
+        l = @log
+        if l
+          Array.push(l, "#{st}#{spaces}#{body}")
+        else
+          puts("#{st}#{spaces}#{body}")
+        end
+      end
+
+      # Thor's invoke: once per generator name (a second invoke prints the line and does nothing, as Thor's
+      # invocations Hash makes it)
+      def invoke(g, name)
+        say_status(g, :invoke, name)
+        return nil if Set.include?(@invoked, name)
+        Set.add(@invoked, name)
+        @padding += 1
+        yield
+        @padding -= 1
+        nil
+      end
+
+      def path(g, rel) = File.join(@destination_root, rel)
+      def exist?(g, rel) = File.exist?(path(g, rel))
+
+      # Thor::Actions::CreateFile#invoke!: identical, conflict (skipped; Ruby asks, --force overwrites), or create
+      def create_file(g, rel, content)
+        full = path(g, rel)
+        if File.exist?(full)
+          if File.read(full) == content
+            say_status(g, :identical, rel)
+            return nil
+          end
+          unless @force
+            say_status(g, :skip, rel)
+            return nil
+          end
+          say_status(g, :force, rel)
+        else
+          say_status(g, :create, rel)
+        end
+        FileUtils.mkdir_p(File.dirname(full))
+        File.write(full, content)
+        nil
+      end
+
+      # Thor::Actions::EmptyDirectory
+      def empty_directory(g, rel)
+        if File.directory?(path(g, rel))
+          say_status(g, :exist, rel)
+        else
+          say_status(g, :create, rel)
+          FileUtils.mkdir_p(path(g, rel))
+        end
+        nil
+      end
+
+      # Ruby: Rails::Generators::Actions#route(routing_code): logs the Ruby line and inserts it after
+      # `Rails.application.routes.draw do`; Sake's routes are `def application_routes(map)` in config/routes.sake,
+      # so the line is inserted in its Sake form after that line (indented as the block's body)
+      def route(g, ruby_code, sake_code)
+        say_status(g, :route, ruby_code)
+        file = path(g, "config/routes.sake")
+        text = File.read(file)
+        anchor = "  def application_routes(map)\n"
+        raise Error, "config/routes.sake has no `def application_routes(map)`" unless String.include?(text, anchor)
+        lines = Array.join(Array.map(String.lines(sake_code)) { |l| "    #{String.chomp(l)}\n" }, "")
+        return nil if String.include?(text, anchor + lines)
+        File.write(file, String.sub(text, anchor, anchor + lines))
+        nil
+      end
+    end
+  end
+end

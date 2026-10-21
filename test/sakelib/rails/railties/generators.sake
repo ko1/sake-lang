@@ -1,0 +1,49 @@
+# The generators of `bin/rails generate` in an app: scaffold, model, migration, controller, resource, and their log.
+# Rails writes .rb files where the Sake port writes .sake ones (migrations, helpers) or a .rb class body plus a
+# .sake file (controllers), so the log and the file list are printed normalized: the extensions .rb and .sake
+# are dropped, a line equal to the one before it is dropped, and migration numbers are TIMESTAMP.
+require "rails/railties/rails/generators"
+require "rails/railties/rails/generators/rails/app_generator"
+
+dir = Dir.mktmpdir
+Gen = Rails::Generators
+# Rails: the app's config/routes.rb (here the one `rails new` writes, config/routes.sake)
+FileUtils.mkdir_p(File.join(dir, "config"))
+File.write(File.join(dir, "config/routes.sake"), Gen::AppGenerator.routes_source)
+
+def normalize(lines)
+  out = String[]
+  Array.each(lines) do |l|
+    l = String.gsub(String.gsub(l, /\d{14}/, "TIMESTAMP"), /\.(rb|sake)\b/, "")
+    Array.push(out, l) unless Array.last(out) == l
+  end
+  out
+end
+
+def run_generator(dir, name, args)
+  puts("-- generate #{name} #{Array.join(args, " ")}")
+  g = Gen::Base.make(dir, log: String[])
+  Gen.invoke(g, name, args)
+  puts(normalize(Gen::Base.log(g) || String[]))
+end
+
+run_generator(dir, "scaffold", String["Article", "title:string", "body:text"])
+run_generator(dir, "model", String["Comment", "commenter:string", "body:text", "article:references"])
+run_generator(dir, "migration", String["AddViewsToArticles", "views:integer:index"])
+run_generator(dir, "migration", String["RemoveBodyFromComments", "body:text"])
+run_generator(dir, "controller", String["Pages", "home", "about"])
+run_generator(dir, "resource", String["Tag", "name:string!:uniq"])
+run_generator(dir, "model", String["User", "email:string:uniq", "password:digest"])
+
+puts("-- files")
+files = Array.select(Array.map(Dir.glob("{app,db}/**/*", base: dir)) { |f| Kernel.to_s(f) }) { |f| File.file?(File.join(dir, f)) }
+puts(Array.uniq(normalize(Array.sort(files))))
+puts("-- models")
+Array.each(Array.sort(Array.map(Dir.glob("app/models/*.rb", base: dir)) { |f| Kernel.to_s(f) })) { |f| puts("# #{f}", File.read(File.join(dir, f))) }
+
+puts("-- errors")
+Array.each(String["x:foo", "x:string:unique"]) do |a|
+  Gen::GeneratedAttribute.parse(a)
+rescue Gen::Error => e
+  puts(Exception.message(e))
+end

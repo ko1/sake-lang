@@ -1,0 +1,40 @@
+# Port of railties-8.1.3/lib/rails/generators/migration.rb and activerecord-8.1.3/lib/rails/generators/active_record/migration.rb (partial: migration_template's existing-migration check and numbering; no --database paths)
+#
+# Ruby's next_migration_number: the larger of Time.now.utc ("%Y%m%d%H%M%S") and the last number in db/migrate + 1,
+# so two migrations in the same second get consecutive numbers.
+
+require "base"
+
+module Rails
+  module Generators
+    module Migration
+      module_function
+
+      def db_migrate_path = "db/migrate"
+
+      def current_migration_number(g)
+        nums = Array.map(Dir.glob(Base.path(g, "#{Migration.db_migrate_path}/[0-9]*_*.sake"))) { |f| String.to_i(String.split(File.basename(Kernel.to_s(f)), "_")[0] || "0") }
+        last = Base.last_migration_number(g) || 0
+        Array.max(nums + Integer[last]) || 0
+      end
+
+      def next_migration_number(g)
+        now = String.to_i(Time.strftime(Time.getutc(Time.now), "%Y%m%d%H%M%S"))
+        n = Array.max(Integer[now, current_migration_number(g) + 1]) || now
+        Base.set_last_migration_number(g, n)
+        n
+      end
+
+      # Ruby: migration_template(source, "db/migrate/create_posts.rb"): an existing migration of that name is an error
+      def migration_template(g, file_name, content_of_class)
+        existing = Array.find(Dir.glob(Base.path(g, "#{Migration.db_migrate_path}/[0-9]*_#{file_name}.sake"))) { |f| true }
+        if existing
+          raise Error, "Another migration is already named #{file_name}: #{Kernel.to_s(existing)}. Use --force to replace this migration or --skip to ignore conflicted file."
+        end
+        n = next_migration_number(g)
+        Base.create_file(g, "#{Migration.db_migrate_path}/#{n}_#{file_name}.sake", content_of_class)
+        n
+      end
+    end
+  end
+end

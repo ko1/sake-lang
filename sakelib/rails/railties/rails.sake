@@ -1,0 +1,59 @@
+# Port of railties-8.1.3/lib/rails.rb (partial: no autoloaders, backtrace_cleaner, error/event reporters, deprecators)
+#
+# Ruby's `class << self; attr_accessor :app_class, :cache, :logger` is the module's state, here one value (`once`).
+# `Rails.application` is the app's own class (Blog::Application < Rails::Application), which railties cannot name:
+# the app's boot generator (rails/generate/application.sake) writes `def Rails.application`, as Ruby's
+# `Rails.app_class = Blog::Application` is set by `class Application < Rails::Application` (Rails::Application.inherited).
+#
+#   Ruby                           Sake
+#   Rails.env.development?         Rails.env_inquirer.ActiveSupport::EnvironmentInquirer.development?  (Rails.env is the String)
+#   Rails.root.join("tmp")         File.join(Rails.root, "tmp")      (a String, not a Pathname)
+#   Rails.logger.info("x")         ActiveSupport::Logger.info(Rails.logger, "x")
+
+require "rails/activesupport/active_support/environment_inquirer"
+require "rails/activesupport/active_support/logger"
+require "rails/version"
+
+module Rails
+  class State
+    attr_accessor env_, root_, logger_, public_path_, app_name
+  end
+
+  module_function
+
+  def state = once { State.new(nil, nil, nil, nil, nil) }
+
+  # Ruby: Rails.env (an EnvironmentInquirer): RAILS_ENV, RACK_ENV, or "development"
+  def env_inquirer
+    e = State.env_(Rails.state)
+    return e if e
+    name = ENV.get("RAILS_ENV")
+    name = ENV.get("RACK_ENV") if name == nil || name == ""
+    name = "development" if name == nil || name == ""
+    e = ActiveSupport::EnvironmentInquirer.make(name)
+    Rails.state.State.env_ = e
+    e
+  end
+  def env = ActiveSupport::EnvironmentInquirer.str(Rails.env_inquirer)
+  def set_env(environment) = Rails.state.State.env_ = ActiveSupport::EnvironmentInquirer.make(environment)
+
+  # Ruby: application && application.config.root (set by the app's initialize!)
+  def root = State.root_(Rails.state) || Dir.pwd
+  def set_root(path) = Rails.state.State.root_ = path
+
+  def logger = State.logger_(Rails.state)
+  def set_logger(logger) = Rails.state.State.logger_ = logger
+
+  def public_path = File.join(Rails.root, "public")
+
+  def version = Rails::VERSION.STRING
+  def gem_version = Rails::VERSION.STRING
+
+  # Ruby: Rails.groups(*groups): [:default, env, RAILS_GROUPS...]
+  def groups(*groups)
+    out = Any[:default, Rails.env]
+    Array.each(groups) { |g| Array.push(out, g) }
+    Array.each(String.split(ENV.get("RAILS_GROUPS") || "", ",")) { |g| Array.push(out, g) }
+    Array.uniq(Array.compact(out))
+  end
+end

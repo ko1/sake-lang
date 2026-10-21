@@ -30,6 +30,7 @@ module ActionController
     # A controller class found in Sake source: its name, parent, line, path and public one-argument functions.
     class SakeClass
       attr_reader name, parent, line, path, actions, fields, defs
+      attr_accessor includes   # the modules its body includes (a helper_method may be a module's function)
     end
 
     module_function
@@ -55,7 +56,10 @@ module ActionController
           full = Array.join(names + String[Kernel.to_s(m[3])], "::")
           Array.push(stack, [indent, Kernel.to_s(m[3]), full])
           if m[2] == "class" && m[4] != nil
-            Array.push(classes, SakeClass.new(full, Kernel.to_s(m[4]), n, path, String[], String[], Hash.new))
+            Array.push(classes, SakeClass.new(full, Kernel.to_s(m[4]), n, path, String[], String[], Hash.new, String[]))
+          elsif m[2] == "module" && !Array.any?(classes) { |c| SakeClass.name(c) == full }
+            # a module's functions, for helper_method (a concern's); a module is never a controller (no parent)
+            Array.push(classes, SakeClass.new(full, nil, n, path, String[], String[], Hash.new, String[]))
           end
           next
         end
@@ -80,6 +84,11 @@ module ActionController
             name = String.strip(f)
             Array.push(SakeClass.fields(k), name) unless String.start_with?(name, "_") || name == ""
           end
+          next
+        end
+        inc = String.match(line, /\A(\s*)include ([A-Z][\w:]*)\s*\z/)
+        if inc && String.size(Kernel.to_s(inc[1])) == body_indent
+          Array.push(SakeClass.includes(k) || String[], Kernel.to_s(inc[2]))
           next
         end
         sig = String.match(line, /\A(\s*)def ([a-z_]\w*[?!]?)\(/)
@@ -347,7 +356,13 @@ module ActionController
             owners = Array.select(ks) { |k| Array.any?(lineage(k, classes)) { |sk| SakeClass.name(sk) == ActiveSupport::Generate::ClassBody.name(b) } }
             params = nil
             Array.each(owners) do |k|
-              Array.each(Array.reverse(lineage(k, classes))) { |sk| params = SakeClass.defs(sk)[m] if params == nil }
+              Array.each(Array.reverse(lineage(k, classes))) do |sk|
+                params = SakeClass.defs(sk)[m] if params == nil
+                Array.each(SakeClass.includes(sk) || String[]) do |mod|
+                  mk = Array.find(classes) { |c| SakeClass.parent(c) == nil && (SakeClass.name(c) == mod || String.end_with?(SakeClass.name(c), "::#{mod}")) }
+                  params = SakeClass.defs(mk)[m] if params == nil && mk
+                end
+              end
             end
             raise ArgumentError, "#{path}:#{n}: `helper_method :#{m}`: no controller defines #{m}(c)" if params == nil
             sig, call = helper_params(params || "")

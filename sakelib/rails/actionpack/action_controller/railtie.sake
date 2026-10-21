@@ -1,0 +1,56 @@
+# Port of actionpack-8.1.3/lib/action_controller/railtie.rb (partial: the settings this port has as class-level values; `protect_from_forgery with: :exception` (default_protect_from_forgery) is added to the root controller's class body by the boot generator, as Ruby's on_load(:action_controller_base) does)
+#
+# Ruby's set_configs is `options.each { |k, v| send("#{k}=", v) }` on ActionController::Base; here a `case` over
+# the names this port knows; an unknown name is Ruby's NoMethodError.
+
+require "log_subscriber"
+
+module ActionController
+  module Railtie
+    module_function
+
+    def initializers
+      list = Rails::Initializable::Initializer[]
+      Rails::Initializable.add(list, :"action_controller.logger", :action_controller)
+      Rails::Initializable.add(list, :"action_controller.set_configs", :action_controller)
+      list
+    end
+
+    def run(config, name)
+      case name
+      # Ruby: ActiveSupport.on_load(:action_controller) { self.logger ||= ::Rails.logger }, and the log subscriber attached
+      in :"action_controller.logger"
+        l = Rails.logger
+        AbstractController::Logger.set_logger(l) if l
+        ActiveSupport::LogSubscriber.set_logger(l) if l
+        ActionController::LogSubscriber.attach
+      in :"action_controller.set_configs" then set_configs(Rails::Application::Configuration.action_controller(config))
+      else raise ArgumentError, "no initializer #{name}"
+      end
+      nil
+    end
+
+    def set_configs(options)
+      ActionController::RequestForgeryProtection.set_allow_forgery_protection(true) unless options.ActiveSupport::OrderedOptions.key?(:allow_forgery_protection)
+      ActiveSupport::OrderedOptions.each(options) do |k, v|
+        case k
+        in :allow_forgery_protection then ActionController::RequestForgeryProtection.set_allow_forgery_protection(v == true)
+        in :per_form_csrf_tokens then ActionController::RequestForgeryProtection.set_per_form_csrf_tokens(v == true)
+        in :forgery_protection_origin_check then ActionController::RequestForgeryProtection.set_forgery_protection_origin_check(v == true)
+        in :log_warning_on_csrf_failure then ActionController::RequestForgeryProtection.set_log_warning_on_csrf_failure(v == true)
+        in :raise_on_missing_callback_actions then AbstractController::Callbacks.set_raise_on_missing_callback_actions(v == true)
+        in :raise_on_open_redirects then ActionController::Redirecting.set_raise_on_open_redirects(v == true)
+        in :action_on_open_redirect then ActionController::Redirecting.set_action_on_open_redirect(v) if v in Symbol
+        in :action_on_path_relative_redirect then ActionController::Redirecting.set_action_on_path_relative_redirect(v) if v in Symbol
+        in :permit_all_parameters then ActionController::Parameters.set_permit_all_parameters(v == true)
+        in :action_on_unpermitted_parameters then ActionController::Parameters.set_action_on_unpermitted_parameters(v)
+        # read by the port's code as Rails 8.1's defaults (load_defaults 8.1), or not ported (caching, query tags)
+        in :default_protect_from_forgery | :wrap_parameters_by_default | :escape_json_responses | :perform_caching |
+           :enable_fragment_cache_logging | :log_query_tags_around_actions | :allowed_redirect_hosts then nil
+        else raise NoMethodError, "undefined method '#{k}=' for class ActionController::Base"
+        end
+      end
+      nil
+    end
+  end
+end

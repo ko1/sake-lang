@@ -1,0 +1,167 @@
+# Port of railties-8.1.3/lib/rails/generators/erb/scaffold/scaffold_generator.rb and its templates (index, edit, show, new, _form, partial .html.erb.tt), written as Sake ERB (partial: no attachment links)
+#
+# Each template is Rails 8.1's with Sake's calls: the view is the helpers' first argument, a record's attribute is
+# its model's reader, the form builder's fields are FormBuilder's functions, and a view that renders @post reads it
+# into a local first (`@post` is Post|nil to the checker).
+#
+#   Ruby                                         Sake
+#   <%= notice %>                                <%= notice view %>
+#   <% @posts.each do |post| %>                  <% ActiveRecord::Relation.each(@posts) do |post| %>
+#   <%= post.title %>                            <%= Post.title(post) %>
+#   <%= form.text_field :title %>                <%= FormBuilder.text_field form, :title %>
+#   <% if post.errors.any? %>                    <% if ActiveModel::Errors.any?(Post.errors(post)) %>
+
+require "../named_base"
+
+module Erb
+  module Generators
+    module ScaffoldGenerator
+      N = Rails::Generators::Name
+      A = Rails::Generators::GeneratedAttribute
+      module_function
+
+      def available_views = String["index", "edit", "show", "new", "_form"]
+
+      def guard(s) = "<% #{s} = @#{s} || raise(ArgumentError, \"@#{s} is not set\") %>\n"
+
+      def index_source(n)
+        s = N.singular_table_name(n)
+        p = N.plural_table_name(n)
+        h = N.human_name(n)
+        <<~ERB
+          <p style="color: green"><%= notice view %></p>
+
+          <% content_for view, :title, "#{ActiveSupport::Inflector.pluralize(h)}" %>
+
+          <h1>#{ActiveSupport::Inflector.pluralize(h)}</h1>
+
+          <div id="#{p}">
+            <% ActiveRecord::Relation.each(@#{p}) do |#{s}| %>
+              <%= render #{s} %>
+              <p>
+                <%= link_to view, "Show this #{String.downcase(h)}", #{s} %>
+              </p>
+            <% end %>
+          </div>
+
+          <%= link_to view, "New #{String.downcase(h)}", new_#{s}_path(view) %>
+        ERB
+      end
+
+      def edit_source(n)
+        s = N.singular_table_name(n)
+        h = String.downcase(N.human_name(n))
+        guard(s) + <<~ERB
+          <% content_for view, :title, "Editing #{h}" %>
+
+          <h1>Editing #{h}</h1>
+
+          <%= render "form", #{s}: #{s} %>
+
+          <br>
+
+          <div>
+            <%= link_to view, "Show this #{h}", #{s} %> |
+            <%= link_to view, "Back to #{ActiveSupport::Inflector.pluralize(h)}", #{N.index_helper(n)}_path(view) %>
+          </div>
+        ERB
+      end
+
+      def show_source(n)
+        s = N.singular_table_name(n)
+        h = String.downcase(N.human_name(n))
+        guard(s) + <<~ERB
+          <p style="color: green"><%= notice view %></p>
+
+          <%= render #{s} %>
+
+          <div>
+            <%= link_to view, "Edit this #{h}", edit_#{s}_path(view, #{s}) %> |
+            <%= link_to view, "Back to #{ActiveSupport::Inflector.pluralize(h)}", #{N.index_helper(n)}_path(view) %>
+
+            <%= button_to view, "Destroy this #{h}", #{s}, method: :delete %>
+          </div>
+        ERB
+      end
+
+      def new_source(n)
+        s = N.singular_table_name(n)
+        h = String.downcase(N.human_name(n))
+        guard(s) + <<~ERB
+          <% content_for view, :title, "New #{h}" %>
+
+          <h1>New #{h}</h1>
+
+          <%= render "form", #{s}: #{s} %>
+
+          <br>
+
+          <div>
+            <%= link_to view, "Back to #{ActiveSupport::Inflector.pluralize(h)}", #{N.index_helper(n)}_path(view) %>
+          </div>
+        ERB
+      end
+
+      def form_source(n)
+        s = N.singular_table_name(n)
+        k = N.class_name(n)
+        out = <<~ERB
+          <%= form_with view, model: #{s} do |form| %>
+            <% if ActiveModel::Errors.any?(#{k}.errors(#{s})) %>
+              <div style="color: red">
+                <h2><%= pluralize view, ActiveModel::Errors.count(#{k}.errors(#{s})), "error" %> prohibited this #{s} from being saved:</h2>
+
+                <ul>
+                  <% ActiveModel::Errors.each(#{k}.errors(#{s})) do |error| %>
+                    <li><%= ActiveModel::Error.full_message(error) %></li>
+                  <% end %>
+                </ul>
+              </div>
+            <% end %>
+
+        ERB
+        Array.each(N.attributes(n)) do |a|
+          out += "  <div>\n"
+          if A.password_digest?(a)
+            out += "    <%= FormBuilder.label form, :password, style: \"display: block\" %>\n    <%= FormBuilder.password_field form, :password %>\n  </div>\n\n  <div>\n"
+            out += "    <%= FormBuilder.label form, :password_confirmation, style: \"display: block\" %>\n    <%= FormBuilder.password_field form, :password_confirmation %>\n"
+          elsif A.attachments?(a)
+            out += "    <%= FormBuilder.label form, :#{A.column_name(a)}, style: \"display: block\" %>\n    <%= FormBuilder.#{A.field_type(a)} form, :#{A.column_name(a)}, multiple: true %>\n"
+          else
+            out += "    <%= FormBuilder.label form, :#{A.column_name(a)}, style: \"display: block\" %>\n    <%= FormBuilder.#{A.field_type(a)} form, :#{A.column_name(a)} %>\n"
+          end
+          out += "  </div>\n\n"
+        end
+        out + "  <div>\n    <%= FormBuilder.submit form %>\n  </div>\n<% end %>\n"
+      end
+
+      def partial_source(n)
+        s = N.singular_name(n)
+        k = N.class_name(n)
+        out = "<div id=\"<%= dom_id view, #{s} %>\">\n"
+        Array.each(Array.reject(N.attributes(n)) { |a| A.password_digest?(a) }) do |a|
+          out += "  <div>\n    <strong>#{A.human_name(a)}:</strong>\n    <%= #{k}.#{A.column_name(a)}(#{s}) %>\n  </div>\n\n"
+        end
+        out + "</div>\n"
+      end
+
+      def view_source(n, view)
+        case view
+        in "index" then index_source(n)
+        in "edit" then edit_source(n)
+        in "show" then show_source(n)
+        in "new" then new_source(n)
+        else form_source(n)
+        end
+      end
+
+      def run(g, n)
+        dir = "app/views/#{N.controller_file_path(n)}"
+        Rails::Generators::Base.empty_directory(g, dir)
+        Array.each(ScaffoldGenerator.available_views) { |v| Rails::Generators::Base.create_file(g, "#{dir}/#{v}.html.erb", view_source(n, v)) }
+        Rails::Generators::Base.create_file(g, "#{dir}/_#{N.singular_name(n)}.html.erb", partial_source(n))
+        nil
+      end
+    end
+  end
+end

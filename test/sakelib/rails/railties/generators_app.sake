@@ -1,0 +1,43 @@
+# (no Ruby twin: the files are Sake's) `rails new`, then a migration, `db:migrate`, `generate scaffold --no-migration`,
+# and the check of the whole generated app (`bin/sake -c --strict bin/rails.sake`), which must pass. Prints the
+# log of `new` and the scaffold's Sake files. (The migration goes first: the app is checked as a whole before
+# db:migrate runs, and a model whose table is not in db/schema.rb is a check error.)
+require "rails/railties/rails/generators"
+require "rails/railties/rails/generators/rails/app_generator"
+
+Gen = Rails::Generators
+sake = File.expand_path("../../../../bin/sake", __dir__)
+root = File.join(Dir.mktmpdir, "my_blog")
+
+g = Gen::Base.make(root, log: String[])
+Gen::Base.say_status(g, :create, "")
+Gen::AppGenerator.run(g, root)
+puts(Gen::Base.log(g) || String[])
+puts("-- config/application.sake")
+print(File.read(File.join(root, "config/application.sake")))
+
+def bin_rails(sake, root, *args)
+  out, st = Open3.capture2e("sh", "-c", "cd #{root} && #{sake} --strict #{Array.join(args, " ")}")
+  # times and the database path differ per run
+  print(String.gsub(String.gsub(out, /\d+\.\d+s/, "0.0000s"), /\d{14}/, "TIMESTAMP"))
+  raise "bin/sake #{Array.join(args, " ")} failed" unless st
+end
+
+g = Gen::Base.make(root, log: String[])
+Gen.invoke(g, "migration", String["CreateArticles", "title:string", "body:text"])
+bin_rails(sake, root, "bin/rails.sake", "db:migrate")
+g = Gen::Base.make(root, log: String[])
+Gen.invoke(g, "scaffold", String["Article", "title:string", "body:text"], migration: false)
+puts(Gen::Base.log(g) || String[])
+Array.each(String["config/routes.sake", "app/models/article.rb", "app/controllers/articles_controller.rb", "app/controllers/articles_controller.sake",
+                  "app/views/articles/_form.html.erb", "app/views/articles/_article.html.erb", "app/views/articles/index.html.erb"]) do |f|
+  puts("-- #{f}")
+  print(File.read(File.join(root, f)))
+end
+Array.each(Array.sort(Array.map(Dir.glob("db/migrate/*.sake", base: root)) { |f| Kernel.to_s(f) })) do |f|
+  puts("-- #{String.gsub(f, /\d{14}/, "TIMESTAMP")}")
+  print(File.read(File.join(root, f)))
+end
+puts("-- check")
+bin_rails(sake, root, "-c", "bin/rails.sake")
+bin_rails(sake, root, "bin/rails.sake", "routes")

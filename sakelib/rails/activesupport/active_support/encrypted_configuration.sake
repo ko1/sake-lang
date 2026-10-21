@@ -1,0 +1,104 @@
+# Port of activesupport-8.1.3/lib/active_support/encrypted_configuration.rb (partial: delegate_missing_to is [], dig, fetch and option; YAML is sakelib's)
+#
+#   Ruby                                                         Sake
+#   c = EncryptedConfiguration.new(config_path: p, key_path: k,  c = EncryptedConfiguration.make(config_path: p, key_path: k,
+#         env_key: "RAILS_MASTER_KEY", raise_if_missing_key: false)    env_key: "RAILS_MASTER_KEY", raise_if_missing_key: false)
+#   c.secret_key_base                                            EncryptedConfiguration.option(c, :secret_key_base)
+#   c[:aws][:access_key_id], c.dig(:aws, :access_key_id)         EncryptedConfiguration.dig(c, :aws, :access_key_id)
+#   c.config (deep-symbolized Hash)                              EncryptedConfiguration.config(c)
+#
+# `class EncryptedConfiguration < EncryptedFile` pastes the file's functions; Ruby's `super` in read is
+# EncryptedFile's encrypted_file_read. delegate_missing_to :options sends what the class does not answer to an
+# ActiveSupport::OrderedOptions of the config; here the delegated calls are written out.
+
+require "encrypted_file"
+require "ordered_options"
+require "yaml"
+
+module ActiveSupport
+  class EncryptedConfiguration < EncryptedFile
+    private attr_accessor config_or_nil, options_or_nil
+
+    class InvalidContentError < StandardError
+    end
+
+    class InvalidKeyError < StandardError
+    end
+
+    def make(config_path:, key_path:, env_key:, raise_if_missing_key:)
+      EncryptedConfiguration.new(content_path: config_path, key_path: key_path, env_key: env_key, raise_if_missing_key: raise_if_missing_key)
+    end
+
+    def read(c)
+      encrypted_file_read(c)
+    rescue ActiveSupport::EncryptedFile::MissingContentError
+      ""
+    end
+
+    def validate!(c)
+      deserialize(c, read(c))
+      nil
+    end
+
+    def config(c)
+      v = @config_or_nil
+      return v if v
+      h = deep_symbolize_keys(c, deserialize(c, read(c)))
+      @config_or_nil = h
+      h
+    end
+
+    def inspect(c) = "#<ActiveSupport::EncryptedConfiguration>"
+
+    # delegate_missing_to :options
+    def [](c, key) = OrderedOptions.[](options(c), key)
+    def dig(c, key, *rest) = OrderedOptions.dig(options(c), key, *rest)
+    def option(c, method) = OrderedOptions.option(options(c), method)
+    def keys(c) = OrderedOptions.keys(options(c))
+
+    # private
+
+    def deep_symbolize_keys(c, hash)
+      out = Hash.new
+      Hash.each(hash) do |k, v|
+        key = case k
+              in String | Symbol then String.to_sym(Kernel.to_s(k))
+              else raise InvalidKeyError, "Key '#{k}' is invalid, it must respond to '#to_sym' from configuration in '#{@content_path}'."
+              end
+        out[key] = deep_symbolize_value(c, v)
+      end
+      out
+    end
+
+    def deep_symbolize_value(c, v)
+      case v
+      in Hash then deep_symbolize_keys(c, v)
+      in Array then Array.map(v) { |x| deep_symbolize_value(c, x) }
+      else v
+      end
+    end
+
+    def deep_transform(c, value)
+      return value unless value in Hash
+      h = OrderedOptions.make
+      Hash.each(value) { |k, v| h[k] = deep_transform(c, v) }
+      h
+    end
+
+    def options(c)
+      o = @options_or_nil
+      return o if o
+      made = deep_transform(c, config(c))
+      made => OrderedOptions
+      @options_or_nil = made
+      made
+    end
+
+    def deserialize(c, content)
+      config = YAML.load(content)
+      (config in Hash) && !Hash.empty?(config) ? config : Hash.new
+    rescue YAML::SyntaxError => e
+      raise InvalidContentError, "Invalid YAML in '#{@content_path}'.\n\n  #{Exception.message(e)}"
+    end
+  end
+end

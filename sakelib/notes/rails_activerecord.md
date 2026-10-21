@@ -726,3 +726,66 @@ sequences on the first run; the dumper matched Rails' text byte for byte on the 
 
 No interpreter bugs found in this part.
 
+
+## AR records in views (railties fork, fourth wave, 2026-10-20)
+
+What a Rails app's models and views need from ActiveRecord, for railties' blog: the class-body lines of
+`rails new` + `rails generate authentication` (`primary_abstract_class`, `has_secure_password`), Rails 8's
+`User.authenticate_by`, and records rendered by ActionView (the scaffold's templates).
+
+Test: `view_records.sake`/`.rb` (+ `_schema.rb`, `_models.rb`, `view_records_fixtures/`, `view_records_views/` and
+`view_records_views_rb/`): the Rails 8.1 scaffold's articles templates and the guide's comments partials, rendered
+from rows of sqlite3 :memory: by a view class without a controller (as actionview's rendering test): a failed save
+(the error list, field_with_errors, the textarea keeping the value), index (`render article` per record), show
+(`render` of the comments, `button_to [comment.article, comment]`, the nested `form_with model: [article,
+article.comments.build]`), edit before and after a failed update; then has_secure_password's confirmation error,
+authenticate, and authenticate_by's four outcomes and its ArgumentError. The output is the real gems' byte for byte.
+**Check: 37.3 s, 640 MB** (two runs 37.28/37.25 s, HEAD's lib/, load ~1.9); the same program without the view class
+and the rendering: 13.3 s. Kept as `bugs/railties_slow_check_view_records/` (a guess at the cause is in its header).
+
+| change | file |
+|---|---|
+| `primary_abstract_class` is abstract; `has_secure_password` adds the fields password, password_confirmation, password_challenge to the record class, their `_assign_attribute` branches (`set_password` is the generated writer, BCrypt'ing into password_digest), `__send` names, ActiveModel's validate/validates_confirmation_of lines (through ActiveModel::SecurePassword::Generate.expand and Validations::Generate.expand) and its methods (`.source`); every model gets `__authenticate_attribute(r, name, value)` (Ruby's `public_send(:"authenticate_#{name}")`) | generate/model.sake |
+| `ActiveRecord::Generate.on_load_includes` (after Base's modules: Rails' `ActiveSupport.on_load(:active_record) { include M }`) and `protocol_includes` (before them), and `includes=A,B` / `protocols=A,B` arguments of the generator program | generate/model.sake, generate/active_record.sake |
+| `t.index [...]` inside create_table was read as a column named `["article_id"]` (every dumped schema with an index has it) | generate/schema.sake |
+| ActiveRecord::SecurePassword#authenticate_by (Base includes it, last) | active_record/secure_password.sake (new) |
+| `read_attribute_for_validation(r, "title")`: Ruby's `send` takes a String; ActionView passes one | activemodel validations.sake |
+| ActionView::ModelNaming::Record (Sake only): Model plus errors_for (`errors[attr]`) and model_name_human (`model_name.human`), included before ActiveModel's modules so their functions fulfil Model's | actionview action_view/model_naming/record.sake (new) |
+| Model's `human_attribute_name(r, attr)` is now `human_attribute_name_of(r, attr, options = {})`: ActiveModel::Translation's instance form has that name and signature, while its `human_attribute_name(attr, options)` is class-level, and the two clashed in one class | actionview model_naming.sake, helpers/tags/translator.sake |
+
+**How railties wires it**: the generator program pushes `"ActionView::ModelNaming::Record"` to
+`ActiveRecord::Generate.protocol_includes` (or passes `protocols=ActionView::ModelNaming::Record`) and requires
+`rails/actionview/action_view/model_naming/record` in the app; the view class generator gets `records=Article,Comment`.
+Templates read records as `Article.title(article)`, `ActiveModel::Errors.any?(Article.errors(article))`,
+`ActiveRecord::Relation.to_a(Article.comments(article))` for `render @article.comments`,
+`Comment::ActiveRecord_Associations_CollectionProxy.build(Article.comments(article))` for `article.comments.build`;
+`User.authenticate_by(Hash.of(email_address: e, password: p))` (a Hash: `Parameters.to_h` of permitted params).
+
+Left out: password_digest_was for password_challenge (has_secure_password's challenge check reads nil: ActiveModel's
+generator asks for an ActiveModel::Dirty include line the AR model's Info does not list), reset tokens
+(`generates_token_for`), `normalizes`.
+
+**Friction** (what I wrote first → the message → what I wrote instead)
+1. `include ActionView::ModelNaming::Model` after ActiveModel's modules (Rails' on_load order) → "Req.a: K includes Req
+   but does not define a, which Req requires": a nearer required stub is not fulfilled by a farther module's function
+   (a 15-line test showed it; included first, ActiveModel's to_key/param_key/to_partial_path fulfil it) → the protocol
+   goes before Base's modules (`protocol_includes`), and the clash of the two `human_attribute_name`s became a rename.
+2. `t.index ["article_id"], name: ...` in schema.rb → `syntax error: unexpected '['; expected a method name` at
+   models.rb:10 (the origin of the generated reader `def Comment.["article_id"](r)`) → the schema parser skips index lines.
+3. `button_to view, "Destroy Comment", [Comment.article(comment), comment]` → "case/in: no `in` branch matches
+   [Article | nil, Comment]" in polymorphic_routes: Ruby's `[a, b]` is a Tuple here, and the routes take an Array →
+   `Any[Comment.article(comment), comment]` (also for `form_with model:`).
+4. `render "form", article: @article` in new/edit → "Article.__errors: argument 1 must be Article, but is nil" in the
+   partial (the field is Article|nil) → `<% article = @article || raise(...) %>` as the first line (trimmed: the output is
+   unchanged).
+5. The form rendered → at run time `undefined method 'title' for an instance of Article`: ActionView's Tags read
+   `read_attribute_for_validation(o, "title")` and the generated `__send` matched only Symbols → ActiveModel converts a
+   String, as Ruby's send.
+6. `render @article.comments` → a CollectionProxy is not an Array for the view's record rendering →
+   `ActiveRecord::Relation.to_a(...)` (Rails calls to_ary).
+7. While I worked the lead's lib/ was mid-change (bin/sake rejected every AR test: "Post.build: argument 1 must be Post");
+   all checks here ran with HEAD's lib/ (a git archive next to the working sakelib/).
+
+What read well: once it checked, the scaffold's HTML matched Rails on the first run except one blank line (my
+template's), I18n's "Title can't be blank" and "Create Article" came through ActiveModel unchanged, and the nested
+comment form, dom_id and `button_to` of a nested record needed no ActionView change.

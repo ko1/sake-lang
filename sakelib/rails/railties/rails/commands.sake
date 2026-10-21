@@ -1,0 +1,217 @@
+# Port of railties-8.1.3/lib/rails/commands.rb, command.rb, commands/{server,routes,about,middleware,version,runner,credentials}/*_command.rb, info.rb and activerecord-8.1.3/lib/active_record/railties/databases.rake's db: tasks (partial: no Thor option parsing beyond each command's own flags, no console/dbconsole/generate (bin/rails generate is generators.sake), no rake)
+#
+# Ruby's commands are Thor classes that boot the app and call Rails.application. Here they are a mixin
+# Rails::Application includes, so `Rails::Commands.invoke(Rails.application, ARGV)` runs the app's own copy
+# (the app is Blog::Application, the class that pasted Rails::Application) and calls its functions bare.
+#
+#   Ruby                          Sake
+#   bin/rails server -p 3000      bin/sake bin/rails.sake server -p 3000 (WEBrick through Rackup; -e is RAILS_ENV=: the
+#                                 environment is fixed when the program starts)
+#   bin/rails runner 'code'       not ported: the code would have to be part of the program before it is checked
+
+require "rails/activerecord/active_record"
+require "rackup"
+require "application/credentials"
+
+module Rails
+  module Commands
+    def routes(app) = raise(NotImplementedError)
+    def app(app) = raise(NotImplementedError)
+    def config(app) = raise(NotImplementedError)
+    def migrations(app) = raise(NotImplementedError)
+    def load_seed(app) = raise(NotImplementedError)
+    def load_schema(app) = raise(NotImplementedError)
+    def middleware_stack(app) = raise(NotImplementedError)
+    def credentials(app) = raise(NotImplementedError)
+    def name(app) = raise(NotImplementedError)
+
+  end
+
+  module Command
+    module_function
+
+    def HELP
+      "Usage:\n  bin/rails COMMAND [options]\n\nYou must specify a command. The most common commands are:\n" \
+      "  server       Start the Rails server (short-cut alias: \"s\")\n" \
+      "  routes       List all the defined routes\n" \
+      "  about        List versions of all Rails frameworks and the environment\n" \
+      "  middleware   Print out your Rack middleware stack\n" \
+      "  version      Show the Rails version\n" \
+      "  db:migrate, db:rollback, db:migrate:status, db:version, db:schema:load, db:schema:dump, db:seed, db:setup, db:reset\n" \
+      "  credentials:show\n"
+    end
+  end
+
+  module Commands
+
+    # Ruby: Rails::Command.invoke(command, args)
+    def invoke(app, argv)
+      command = Array.first(argv) || "help"
+      args = Array.drop(argv, 1)
+      case command
+      in "server" | "s" then server(app, args)
+      in "routes" then routes_command(app, args)
+      in "about" then puts(about(app))
+      in "middleware" then middleware_command(app)
+      in "version" | "-v" | "--version" then puts("Rails #{Rails.version}")
+      in "runner" | "r" then raise ArgumentError, "bin/rails runner is not ported: Sake checks the code with the program, so it must be a file of the program"
+      in "credentials:show" then puts(Rails::Credentials.show(credentials(app), "config/master.key", "config/credentials.yml.enc"))
+      in "help" | "-h" | "--help" then print(Command.HELP)
+      else
+        if String.start_with?(command, "db:")
+          db_task(app, command, args)
+        else
+          raise ArgumentError, "Unrecognized command \"#{command}\"\n#{Command.HELP}"
+        end
+      end
+      nil
+    end
+
+    # --- server ---
+
+    def option(args, short, long, default)
+      i = Array.index(args, short) || Array.index(args, long)
+      v = i ? args[i + 1] : nil
+      v || default
+    end
+
+    def server(app, args)
+      port = String.to_i(option(args, "-p", "--port", ENV.get("PORT") || "3000"))
+      host = option(args, "-b", "--binding", ENV.get("BINDING") || "localhost")
+      url = "http://#{String.include?(host, ":") ? "[#{host}]" : host}:#{port}"
+      puts("=> Booting WEBrick")
+      puts("=> Rails #{Rails.version} application starting in #{Rails.env} #{url}")
+      puts("=> Run `bin/rails server --help` for more startup options")
+      pid = File.join(Rails.root, "tmp/pids/server.pid")
+      FileUtils.mkdir_p(File.dirname(pid))
+      File.write(pid, "#{Process.pid}\n")
+      # Ruby: the server logs to stdout as well in development (log_to_stdout)
+      Rackup::Handler::WEBrick.run(app, host, port)
+      nil
+    end
+
+    # --- routes ---
+
+    def routes_command(app, args)
+      opts = Hash.new
+      c = option(args, "-c", "--controller", "")
+      g = option(args, "-g", "--grep", "")
+      opts[:controller] = c if c != ""
+      opts[:grep] = g if g != ""
+      inspector = ActionDispatch::Routing::RoutesInspector.make(ActionDispatch::Routing::RouteSet.routes(routes(app)))
+      puts(ActionDispatch::Routing::RoutesInspector.format(inspector, ActionDispatch::Routing::ConsoleFormatter::Sheet.make, opts))
+      nil
+    end
+
+    # --- about (Rails::Info) ---
+
+    def about(app)
+      props = Any[["Rails version", Rails.version],
+                  ["Ruby version", "sake (Sake-lang)"],
+                  ["Rack version", "3.2 (sakelib/rack.sake)"],
+                  ["Middleware", Array.map(ActionDispatch::MiddlewareStack.middlewares(middleware_stack(app))) { |m| ActionDispatch::MiddlewareStack::Middleware.inspect(m) }],
+                  ["Application root", File.expand_path(Rails.root)],
+                  ["Environment", Rails.env],
+                  ["Database adapter", "sqlite3"],
+                  ["Database schema version", Kernel.to_s(ActiveRecord::MigrationContext.current_version(ActiveRecord::MigrationContext.new(migrations(app))))]]
+      width = Array.max(Array.map(props) { |p| String.size(Kernel.to_s(p[0])) }) || 0
+      lines = Array.map(props) do |p|
+        name, value = p
+        v = (value in Array) ? Array.join(Array.map(value) { |x| Kernel.to_s(x) }, ", ") : Kernel.to_s(value)
+        format("%-#{width}s   %s", Kernel.to_s(name), v)
+      end
+      Array.join(Array.unshift(lines, "About your application's environment"), "\n")
+    end
+
+    def middleware_command(app)
+      Array.each(ActionDispatch::MiddlewareStack.middlewares(middleware_stack(app))) { |m| puts("use #{ActionDispatch::MiddlewareStack::Middleware.inspect(m)}") }
+      puts("run #{name(app)}.routes")
+      nil
+    end
+
+    # --- db: (activerecord's databases.rake) ---
+
+    def env_arg(args, key)
+      a = Array.find(args) { |x| String.start_with?(x, "#{key}=") }
+      a ? String.delete_prefix(a, "#{key}=") : ENV.get(key)
+    end
+
+    def migration_context(app) = ActiveRecord::MigrationContext.new(migrations(app))
+
+    def db_task(app, task, args)
+      case task
+      in "db:migrate"
+        v = env_arg(args, "VERSION")
+        ActiveRecord::MigrationContext.migrate(migration_context(app), v ? String.to_i(v) : nil)
+        dump_schema(app)
+      in "db:rollback"
+        step = env_arg(args, "STEP")
+        ActiveRecord::MigrationContext.rollback(migration_context(app), step ? String.to_i(step) : 1)
+        dump_schema(app)
+      in "db:migrate:status" then migrate_status(app)
+      in "db:version" then puts("Current version: #{ActiveRecord::MigrationContext.current_version(migration_context(app))}")
+      in "db:schema:load" then schema_load(app)
+      in "db:schema:dump" then dump_schema(app)
+      in "db:seed" then load_seed(app)
+      in "db:setup"
+        schema_load(app)
+        load_seed(app)
+      in "db:drop" then drop_database(app)
+      in "db:create" then nil   # SQLite creates the file when it connects
+      in "db:reset"
+        drop_database(app)
+        Rails::Commands.reconnect(app)
+        schema_load(app)
+        load_seed(app)
+      else raise ArgumentError, "Unrecognized command \"#{task}\""
+      end
+      nil
+    end
+
+    # Ruby: DatabaseTasks.load_schema: Migration.verbose = verbose? && ENV["VERBOSE"] while db/schema.rb loads
+    def schema_load(app)
+      was = ActiveRecord::Migration.verbose
+      ActiveRecord::Migration.set_verbose(ENV.get("VERBOSE") != nil)
+      begin
+        load_schema(app)
+      ensure
+        ActiveRecord::Migration.set_verbose(was)
+      end
+      nil
+    end
+
+    # Ruby: db:_dump after migrate (dump_schema_after_migration): db/schema.rb from the database
+    def dump_schema(app)
+      File.write(File.join(Rails.root, "db/schema.rb"), ActiveRecord::SchemaDumper.dump(ActiveRecord::Base.connection))
+      nil
+    end
+
+    def migrate_status(app)
+      puts("\ndatabase: #{database_path(app)}\n\n Status   Migration ID    Migration Name\n--------------------------------------------------")
+      Array.each(ActiveRecord::MigrationContext.migrations_status(migration_context(app))) do |row|
+        status, version, name = row
+        puts(format("%-8s %-14s  %s", "  #{status}", Kernel.to_s(version), Kernel.to_s(name)))
+      end
+      puts("")
+      nil
+    end
+
+    def database_path(app)
+      db = ActiveRecord::Railtie.database_configuration(config(app))
+      Kernel.to_s(db["database"])
+    end
+
+    def drop_database(app)
+      path = File.join(Rails.root, database_path(app))
+      ActiveRecord::Base.remove_connection
+      File.delete(path) if File.exist?(path)
+      puts("Dropped database '#{database_path(app)}'")
+      nil
+    end
+
+    def reconnect(app)
+      ActiveRecord::Railtie.establish_connection(config(app))
+      nil
+    end
+  end
+end

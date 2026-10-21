@@ -1,0 +1,49 @@
+# Port of nothing (Sake only): the command line of `rails new` and `bin/rails generate`, on sakelib/thor.sake
+#
+#   bin/sake --strict sakelib/rails/railties/rails/generators/cli.sake new PATH
+#   cd PATH && bin/sake --strict ../sakelib/rails/railties/rails/generators/cli.sake generate scaffold Article title:string body:text
+#
+# Ruby: `rails new` is Rails::Generators::AppGenerator started by railties' CLI; `bin/rails generate` boots the app
+# and Rails::Generators.invoke finds the generator. Generating needs no booted app here (the generators read and
+# write files), so this program is separate from the app's bin/rails.sake, which would have to check the whole app.
+
+require "thor"
+require "../generators"
+require "rails/app_generator"
+
+class RailsCLI
+  attr_reader thor
+  include Thor::CLI
+
+  def run(cli, name, args, options)
+    case name
+    in "new"
+      path = Array.fetch(args, 0)
+      g = Rails::Generators::Base.make(File.expand_path(path), force: Thor.flag?(options, :force))
+      Rails::Generators::Base.say_status(g, :create, "")
+      Rails::Generators::AppGenerator.run(g, path)
+    in "generate"
+      g = Rails::Generators::Base.make(Thor.string(options, :destination) || Dir.pwd, force: Thor.flag?(options, :force))
+      Rails::Generators.invoke(g, Array.fetch(args, 0), Array.drop(args, 1), migration: options[:migration] != false)
+    else raise "unreachable: #{name}"
+    end
+    nil
+  end
+end
+
+app = Thor.app("rails")
+Thor.desc(app, "new APP_PATH", "Create a new Rails application")
+Thor.method_option(app, :force, type: :boolean, aliases: "-f", desc: "Overwrite files that already exist")
+Thor.command(app, "new")
+Thor.desc(app, "generate GENERATOR ARGS...", "Generate new code (short-cut alias: \"g\")")
+Thor.method_option(app, :force, type: :boolean, aliases: "-f", desc: "Overwrite files that already exist")
+Thor.method_option(app, :migration, type: :boolean, default: true, desc: "Write the model's migration (model, resource, scaffold)")
+Thor.method_option(app, :destination, type: :string, desc: "The application's root (default: the current directory)")
+Thor.command(app, "generate")
+Thor.map(app, "g", :generate)
+begin
+  Thor.start(RailsCLI.new(app), ARGV, exit_on_failure: true)
+rescue Rails::Generators::Error => e
+  warn(Exception.message(e))
+  exit(1)
+end

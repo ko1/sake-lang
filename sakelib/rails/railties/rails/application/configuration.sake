@@ -1,0 +1,356 @@
+# Port of railties-8.1.3/lib/rails/application/configuration.rb, engine/configuration.rb and railtie/configuration.rb (partial: the options an app's config/ sets and the frameworks read; load_defaults of the frameworks this port has; no autoload/eager-load paths (Sake reads the app's files at generate time), no generators' config, no file watcher)
+#
+# Ruby's Application::Configuration < Engine::Configuration < Railtie::Configuration is one class here (a Sake `<`
+# would paste each level). The frameworks' namespaces (config.action_dispatch, ...) are ActiveSupport::OrderedOptions
+# fields, given the defaults each framework's Railtie sets in its class body (action_dispatch/railtie.rb, ...);
+# Ruby's `config.action_controller.perform_caching = false` is `config.Configuration.action_controller[:perform_caching] = false`.
+#
+#   Ruby (config/environments/development.rb)        Sake
+#   config.enable_reloading = true                   config.Rails::Application::Configuration.enable_reloading = true
+#   config.action_mailer.x = 1 (respond_to?)         only the namespaces of the loaded frameworks exist
+
+require "../application"   # Rails::Application is declared there (its fields), before this file reopens it
+require "rails/activesupport/active_support/ordered_options"
+require "rails/activesupport/active_support/inflector"
+require "../paths"
+require "ipaddr"
+
+module Rails
+  class Application
+    class Configuration
+      OO = ActiveSupport::OrderedOptions
+      # Railtie::Configuration / Engine::Configuration
+      attr_accessor root, paths, middleware, eager_load_namespaces
+      # Application::Configuration's accessors
+      attr_accessor allow_concurrency, asset_host, assume_ssl, autoflush_log, cache_classes, cache_store,
+                    consider_all_requests_local, eager_load, exceptions_app, filter_parameters,
+                    precompile_filter_parameters, force_ssl, helpers_paths, hosts, host_authorization, logger,
+                    log_tags, silence_healthcheck_path, relative_url_root, ssl_options, public_file_server,
+                    session_options, time_zone, beginning_of_week, filter_redirect, x,
+                    content_security_policy_report_only, require_master_key, credentials, server_timing,
+                    log_file_size, dom_testing_default_html_version, yjit, add_autoload_paths_to_load_path
+      attr_reader encoding, api_only, loaded_config_version, log_level
+      attr_accessor secret_key_base_, session_store_, debug_exception_response_format_, content_security_policy_,
+                    permissions_policy_, log_formatter
+      # the frameworks' Railtie namespaces
+      attr_accessor action_dispatch, action_controller, action_view, active_record, active_model, active_support, i18n, generators
+
+      # (the values the fields hold from the start are given to `new`: a field written only in initialize may be nil to the checker)
+      def make(root)
+        c = Configuration.new(root: root, paths: Rails::Paths::Root.new(root, Hash.new), middleware: Rails::Configuration::MiddlewareStackProxy.new(Any[]),
+                          eager_load_namespaces: String[], filter_parameters: Any[], filter_redirect: Any[], helpers_paths: String[],
+                          hosts: Any[], host_authorization: Hash.new, public_file_server: OO.make, ssl_options: Hash.new, session_options: Hash.new,
+                          x: OO.make, credentials: OO.make, action_dispatch: OO.make, action_controller: OO.make, action_view: OO.make,
+                          active_record: OO.make, active_model: OO.make, active_support: OO.make, i18n: OO.make, generators: OO.make)
+        Configuration.setup(c)
+        c
+      end
+
+      # Ruby's initialize; called by make after `new` (bugs/railties_initialize_call_ends_check.sake: a call in
+      # initialize on a field new was given ends the check of everything after it)
+      def initialize(c) = nil   # (every field but those make gives is nil until setup)
+
+      def setup(c)
+        @encoding = "UTF-8"
+        @allow_concurrency = nil
+        @consider_all_requests_local = false
+        # Ruby: ActionDispatch::HostAuthorization::ALLOWED_HOSTS_IN_DEVELOPMENT + RAILS_DEVELOPMENT_HOSTS
+        Array.concat(@hosts, Configuration.development_hosts) if Rails.env_inquirer.ActiveSupport::EnvironmentInquirer.development?
+        @public_file_server[:enabled] = true
+        @public_file_server[:index_name] = "index"
+        @assume_ssl = false
+        @force_ssl = false
+        @session_store_ = nil
+        @time_zone = "UTC"
+        @beginning_of_week = :monday
+        @log_level = :debug
+        @log_file_size = nil
+        @cache_store = Any[:file_store, "#{@root}/tmp/cache/"]
+        @relative_url_root = ENV.get("RAILS_RELATIVE_URL_ROOT")
+        @exceptions_app = nil
+        @autoflush_log = true
+        @log_formatter = "%<msg>s\n"
+        @silence_healthcheck_path = nil
+        @eager_load = nil
+        @secret_key_base_ = nil
+        @api_only = false
+        @debug_exception_response_format_ = nil
+        @content_security_policy_ = nil
+        @content_security_policy_report_only = false
+        @require_master_key = false
+        @loaded_config_version = nil
+        @add_autoload_paths_to_load_path = true
+        @permissions_policy_ = nil
+        @server_timing = false
+        @dom_testing_default_html_version = :html4
+        @yjit = false
+        @cache_classes = true
+        Configuration.framework_defaults(c)
+        Configuration.add_paths(c)
+      end
+
+      def development_hosts
+        # Ruby: IPAddr.new("0.0.0.0/0"), IPAddr.new("::/0") (every IP address). Here a Regexp of IP literals: with an IPAddr
+        # in the hosts, sakelib/ipaddr.sake's include? is reached with both IPAddr (here) and String (RemoteIp) and
+        # fails the check (IPAddr.family: argument 1 can be String)
+        hosts = Any[/(?:(?:\d{1,3}\.){3}\d{1,3}|\[[0-9a-fA-F:]+\])/, "localhost", ".localhost", ".test"]
+        Array.each(String.split(ENV.get("RAILS_DEVELOPMENT_HOSTS") || "", ",")) { |h| Array.push(hosts, String.strip(h)) }
+        hosts
+      end
+
+      # The class bodies of ActionDispatch::Railtie, ActionController::Railtie, ActionView::Railtie,
+      # ActiveRecord::Railtie, ActiveSupport::Railtie and I18n::Railtie: their config defaults.
+      def framework_defaults(c)
+        ad = @action_dispatch
+        ad[:x_sendfile_header] = nil
+        ad[:ip_spoofing_check] = true
+        ad[:show_exceptions] = :all
+        ad[:tld_length] = 1
+        ad[:ignore_accept_header] = false
+        ad[:rescue_templates] = Hash.new
+        # ActiveRecord::Railtie's class body merges its errors in (config.action_dispatch.rescue_responses.merge!)
+        ad[:rescue_responses] = Hash.of("ActiveRecord::RecordNotFound" => :not_found, "ActiveRecord::StaleObjectError" => :conflict,
+          "ActiveRecord::RecordInvalid" => :unprocessable_content, "ActiveRecord::RecordNotSaved" => :unprocessable_content)
+        ad[:default_charset] = nil
+        ad[:rack_cache] = false
+        ad[:http_auth_salt] = "http authentication"
+        ad[:signed_cookie_salt] = "signed cookie"
+        ad[:encrypted_cookie_salt] = "encrypted cookie"
+        ad[:encrypted_signed_cookie_salt] = "signed encrypted cookie"
+        ad[:authenticated_encrypted_cookie_salt] = "authenticated encrypted cookie"
+        ad[:use_authenticated_cookie_encryption] = false
+        ad[:use_cookies_with_metadata] = false
+        ad[:perform_deep_munge] = true
+        ad[:request_id_header] = "X-Request-Id"
+        ad[:log_rescued_responses] = true
+        ad[:debug_exception_log_level] = :fatal
+        ad[:strict_freshness] = false
+        ad[:verbose_redirect_logs] = false
+        ad[:default_headers] = Hash.of("X-Frame-Options" => "SAMEORIGIN", "X-XSS-Protection" => "1; mode=block",
+          "X-Content-Type-Options" => "nosniff", "X-Download-Options" => "noopen",
+          "X-Permitted-Cross-Domain-Policies" => "none", "Referrer-Policy" => "strict-origin-when-cross-origin")
+        ad[:cookies_serializer] = :marshal
+        ad[:cookies_same_site_protection] = nil
+        ac = @action_controller
+        ac[:action_on_open_redirect] = :log
+        ac[:action_on_path_relative_redirect] = :log
+        ac[:log_query_tags_around_actions] = true
+        ac[:wrap_parameters_by_default] = false
+        ac[:allowed_redirect_hosts] = Any[]
+        av = @action_view
+        av[:embed_authenticity_token_in_remote_forms] = nil
+        av[:debug_missing_translation] = true
+        av[:image_loading] = nil
+        av[:image_decoding] = nil
+        av[:apply_stylesheet_media_default] = true
+        av[:prepend_content_exfiltration_prevention] = false
+        ar = @active_record
+        ar[:use_schema_cache_dump] = true
+        ar[:maintain_test_schema] = true
+        ar[:has_many_inversing] = false
+        ar[:query_log_tags_enabled] = false
+        ar[:raise_on_assign_to_attr_readonly] = false
+        ar[:belongs_to_required_validates_foreign_key] = true
+        ar[:generate_secure_token_on] = :create
+        ar[:cache_versioning] = false
+        @i18n[:railties_load_path] = Any[]
+        @i18n[:load_path] = Any[]
+        @i18n[:fallbacks] = false
+      end
+
+      # Engine::Configuration#paths and Application::Configuration#paths (the ones this port reads)
+      def add_paths(c)
+        p = @paths
+        # (the guard keeps the checker going: bugs/railties_initialize_call_ends_check.sake)
+        return nil unless p
+        Rails::Paths::Root.add(p, "app", eager_load: true, glob: "{*,*/concerns}")
+        Rails::Paths::Root.add(p, "app/controllers", eager_load: true)
+        Rails::Paths::Root.add(p, "app/helpers", eager_load: true)
+        Rails::Paths::Root.add(p, "app/models", eager_load: true)
+        Rails::Paths::Root.add(p, "app/views")
+        Rails::Paths::Root.add(p, "lib", load_path: true)
+        Rails::Paths::Root.add(p, "config")
+        Rails::Paths::Root.add(p, "config/environments", glob: "#{Rails.env}.rb")
+        Rails::Paths::Root.add(p, "config/initializers", glob: "**/*.rb")
+        Rails::Paths::Root.add(p, "config/locales", glob: "**/*.{rb,yml}")
+        Rails::Paths::Root.add(p, "config/routes.rb")
+        Rails::Paths::Root.add(p, "db")
+        Rails::Paths::Root.add(p, "db/migrate")
+        Rails::Paths::Root.add(p, "db/seeds.rb")
+        Rails::Paths::Root.add(p, "config/database", with: "config/database.yml")
+        Rails::Paths::Root.add(p, "config/environment", with: "config/environment.rb")
+        Rails::Paths::Root.add(p, "lib/templates")
+        Rails::Paths::Root.add(p, "log", with: "log/#{Rails.env}.log")
+        Rails::Paths::Root.add(p, "public")
+        Rails::Paths::Root.add(p, "tmp")
+      end
+
+      # Loads default configuration values for a target version (each version calls the one before it).
+      def load_defaults(c, target_version)
+        v = Kernel.to_s(target_version)
+        case v
+        in "5.0"
+          @action_controller[:per_form_csrf_tokens] = true
+          @action_controller[:forgery_protection_origin_check] = true
+          @active_record[:belongs_to_required_by_default] = true
+          @ssl_options = Hash.of(hsts: Hash.of(subdomains: true))
+        in "5.1"
+          load_defaults(c, "5.0")
+          @action_view[:form_with_generates_remote_forms] = true
+        in "5.2"
+          load_defaults(c, "5.1")
+          @active_record[:cache_versioning] = true
+          @action_dispatch[:use_authenticated_cookie_encryption] = true
+          @active_support[:use_authenticated_message_encryption] = true
+          @active_support[:hash_digest_class] = "SHA1"
+          @action_controller[:default_protect_from_forgery] = true
+          @action_view[:form_with_generates_ids] = true
+        in "6.0"
+          load_defaults(c, "5.2")
+          @action_view[:default_enforce_utf8] = false
+          @action_dispatch[:use_cookies_with_metadata] = true
+          @active_record[:collection_cache_versioning] = true
+        in "6.1"
+          load_defaults(c, "6.0")
+          @active_record[:has_many_inversing] = true
+          @action_dispatch[:cookies_same_site_protection] = :lax
+          @action_dispatch[:ssl_default_redirect_status] = 308
+          @action_view[:form_with_generates_remote_forms] = false
+          @action_view[:preload_links_header] = true
+        in "7.0"
+          load_defaults(c, "6.1")
+          @action_dispatch[:default_headers] = Hash.of("X-Frame-Options" => "SAMEORIGIN", "X-XSS-Protection" => "0",
+            "X-Content-Type-Options" => "nosniff", "X-Download-Options" => "noopen",
+            "X-Permitted-Cross-Domain-Policies" => "none", "Referrer-Policy" => "strict-origin-when-cross-origin")
+          @action_dispatch[:cookies_serializer] = :json
+          @action_view[:button_to_generates_button_tag] = true
+          @action_view[:apply_stylesheet_media_default] = false
+          @active_support[:hash_digest_class] = "SHA256"
+          @active_support[:key_generator_hash_digest_class] = "SHA256"
+          @active_record[:partial_inserts] = false
+          @active_record[:automatic_scope_inversing] = true
+          @action_controller[:action_on_open_redirect] = :raise
+          @action_controller[:wrap_parameters_by_default] = true
+        in "7.1"
+          load_defaults(c, "7.0")
+          @add_autoload_paths_to_load_path = false
+          @precompile_filter_parameters = true
+          @dom_testing_default_html_version = :html4   # Ruby: :html5 when Nokogiri::HTML5 is defined
+          @log_file_size = 100 * 1024 * 1024 if Rails.env_inquirer.ActiveSupport::EnvironmentInquirer.local?
+          @active_record[:sqlite3_adapter_strict_strings_by_default] = true
+          @active_record[:raise_on_assign_to_attr_readonly] = true
+          @active_record[:belongs_to_required_validates_foreign_key] = false
+          @active_record[:run_after_transaction_callbacks_in_order_defined] = true
+          @active_record[:generate_secure_token_on] = :initialize
+          @action_dispatch[:default_headers] = Hash.of("X-Frame-Options" => "SAMEORIGIN", "X-XSS-Protection" => "0",
+            "X-Content-Type-Options" => "nosniff", "X-Permitted-Cross-Domain-Policies" => "none",
+            "Referrer-Policy" => "strict-origin-when-cross-origin")
+          @action_dispatch[:debug_exception_log_level] = :error
+          @active_support[:message_serializer] = :json_allow_marshal
+          @active_support[:use_message_serializer_for_metadata] = true
+        in "7.2"
+          load_defaults(c, "7.1")
+          @yjit = true
+          @active_record[:validate_migration_timestamps] = true
+        in "8.0"
+          load_defaults(c, "7.2")
+          @action_dispatch[:strict_freshness] = true
+        in "8.1"
+          load_defaults(c, "8.0")
+          @yjit = !Rails.env_inquirer.ActiveSupport::EnvironmentInquirer.local?
+          @action_controller[:escape_json_responses] = false
+          @action_controller[:action_on_path_relative_redirect] = :raise
+          @active_record[:raise_on_missing_required_finder_order_columns] = true
+          @action_view[:render_tracker] = :ruby
+          @action_view[:remove_hidden_field_autocomplete] = true
+        else
+          raise "Unknown version #{Kernel.inspect(v)}"
+        end
+        @loaded_config_version = v
+        nil
+      end
+
+      def reloading_enabled?(c) = enable_reloading(c)
+      def enable_reloading(c) = !@cache_classes
+      def set_enable_reloading(c, value) = @cache_classes = !value
+      def enable_reloading=(c, value)
+        set_enable_reloading(c, value)
+      end
+
+      def set_log_level(c, level) = @log_level = level
+      def log_level=(c, level)
+        set_log_level(c, level)
+      end
+
+      def set_api_only(c, value)
+        @api_only = value
+        @debug_exception_response_format_ ||= :api
+      end
+      def api_only=(c, value)
+        set_api_only(c, value)
+      end
+
+      def debug_exception_response_format(c) = @debug_exception_response_format_ || :default
+
+      # Ruby: session_store(new_session_store = nil, **options); :cookie_store is ActionDispatch::Session::CookieStore
+      def session_store(c, new_session_store = nil, **options)
+        if new_session_store != nil
+          @session_store_ = new_session_store
+          @session_options = Hash.new
+          Hash.each(options) { |k, v| @session_options[k] = v }
+          return nil
+        end
+        case @session_store_
+        in :disabled then nil
+        in :cookie_store then "ActionDispatch::Session::CookieStore"
+        in nil then "ActionDispatch::Session::CookieStore"   # Ruby: the default is set by the session initializer (cookie_store)
+        else raise ArgumentError, "session store #{Kernel.inspect(@session_store_)} is not ported (only :cookie_store)"
+        end
+      end
+      def session_store?(c) = @session_store_ != nil && @session_store_ != :disabled
+
+      def secret_key_base(c) = @secret_key_base_
+      def set_secret_key_base(c, value) = @secret_key_base_ = value
+      def secret_key_base=(c, value)
+        set_secret_key_base(c, value)
+      end
+
+      def content_security_policy(c) = @content_security_policy_
+      def permissions_policy(c) = @permissions_policy_
+
+      def default_log_file(c) = "#{@root}/log/#{Rails.env}.log"
+    end
+  end
+
+  # Port of railties-8.1.3/lib/rails/configuration.rb's MiddlewareStackProxy (partial: the operations are kept as
+  # data and merged into the default stack, as Ruby's merge_into)
+  module Configuration
+    class MiddlewareStackProxy
+      attr_reader operations
+
+      def use(p, klass, *args) = Array.push(@operations, [:use, klass, Any[], args])
+      def insert_before(p, index, klass, *args) = Array.push(@operations, [:insert_before, klass, Any[index], args])
+      def insert(p, index, klass, *args) = insert_before(p, index, klass, *args)
+      def insert_after(p, index, klass, *args) = Array.push(@operations, [:insert_after, klass, Any[index], args])
+      def swap(p, target, klass, *args) = Array.push(@operations, [:swap, klass, Any[target], args])
+      def delete(p, target) = Array.push(@operations, [:delete, target, Any[], Any[]])
+      def unshift(p, klass, *args) = Array.push(@operations, [:unshift, klass, Any[], args])
+
+      def merge_into(p, other)
+        Array.each(@operations) do |op|
+          kind, klass, where, args = op
+          case kind
+          in :use then ActionDispatch::MiddlewareStack.use(other, klass, *args)
+          in :unshift then ActionDispatch::MiddlewareStack.unshift(other, klass, *args)
+          in :insert_before then ActionDispatch::MiddlewareStack.insert_before(other, Kernel.to_s(where[0]), klass, *args)
+          in :insert_after then ActionDispatch::MiddlewareStack.insert_after(other, Kernel.to_s(where[0]), klass, *args)
+          in :swap then ActionDispatch::MiddlewareStack.swap(other, Kernel.to_s(where[0]), klass, *args)
+          in :delete then ActionDispatch::MiddlewareStack.delete(other, klass)
+          else nil
+          end
+        end
+        other
+      end
+    end
+  end
+end

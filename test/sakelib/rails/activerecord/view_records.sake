@@ -1,0 +1,65 @@
+require "rails/activerecord/active_record"
+require "rails/actionview/action_view/base"
+require "rails/actionview/action_view/model_naming/record"
+require "view_records_fixtures/routes"
+
+# Records of ActiveRecord as ActionView's records: the Rails 8.1 scaffold's templates for articles with comments
+# (index, show with the comments and a nested comment form, the form with errors after a failed save, edit, new)
+# rendered from rows of a sqlite3 :memory: database, and has_secure_password with authenticate_by.
+# Rails' on_load(:active_record) for ActionView: the models include ActionView::ModelNaming::Record (protocols=).
+ActiveRecord::Base.establish_connection(adapter: "sqlite3", database: ":memory:")
+ActiveRecord::Migration.set_verbose(false)
+generate "rails/activerecord/active_record/generate/active_record", "view_records_schema.rb", "view_records_models.rb", "protocols=ActionView::ModelNaming::Record"
+generate "view_records_fixtures/url_helpers", "BlogUrlHelpers"
+generate "rails/actionview/action_view/generate/view_class", "BlogView", "views=view_records_views", "records=Article,Comment", "include=BlogUrlHelpers", "assigns=article,articles"
+ViewRecordsSchema.load
+ActiveModel::SecurePassword.set_min_cost(true)
+
+def view_for(articles, article)
+  view = BlogView.new(routes: view_records_route_set, articles: articles, article: article)
+  ActionView::LookupContext.set_prefixes(BlogView.lookup_context(view), String["articles"])   # an ArticlesController's _prefixes
+  view
+end
+Comments = Comment::ActiveRecord_Associations_CollectionProxy
+
+puts("-- a failed save: the form with errors")
+article = Article.build(title: "", body: "short")
+p(Article.save(article))
+p(ActiveModel::Errors.full_messages(Article.errors(article)))
+puts(BlogView.render(view_for(Article[], article), template: "articles/new"))
+
+puts("-- saved, with comments")
+article.Article.title = "Hello Rails"
+article.Article.body = "I am on Rails & Sake!"
+p(Article.save(article))
+Comments.create(Article.comments(article), commenter: "matz", body: "<b>nice</b>")
+Comments.create(Article.comments(article), commenter: "ko1", body: "thanks")
+Article.create(title: "Second", body: "Another article body")
+articles = ActiveRecord::Relation.to_a(Article.all)
+puts(BlogView.render(view_for(articles, nil), template: "articles/index"))
+shown = Article.find(Article.id(article) || 0)
+puts(BlogView.render(view_for(Article[], shown), template: "articles/show"))
+puts(BlogView.render(view_for(Article[], shown), template: "articles/edit"))
+
+puts("-- an update that fails: the edit form keeps the values")
+shown.Article.body = "tiny"
+p(Article.save(shown))
+puts(BlogView.render(view_for(Article[], shown), template: "articles/edit"))
+
+puts("-- has_secure_password and authenticate_by")
+user = User.build(email_address: "one@example.com", password: "secret", password_confirmation: "other")
+p(User.save(user))
+p(ActiveModel::Errors.full_messages(User.errors(user)))
+User.set_password_confirmation(user, "secret")
+p(User.save(user))
+p(User.authenticate(user, "wrong"))
+p((u = User.authenticate_by(Hash.of(email_address: "one@example.com", password: "secret"))) ? User.email_address(u) : nil)
+p(User.authenticate_by(Hash.of(email_address: "one@example.com", password: "wrong")))
+p(User.authenticate_by(Hash.of(email_address: "nobody@example.com", password: "secret")))
+p(User.authenticate_by(Hash.of(email_address: "one@example.com", password: "")))
+begin
+  User.authenticate_by(Hash.of(email_address: "one@example.com"))
+rescue ArgumentError => e
+  puts(Exception.message(e))
+end
+p(String.start_with?(User.password_digest(user) || "", "$2"), User.password(user) == "secret")

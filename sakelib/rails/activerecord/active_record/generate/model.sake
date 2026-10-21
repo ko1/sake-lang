@@ -19,11 +19,19 @@
 #
 # The parts other files add (associations, enum, store, ...) are the `*_source` functions they define, called
 # from class_source.
+#
+# Rails' `ActiveSupport.on_load(:active_record) { include M }` (a framework adding a module to Base when it loads):
+# a generator program pushes the module's name to `ActiveRecord::Generate.on_load_includes` before calling
+# class_source, and every model includes it after Base's modules (nearer, so it overrides them, as in Ruby).
+# `protocol_includes` go before Base's modules: a protocol (required functions and defaults) that ActiveModel's and
+# ActiveRecord's own functions fulfil and override, e.g. ActionView::ModelNaming::Record (ActionView's records).
+# generate/active_record.sake takes them as `includes=A,B` and `protocols=A,B` arguments.
 
 require "ruby_value"
 require "schema"
 require "rails/activesupport/active_support/generate/callbacks"
 require "rails/activemodel/active_model/generate/validations"
+require "rails/activemodel/active_model/generate/secure_password"
 require "rails/activesupport/active_support/inflector"
 
 module ActiveRecord
@@ -38,6 +46,9 @@ module ActiveRecord
              "start_transaction_state", "new_record_before_last_commit"]
     end
 
+    def on_load_includes = once { String[] }
+    def protocol_includes = once { String[] }
+
     # Ruby's ActiveRecord::Base include list, in its order (base.sake)
     def base_modules
       String["ActiveModel::API", "ActiveRecord::Translation",
@@ -46,12 +57,12 @@ module ActiveRecord
              "ActiveRecord::CounterCache", "ActiveRecord::Locking::Optimistic", "ActiveSupport::Callbacks",
              "ActiveRecord::Callbacks", "ActiveModel::Validations::Callbacks", "ActiveRecord::Timestamp", "ActiveRecord::Associations",
              "ActiveRecord::Transactions", "ActiveRecord::Querying", "Indexable",
-             "ActiveRecord::AutosaveAssociation", "ActiveRecord::Reflection::ClassMethods", "ActiveModel::Serializers::JSON", "ActiveRecord::Serialization"] + Features.base_modules
+             "ActiveRecord::AutosaveAssociation", "ActiveRecord::Reflection::ClassMethods", "ActiveModel::Serializers::JSON", "ActiveRecord::Serialization", "ActiveRecord::SecurePassword"] + Features.base_modules
     end
 
     # The class-body calls the model generator knows (the others' are added by them)
     def CALLS
-      String["self.abstract_class", "self.table_name", "self.primary_key", "self.record_timestamps",
+      String["self.abstract_class", "primary_abstract_class", "has_secure_password", "self.table_name", "self.primary_key", "self.record_timestamps",
              "self.partial_updates", "self.partial_inserts", "self.locking_column", "attr_readonly",
              "validates", "validate", "validates_presence_of", "validates_uniqueness_of", "validates_length_of",
              "validates_numericality_of", "validates_inclusion_of", "validates_exclusion_of", "validates_absence_of",
@@ -77,7 +88,22 @@ module ActiveRecord
       String.strip(String.delete_prefix(a, "="))
     end
 
-    def abstract?(b) = assignment(b, "self.abstract_class") == "true"
+    # Ruby's primary_abstract_class is abstract_class = true (and the primary connection's class)
+    def abstract?(b) = assignment(b, "self.abstract_class") == "true" || Array.any?(decls(b)) { |d| decl_call(d) == "primary_abstract_class" }
+
+    # The attributes of the chain's has_secure_password lines (Ruby's default :password)
+    def secure_password_attributes(chain)
+      out = String[]
+      Array.each(chain) do |cb|
+        Array.each(decls(cb)) do |d|
+          next unless decl_call(d) == "has_secure_password"
+          pos, _ = split_options(decl_args(d))
+          Array.push(out, String.delete_prefix(Array.fetch(pos, 0, ":password"), ":"))
+        end
+      end
+      out
+    end
+    def secure_password_fields(chain) = Array.flat_map(secure_password_attributes(chain)) { |a| String[a, "#{a}_confirmation", "#{a}_challenge"] }
     def table_name_of(b)
       t = assignment(b, "self.table_name")
       t ? string_of(t) : ActiveSupport::Inflector.tableize(body_name(b))
@@ -130,8 +156,10 @@ module ActiveRecord
       chain = lineage(b, bodies)
       cols = table_columns(t) + Features.declared_attribute_columns(chain)
       s = "# sake-origin: #{path}:#{line}\n"
-      s += "class #{k}\n  attr_accessor #{Array.join(record_fields + Associations.fields(b, chain), ", ")}\n"
+      s += "class #{k}\n  attr_accessor #{Array.join(record_fields + Associations.fields(b, chain) + secure_password_fields(chain), ", ")}\n"
+      Array.each(Generate.protocol_includes) { |m| s += "  include #{m}\n" }
       Array.each(base_modules) { |m| s += "  include #{m}\n" }
+      Array.each(Generate.on_load_includes) { |m| s += "  include #{m}\n" }
       Array.each(chain) { |cb| s += "  include #{body_name(cb)}\n" if abstract?(cb) }
       s += "  def initialize(r)\n    init_internals(r, true)\n  end\nend\n"
       s += relation_class_source(k, "ActiveRecord_Relation", "ActiveRecord::Relation")
@@ -145,6 +173,7 @@ module ActiveRecord
       info = model_info(b, chain, path)
       s += callbacks_source(b, chain, bodies, path, info)
       s += validations_source(b, chain, path, info)
+      s += secure_password_source(b, chain, info)
       s += send_source(b, chain, cols, info)
       s += Associations.class_source(b, bodies, tables, path)
       s += Features.class_source(b, chain, cols, path)
@@ -232,6 +261,7 @@ module ActiveRecord
       Array.each(cols) { |c| s += "  in #{Kernel.inspect(c[0])} then r.#{k}.#{c[0]} = value\n" }
       Array.each(Associations.writers(b, chain)) { |w| s += "  in #{Kernel.inspect(w)} then r.#{k}.#{w} = value\n" }
       Array.each(Features.writers(b, chain)) { |w| s += "  in #{Kernel.inspect(w)} then r.#{k}.#{w} = value\n" }
+      Array.each(secure_password_fields(chain)) { |w| s += "  in #{Kernel.inspect(w)} then #{k}.set_#{w}(r, value)\n" }
       s += "  else attribute_writer_missing(r, name, value)\n  end\nend\n"
       s
     end
@@ -241,7 +271,7 @@ module ActiveRecord
     def send_source(b, chain, cols, info)
       k = body_name(b)
       names = Array.map(cols) { |c| c[0] } + Associations.writers(b, chain).Array.reject { |w| String.end_with?(w, "_attributes") }
-      names = Array.uniq(names + ActiveModel::Generate::Info.readers(info))
+      names = Array.uniq(names + ActiveModel::Generate::Info.readers(info) + secure_password_fields(chain))
       s = "def #{k}.__class_name = #{Kernel.inspect(k)}\n"
       s += "def #{k}.attribute_aliases = once { Hash.new }\n"
       s += "def #{k}.__id(r) = #{k}.id(r)\n"
@@ -304,6 +334,23 @@ module ActiveRecord
 
     def decl(n, call, args) = ActiveSupport::Generate::Declaration.new(n, call, args)
 
+    # has_secure_password's methods (ActiveModel's generator) and Ruby's public_send("authenticate_#{name}") for
+    # ActiveRecord::SecurePassword#authenticate_by
+    def secure_password_source(b, chain, info)
+      k = body_name(b)
+      s = ActiveModel::SecurePassword::Generate.source(info)
+      attrs = secure_password_attributes(chain)
+      s += "def #{k}.__authenticate_attribute(r, name, value)\n"
+      if Array.empty?(attrs)
+        s += "  raise NoMethodError, \"undefined method 'authenticate_\#{name}' for an instance of #{k}\"\nend\n"
+      else
+        s += "  case name\n"
+        Array.each(attrs) { |a| s += "  in #{Kernel.inspect(a)} then #{k}.authenticate_#{a}(r, value)\n" }
+        s += "  else raise NoMethodError, \"undefined method 'authenticate_\#{name}' for an instance of #{k}\"\n  end\nend\n"
+      end
+      s
+    end
+
     # Ruby's define_model_callbacks and the model's callback lines as ActiveSupport::Callbacks declarations
     def callbacks_body(b, chain, path, info)
       k = body_name(b)
@@ -321,7 +368,12 @@ module ActiveRecord
           conds = Array.select(opts) { |o| Array.include?(Generate.CONDITION_OPTIONS, Kernel.to_s(o[0])) }
           Array.each(Features.callback_declarations(d, path)) { |x| Array.push(ds, x) }
           Array.each(Associations.callback_declarations(k, d, path)) { |x| Array.push(ds, x) }
-          if Array.include?(ActiveModel::Validations::Generate.CALLS, call) || call == "validates_uniqueness_of"
+          if call == "has_secure_password"
+            # ActiveModel's has_secure_password: its validate and validates_confirmation_of lines
+            rest = ActiveSupport::Generate::Declaration[]
+            ActiveModel::SecurePassword::Generate.expand(info, d, rest)
+            ActiveModel::Validations::Generate.expand(info, rest, ds)
+          elsif Array.include?(ActiveModel::Validations::Generate.CALLS, call) || call == "validates_uniqueness_of"
             ActiveModel::Validations::Generate.expand(info, ActiveSupport::Generate::Declaration[d], ds)
           elsif (m = String.match(call, /\A(before|after|around)_(validation|save|create|update|destroy|initialize|find|touch)\z/))
             # Ruby's ActiveModel::Callbacks prepends after_* callbacks (_define_after_model_callback: prepend: true)

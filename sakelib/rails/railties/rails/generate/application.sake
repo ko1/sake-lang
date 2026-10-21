@@ -1,0 +1,374 @@
+# Port of nothing (Sake only): an app's boot as generated source, the part of Rails' boot that defines code
+#
+# Ruby boots an app by loading files and defining methods while it runs: Zeitwerk autoloads app/, each model's
+# class body runs its `validates`/`has_many` lines and defines attribute methods from the table, each controller's
+# `before_action` lines are stored, routes define url helpers, templates are compiled on first render, and
+# ActiveSupport.on_load hooks add modules to ActiveRecord::Base and ActionController::Base. Sake has no code at
+# load time, so the app's config/generate.sake (written by `rails new`) runs this before the program is checked,
+# and every gem's generator writes its part:
+#
+#   app/models/*.rb (class bodies) + db/schema.rb    ActiveRecord::Generate (generate/active_record.sake)
+#   app/models/*.rb < ActiveSupport::CurrentAttributes  ActiveSupport's generators (current attributes, callbacks, delegation)
+#   the drawn routes                                 ActionDispatch::Routing::Generate.url_helpers
+#   app/controllers/**/*.rb + .sake                  ActionController::Generate.source (with concerns' `included` lines
+#                                                    and Base's `protect_from_forgery with: :exception` put in, as Ruby's
+#                                                    ActiveSupport::Concern and on_load(:action_controller_base) do)
+#   app/views/**/*.erb                               ActionView::Generate.view_class
+#   app/**/*.sake, db/migrate/*.sake, db/seeds.sake  printed as they are (Ruby autoloads them), with origin lines
+#   config/application.sake's `class Application`    def Rails.application, draw_routes, migrations, load_seed
+#
+# The expanded class bodies are written to tmp/sake/ (controllers.rb), so the origins of their generated lines point
+# at a file one can read.
+
+require "rails/activerecord/active_record/generate/model"
+require "rails/activerecord/active_record/generate/associations"
+require "rails/activerecord/active_record/generate/features"
+require "rails/activesupport/active_support/generate/class_body"
+require "rails/activesupport/active_support/generate/callbacks"
+require "rails/activesupport/active_support/generate/class_attribute"
+require "rails/activesupport/active_support/generate/rescuable"
+require "rails/activesupport/active_support/generate/current_attributes"
+require "rails/activesupport/active_support/delegation"
+require "rails/actionpack/action_controller/generate/controller"
+require "rails/actionview/action_view/generate/templates"
+require "rails/actionpack/action_dispatch/routing/generate/url_helpers"
+require "rails/activesupport/active_support/inflector"
+require "fileutils"
+
+module Rails
+  module Generate
+    class App
+      attr_reader root, name, out
+      def path(a, rel) = File.join(@root, rel)
+      def rel(a, full) = String.delete_prefix(full, "#{@root}/")
+      def emit(a, s) = Array.push(@out, s)
+    end
+
+    module_function
+
+    # The whole generated source of the app at root, with its routes drawn into set.
+    def application(root, set)
+      app = App.new(File.expand_path(root), app_name(root), String[])
+      models = model_source(app)
+      App.emit(app, models[0])
+      App.emit(app, url_helpers_source(app, set))
+      app_files_source(app)
+      App.emit(app, controllers_source(app, models[1]))
+      App.emit(app, application_source(app))
+      Array.join(App.out(app), "")
+    end
+
+    # config/application.sake's `module Blog` / `class Application < Rails::Application`
+    def app_name(root)
+      text = File.read(File.join(root, "config/application.sake"))
+      m = String.match(text, /^module (\w+)\s*\n\s*class Application < Rails::Application/)
+      raise ArgumentError, "config/application.sake: no `module NAME; class Application < Rails::Application`" if m == nil
+      Kernel.to_s(m[1])
+    end
+
+    def url_helpers_module(app) = "#{App.name(app)}UrlHelpers"
+    def view_class_name(app) = "#{App.name(app)}View"
+
+    def files(app, pattern) = Array.sort(Array.map(Dir.glob(App.path(app, pattern))) { |f| Kernel.to_s(f) })
+
+    # The file as generated source: `# sake-origin: FILE:1` makes its lines (and their errors) the file's own.
+    def file_source(app, full)
+      rel = App.rel(app, full)
+      out = ""
+      String.lines(File.read(full)).Array.each_with_index { |l, i| out += "# sake-origin: #{rel}:#{i + 1}\n#{String.chomp(l)}\n" }
+      out + "# sake-origin: none\n"
+    end
+
+    # --- models ---
+
+    def ar_root?(b, bodies)
+      p = ActiveSupport::Generate::ClassBody.parent(b)
+      return true if p == "ActiveRecord::Base"
+      pb = Array.find(bodies) { |x| ActiveSupport::Generate::ClassBody.name(x) == p }
+      pb != nil && ar_root?(pb, bodies)
+    end
+
+    # [source, model names]: ActiveRecord's models from the schema and app/models/*.rb, and the other classes
+    # (CurrentAttributes) through ActiveSupport's generators
+    def model_source(app)
+      schema_path = App.path(app, "db/schema.rb")
+      tables = ActiveRecord::Generate::SchemaTable[]
+      s = ""
+      if File.exist?(schema_path)
+        text = File.read(schema_path)
+        Array.each(ActiveRecord::Generate.parse_schema(text, "db/schema.rb")) { |t| Array.push(tables, t) }
+        s += ActiveRecord::Generate.loader_source(text, "db/schema.rb")
+      end
+      bodies = ActiveSupport::Generate::ClassBody[]
+      paths = Hash.new
+      Array.each(files(app, "app/models/**/*.rb")) do |full|
+        next if String.include?(full, "/concerns/")
+        Array.each(ActiveSupport::Generate.parse(File.read(full), App.rel(app, full))) do |b|
+          Array.push(bodies, b)
+          paths[ActiveSupport::Generate::ClassBody.name(b)] = App.rel(app, full)
+        end
+      end
+      # Ruby: ActiveSupport.on_load(:active_record) hooks; ActionView's record protocol (ActiveModel's to_model API)
+      Array.push(ActiveRecord::Generate.protocol_includes, "ActionView::ModelNaming::Record") unless Array.include?(ActiveRecord::Generate.protocol_includes, "ActionView::ModelNaming::Record")
+      names = String[]
+      currents = String[]
+      Array.each(bodies) do |b|
+        name = ActiveSupport::Generate::ClassBody.name(b)
+        path = paths[name] || ""
+        if ar_root?(b, bodies) && !ActiveRecord::Generate.abstract?(b) && ActiveRecord::Generate.assignment(b, "primary_abstract_class") == nil &&
+           !Array.any?(tables) { |t| ActiveRecord::Generate::SchemaTable.name(t) == ActiveRecord::Generate.table_name_of(b) }
+          # a model whose table is not in db/schema.rb yet (generated, not migrated): Ruby defines its attributes when
+          # it is first used; here it is left out until db:migrate has dumped the schema
+          warn("#{path}:#{ActiveSupport::Generate::ClassBody.line(b)}: #{name}'s table #{ActiveRecord::Generate.table_name_of(b)} is not in db/schema.rb; run bin/rails db:migrate (the model is left out until then)")
+        elsif ar_root?(b, bodies)
+          s += ActiveRecord::Generate.class_source(b, Array.select(bodies) { |x| ar_root?(x, bodies) }, tables, path)
+          Array.push(names, name) unless ActiveRecord::Generate.abstract?(b) || ActiveRecord::Generate.assignment(b, "primary_abstract_class") != nil
+        elsif ActiveSupport::Generate::ClassBody.parent(b) == "ActiveSupport::CurrentAttributes"
+          s += current_attributes_source(b, path)
+          Array.push(currents, name)
+        else
+          raise ArgumentError, "#{path}:#{ActiveSupport::Generate::ClassBody.line(b)}: #{name} < #{ActiveSupport::Generate::ClassBody.parent(b)}: only models (ActiveRecord) and CurrentAttributes are generated"
+        end
+      end
+      # Ruby: ActiveSupport::CurrentAttributes.clear_all (the executor's hook) over CurrentAttributes.subclasses
+      s += "# sake-origin: none\ndef Rails.clear_current_attributes\n"
+      Array.each(currents) { |c| s += "  ActiveSupport::CurrentAttributes.reset(#{c}.instance)\n" }
+      s += "  nil\nend\n"
+      [s, names]
+    end
+
+    # active_support.sake's steps for one class body, and `delegate ... to: :x` (the target's type is the model
+    # named like x: Ruby needs no type)
+    def current_attributes_source(b, path)
+      decls = ActiveSupport::Generate::ClassBody.declarations(b)
+      delegates = Array.select(decls) { |d| ActiveSupport::Generate::Declaration.call(d) == "delegate" }
+      Array.reject!(decls) { |d| ActiveSupport::Generate::Declaration.call(d) == "delegate" }
+      ActiveSupport::CurrentAttributes::Generate.expand(b)
+      one = ActiveSupport::Generate::ClassBody[b]
+      s = ActiveSupport::ClassAttribute::Generate.class_source(b, one, path)
+      # a class without callbacks: the dispatcher's case needs one branch (as ActiveRecord's generator does)
+      s += String.gsub(ActiveSupport::Callbacks::Generate.class_source(b, one, path), "  case filter\n# sake-origin: none\n", "  case filter\n  in :__no_callback then nil\n# sake-origin: none\n")
+      s += ActiveSupport::Rescuable::Generate.class_source(b, one, path)
+      s += ActiveSupport::CurrentAttributes::Generate.class_source(b, path)
+      k = ActiveSupport::Generate::ClassBody.name(b)
+      Array.each(delegates) do |d|
+        methods = String[]
+        to = ""
+        allow_nil = false
+        prefix = nil
+        Array.each(ActiveSupport::Generate::Declaration.args(d)) do |a|
+          o = ActiveSupport::Generate.option(a)
+          if o == nil
+            Array.push(methods, String.delete_prefix(a, ":"))
+          else
+            key, v = o
+            case key
+            in "to" then to = String.delete_prefix(Kernel.to_s(v), ":")
+            in "allow_nil" then allow_nil = v == "true"
+            in "prefix" then prefix = v
+            else raise ArgumentError, "#{path}:#{ActiveSupport::Generate::Declaration.line(d)}: delegate #{key}: is not ported"
+            end
+          end
+        end
+        s += "# sake-origin: #{path}:#{ActiveSupport::Generate::Declaration.line(d)}\n"
+        s += ActiveSupport::Delegation.generate(k, methods, "#{to}:#{ActiveSupport::Inflector.camelize(to)}", prefix, allow_nil)
+        s += "# sake-origin: none\n"
+      end
+      s
+    end
+
+    # --- routes ---
+
+    def url_helpers_source(app, set) = ActionDispatch::Routing::Generate.url_helpers(set, url_helpers_module(app))
+
+    # --- the app's own Sake files (Ruby autoloads them) ---
+
+    def sake_files(app)
+      fs = String[]
+      Array.each(String["app/models/concerns/**/*.sake", "app/models/**/*.sake", "app/helpers/**/*.sake",
+                        "app/controllers/concerns/**/*.sake", "app/controllers/**/*.sake", "db/migrate/*.sake", "db/seeds.sake"]) do |g|
+        Array.each(files(app, g)) { |f| Array.push(fs, f) unless Array.include?(fs, f) }
+      end
+      fs
+    end
+
+    def app_files_source(app)
+      Array.each(sake_files(app)) { |f| App.emit(app, file_source(app, f)) }
+      nil
+    end
+
+    # --- controllers ---
+
+    # A concern's class-body parts: `included do ... end` lines and `class_methods do def m(**options) ... end end`
+    class Concern
+      attr_reader name, included, macros
+    end
+
+    def parse_concerns(app)
+      cs = Concern[]
+      Array.each(files(app, "app/controllers/concerns/**/*.rb")) do |full|
+        text = File.read(full)
+        m = String.match(text, /^module (\w+)/)
+        next unless m
+        c = Concern.new(Kernel.to_s(m[1]), String[], Hash.new)
+        state = nil
+        macro = nil
+        String.each_line(text) do |raw|
+          line = String.strip(raw)
+          next if line == "" || String.start_with?(line, "#")
+          if line == "included do"
+            state = :included
+          elsif line == "class_methods do"
+            state = :class_methods
+          elsif state == :included && line == "end"
+            state = nil
+          elsif state == :included
+            Array.push(Concern.included(c), line)
+          elsif state == :class_methods && (dm = String.match(line, /\Adef (\w+)\(\*\*options\)\z/))
+            macro = Kernel.to_s(dm[1])
+            Concern.macros(c)[macro] = String[]
+          elsif state == :class_methods && line == "end"
+            state = nil if macro == nil
+            macro = nil
+          elsif state == :class_methods && macro
+            Array.push(Concern.macros(c)[macro] || String[], line)
+          end
+        end
+        Array.push(cs, c)
+      end
+      cs
+    end
+
+    # The controllers' class bodies with the concerns' lines in place and Base's forgery protection, as one file.
+    def expanded_controller_bodies(app)
+      concerns = parse_concerns(app)
+      out = String["# Generated by Rails::Generate (railties): the class bodies of app/controllers/**/*.rb with the",
+                   "# concerns' `included` lines and class methods expanded, and ActionController::Base's",
+                   "# `protect_from_forgery with: :exception` (load_defaults 5.2+) in the root controller."]
+      decls = Array.reject(files(app, "app/controllers/**/*.rb")) { |f| String.include?(f, "/concerns/") }
+      health = File.expand_path(File.join(__dir__, "../health_controller_decl.rb"))
+      Array.push(decls, health) if File.exist?(App.path(app, "config/routes.sake")) && String.include?(File.read(App.path(app, "config/routes.sake")), "rails/health")
+      Array.each(decls) do |full|
+        Array.push(out, "# #{App.rel(app, full)}")
+        String.each_line(File.read(full)) do |raw|
+          line = String.chomp(raw)
+          s = String.strip(line)
+          if (m = String.match(s, /\Aclass [\w:]+ < ActionController::Base\z/))
+            Array.push(out, line)
+            Array.push(out, "  # ActionController::Railtie (default_protect_from_forgery)", "  protect_from_forgery with: :exception")
+            next
+          end
+          if (m = String.match(s, /\Ainclude (\w+)\z/))
+            c = Array.find(concerns) { |x| Concern.name(x) == m[1] }
+            Array.push(out, line)
+            if c
+              Array.push(out, "  # #{m[1]}'s included block")
+              Array.each(Concern.included(c)) { |l| Array.push(out, "  #{l}") }
+            end
+            next
+          end
+          w = String.match(s, /\A(\w+)(?: (.*))?\z/)
+          macro = nil
+          Array.each(concerns) { |c| macro ||= w ? Concern.macros(c)[Kernel.to_s(w[1])] : nil }
+          if w && macro
+            args = Kernel.to_s(w[2])
+            Array.push(out, "  # #{s}")
+            Array.each(macro) do |l|
+              Array.push(out, "  #{String.strip(String.sub(String.sub(l, /,?\s*\*\*options/, ""), /\z/, args == "" ? "" : ", #{args}"))}")
+            end
+            next
+          end
+          Array.push(out, line)
+        end
+      end
+      Array.join(out, "\n") + "\n"
+    end
+
+    def controllers_source(app, records)
+      decl = App.path(app, "tmp/sake/controllers.rb")
+      FileUtils.mkdir_p(File.dirname(decl))
+      text = expanded_controller_bodies(app)
+      routes_health = File.exist?(App.path(app, "config/routes.sake")) && String.include?(File.read(App.path(app, "config/routes.sake")), "rails/health")
+      health = File.join(__dir__, "../health_controller.sake")
+      File.write(decl, text)
+      sakes = files(app, "app/controllers/**/*.sake")
+      Array.push(sakes, File.expand_path(health)) if routes_health
+      paths = String[decl] + sakes
+      view = view_class_name(app)
+      # the view's assigns: every field of the app's controllers (Rails copies whatever instance variables are set)
+      assigns = String[]
+      Array.each(sakes) do |f|
+        Array.each(ActionController::Generate.scan_sake(File.read(f), f)) do |k|
+          Array.each(ActionController::Generate::SakeClass.fields(k)) { |x| Array.push(assigns, x) unless Array.include?(assigns, x) || String.start_with?(x, "_") }
+        end
+      end
+      helpers = String[]
+      Array.each(files(app, "app/helpers/**/*.sake")) do |f|
+        m = String.match(File.read(f), /^module (\w+)/)
+        Array.push(helpers, Kernel.to_s(m[1])) if m
+      end
+      includes = String[url_helpers_module(app), "ActionController::Helpers::HelperMethods"] + helpers
+      ActionView::Generate.set_annotate_rendered_view_with_filenames(App.root(app)) if annotate_rendered_views?(app)
+      vs = ActionView::Generate.view_class(view, String[App.path(app, "app/views")], records: records, includes: includes, assigns: assigns, controllers: sakes)
+      vs + view_settings_source(app, view) + ActionController::Generate.source(paths + String["view=#{view}"])
+    end
+
+    # Ruby: config.action_view.annotate_rendered_view_with_filenames, which changes the compiled templates (the
+    # current environment's file is read: Ruby runs it before the first template compiles)
+    def annotate_rendered_views?(app)
+      env = ENV.get("RAILS_ENV") || ENV.get("RACK_ENV") || "development"
+      f = App.path(app, "config/environments/#{env == "" ? "development" : env}.sake")
+      return false unless File.exist?(f)
+      Array.any?(String.lines(File.read(f))) { |l| String.match?(l, /\A\s*config\.[\w:]+\.action_view\[:annotate_rendered_view_with_filenames\] = true/) }
+    end
+
+    # Ruby: ActionView::Railtie's set_configs (`ActionView::Base.send("#{k}=", v)` for config.action_view) and
+    # load_defaults' view settings; the port's helpers read them as view functions, which the view class overrides
+    def view_settings_source(app, view)
+      s = "# sake-origin: none\n# ActionView::Railtie: config.action_view's settings, read when a helper asks\n"
+      s += "def #{view}.__action_view_config(v) = Rails::Application::Configuration.action_view(Rails.config(Rails.application))\n"
+      Array.each(String["button_to_generates_button_tag", "remove_hidden_field_autocomplete", "form_with_generates_remote_forms",
+                        "default_enforce_utf8", "apply_stylesheet_media_default"]) do |k|
+        s += "def #{view}.#{k}(v) = #{view}.__action_view_config(v)[:#{k}] == true\n"
+      end
+      s += "def #{view}.form_with_generates_ids(v) = #{view}.__action_view_config(v)[:form_with_generates_ids] != false\n"
+      s
+    end
+
+    # --- the application ---
+
+    def application_source(app)
+      n = App.name(app)
+      s = "# sake-origin: config/application.sake:1\n"
+      s += "def Rails.application = once { #{n}::Application.make(#{Kernel.inspect("#{n}::Application")}, #{Kernel.inspect(App.root(app))}) }\n"
+      s += "# Ruby: Rails.application.configure / config / routes / initialize! are the application's (Rails.application.configure do ... end reads as Ruby)\n"
+      s += "def Rails.configure(app, env = nil, &b) = #{n}::Application.configure(app, env, &b)\n"
+      s += "def Rails.config(app) = #{n}::Application.config(app)\n"
+      s += "def Rails.routes(app) = #{n}::Application.routes(app)\n"
+      s += "def Rails.initialize!(app) = #{n}::Application.initialize!(app)\n"
+      s += "module #{n}\n"
+      s += "  # Ruby: Rails.application.routes.draw do ... end (config/routes.rb, drawn by the routes reloader)\n"
+      s += "  def Application.draw_routes(app, set)\n"
+      s += "    set.ActionDispatch::Routing::RouteSet.controllers = ActionController::ControllerSet.new\n"
+      s += "    ActionDispatch::Routing::RouteSet.draw(set) { |map| ActionDispatch::Routing::Mapper.application_routes(map) }\n"
+      s += "  end\n"
+      s += "  def Application.url_helpers(app) = #{url_helpers_module(app)}::Proxy.new(Application.routes(app))\n"
+      ms = files(app, "db/migrate/*.sake")
+      list = Array.map(ms) do |f|
+        m = String.match(File.basename(f), /\A(\d+)_(\w+)\.sake\z/)
+        raise ArgumentError, "#{App.rel(app, f)}: a migration's file is VERSION_name.sake" if m == nil
+        "#{ActiveSupport::Inflector.camelize(Kernel.to_s(m[2]))}.new(#{Kernel.inspect(ActiveSupport::Inflector.camelize(Kernel.to_s(m[2])))}, #{m[1]})"
+      end
+      s += "  # Ruby: the migrations of db/migrate (MigrationContext reads the files' names)\n"
+      s += "  def Application.migrations(app) = Any[#{Array.join(list, ", ")}]\n"
+      if File.exist?(App.path(app, "db/schema.rb"))
+        s += "  # Ruby: load(db/schema.rb) (bin/rails db:schema:load)\n  def Application.load_schema(app) = Schema.load\n"
+      end
+      if File.exist?(App.path(app, "db/seeds.sake"))
+        s += "  # Ruby: load(db/seeds.rb)\n  def Application.load_seed(app) = seed\n"
+      end
+      s += "end\n# sake-origin: none\n"
+      s
+    end
+  end
+end

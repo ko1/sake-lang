@@ -1,0 +1,61 @@
+# Port of railties-8.1.3/lib/rails/application/default_middleware_stack.rb (partial: the middleware this port has; Rack::Sendfile, ServerTiming, ActionableExceptions, Reloader, Callbacks, Rack::TempfileReaper, Rack::Lock/Cache and AssumeSSL are left out (no reloader, sendfile or tempfiles; the executor only resets CurrentAttributes), so `bin/rails middleware` lists fewer than Ruby's)
+#
+# Ruby's `middleware.use ::ActionDispatch::Static, ...` names a class; here the class name (stack.sake).
+
+require "../application"   # Rails::Application is declared there (its fields), before this file reopens it
+require "../rack/logger"
+
+module Rails
+  class Application
+    class DefaultMiddlewareStack
+      attr_reader config
+
+      def build_stack(d)
+        Rails::Rack::Logger.register
+        ActionDispatch::Executor.register
+        c = @config
+        ad = Configuration.action_dispatch(c)
+        m = ActionDispatch::MiddlewareStack.new(Any[])
+        unless Array.empty?(Configuration.hosts(c))
+          ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::HostAuthorization", Configuration.hosts(c), Configuration.host_authorization(c))
+        end
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::SSL", Configuration.ssl_options(c)) if Configuration.force_ssl(c)
+        pfs = Configuration.public_file_server(c)
+        if pfs[:enabled] == true
+          index = pfs[:index_name]
+          ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::Static", File.join(Kernel.to_s(Configuration.root(c)), "public"), Hash.of(index: (index in String) ? index : "index"))
+        end
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::Executor")
+        ActionDispatch::MiddlewareStack.use(m, "Rack::Runtime")
+        ActionDispatch::MiddlewareStack.use(m, "Rack::MethodOverride") unless Configuration.api_only(c)
+        h = ad[:request_id_header]
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::RequestId", Hash.of(header: (h in String) ? h : "X-Request-Id"))
+        # (config.action_dispatch.trusted_proxies is not passed on: the stack's args are one Array for every middleware)
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::RemoteIp", ad[:ip_spoofing_check] != false, nil)
+        ActionDispatch::MiddlewareStack.use(m, "Rails::Rack::Logger")   # (config.log_tags: not ported)
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::ShowExceptions", show_exceptions_app(d))
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::DebugExceptions")
+        ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::Cookies") unless Configuration.api_only(c)
+        store = Configuration.session_store(c)
+        if !Configuration.api_only(c) && store
+          opts = Configuration.session_options(c)
+          if Configuration.force_ssl(c) && Configuration.ssl_options(c)[:secure_cookies] != false && !Hash.key?(opts, :secure)
+            opts[:secure] = true
+          end
+          ActionDispatch::MiddlewareStack.use(m, store, opts)
+        end
+        unless Configuration.api_only(c)
+          ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::Flash")
+          ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::ContentSecurityPolicy::Middleware")
+          ActionDispatch::MiddlewareStack.use(m, "ActionDispatch::PermissionsPolicy::Middleware") if Configuration.permissions_policy(c)
+        end
+        ActionDispatch::MiddlewareStack.use(m, "Rack::Head")
+        ActionDispatch::MiddlewareStack.use(m, "Rack::ConditionalGet")
+        ActionDispatch::MiddlewareStack.use(m, "Rack::ETag", "no-cache")
+        m
+      end
+
+      def show_exceptions_app(d) = ActionDispatch::PublicExceptions.new(File.join(Kernel.to_s(Configuration.root(@config)), "public"))
+    end
+  end
+end

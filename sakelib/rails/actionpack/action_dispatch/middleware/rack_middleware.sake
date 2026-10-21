@@ -1,0 +1,120 @@
+# Port of rack-3.2.6/lib/rack/method_override.rb, head.rb, conditional_get.rb, etag.rb and runtime.rb (partial: on ActionDispatch's protocol (a middleware gets the one ActionDispatch::Request, app.sake); no BodyProxy, no rack.errors; Rails' default stack uses them, so they are here for railties)
+#
+# Ruby's Rack middleware wraps `call(env)`; here `call(mw, req)` with the env the request holds.
+
+require "../app"
+require "digest"
+
+module Rack
+  class MethodOverride
+    attr_reader app
+    include ActionDispatch::App
+    def HTTP_METHODS = String["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS", "PATCH", "LINK", "UNLINK"]
+    def METHOD_OVERRIDE_PARAM_KEY = "_method"
+    def HTTP_METHOD_OVERRIDE_HEADER = "HTTP_X_HTTP_METHOD_OVERRIDE"
+    def ALLOWED_METHODS = String["POST"]
+
+    def call(mw, req)
+      env = ActionDispatch::Request.env(req)
+      if Array.include?(MethodOverride.ALLOWED_METHODS, env["REQUEST_METHOD"])
+        method = method_override(mw, req)
+        if Array.include?(MethodOverride.HTTP_METHODS, method)
+          env["rack.methodoverride.original_method"] = env["REQUEST_METHOD"] || "POST"
+          # Ruby's Request reads the env each time; this port's memoizes request_method (set_request_method resets it)
+          ActionDispatch::Request.set_request_method(req, method)
+        end
+      end
+      ActionDispatch::App.call(@app, req)
+    end
+
+    def method_override(mw, req)
+      method = method_override_param(mw, req) || ActionDispatch::Request.env(req)[MethodOverride.HTTP_METHOD_OVERRIDE_HEADER]
+      String.upcase(Kernel.to_s(method))
+    end
+
+    def method_override_param(mw, req)
+      return nil unless ActionDispatch::Request.form_data?(req)
+      v = ActionDispatch::Request.POST(req)[MethodOverride.METHOD_OVERRIDE_PARAM_KEY]
+      (v in String) ? v : nil
+    rescue ActionController::BadRequest
+      nil   # Ruby: "Invalid or incomplete POST params" on rack.errors
+    end
+  end
+
+  class Head
+    attr_reader app
+    include ActionDispatch::App
+    def call(mw, req)
+      status, headers, body = ActionDispatch::App.call(@app, req)
+      return [status, headers, String[]] if ActionDispatch::Request.env(req)["REQUEST_METHOD"] == "HEAD"
+      [status, headers, body]
+    end
+  end
+
+  class ConditionalGet
+    attr_reader app
+    include ActionDispatch::App
+    def call(mw, req)
+      env = ActionDispatch::Request.env(req)
+      m = env["REQUEST_METHOD"]
+      return ActionDispatch::App.call(@app, req) unless m == "GET" || m == "HEAD"
+      status, headers, body = ActionDispatch::App.call(@app, req)
+      if status == 200 && fresh?(mw, env, headers)
+        Hash.delete(headers, "content-type")
+        Hash.delete(headers, "content-length")
+        return [304, headers, String[]]
+      end
+      [status, headers, body]
+    end
+
+    # (partial: If-Modified-Since is not compared: Time.rfc2822 parsing is not ported)
+    def fresh?(mw, env, headers)
+      none_match = env["HTTP_IF_NONE_MATCH"]
+      none_match != nil && headers["etag"] == none_match
+    end
+  end
+
+  class ETag
+    attr_reader app, no_cache_control, cache_control
+    include ActionDispatch::App
+    def DEFAULT_CACHE_CONTROL = "max-age=0, private, must-revalidate"
+
+    def make(app, no_cache_control = nil, cache_control = ETag.DEFAULT_CACHE_CONTROL) = ETag.new(app, no_cache_control, cache_control)
+
+    def call(mw, req)
+      status, headers, body = ActionDispatch::App.call(@app, req)
+      digest = nil
+      if (status == 200 || status == 201) && !Hash.key?(headers, "etag") && !Hash.key?(headers, "last-modified")
+        digest = digest_body(mw, body)
+        headers["etag"] = "W/\"#{digest}\"" if digest
+      end
+      unless headers["cache-control"]
+        if digest
+          headers["cache-control"] = @cache_control if @cache_control
+        else
+          headers["cache-control"] = @no_cache_control if @no_cache_control
+        end
+      end
+      [status, headers, body]
+    end
+
+    def digest_body(mw, body)
+      parts = Array.reject(Array.map(body) { |b| Kernel.to_s(b) }) { |part| String.empty?(part) }
+      return nil if Array.empty?(parts)
+      String.byteslice(Digest::SHA256.hexdigest(Array.join(parts)), 0, 32)
+    end
+  end
+
+  class Runtime
+    attr_reader app, header_name
+    include ActionDispatch::App
+    def make(app, name = nil) = Runtime.new(app, name ? "x-runtime-#{String.downcase(Kernel.to_s(name))}" : "x-runtime")
+    def call(mw, req)
+      start_time = Process.clock_gettime(Process.CLOCK_MONOTONIC)
+      status, headers, body = ActionDispatch::App.call(@app, req)
+      request_time = Process.clock_gettime(Process.CLOCK_MONOTONIC) - start_time
+      headers[@header_name] = format("%0.6f", request_time) unless Hash.key?(headers, @header_name)
+      [status, headers, body]
+    end
+  end
+end

@@ -27,10 +27,22 @@ require "debug_exceptions"
 require "static"
 require "host_authorization"
 require "ssl"
+require "rack_middleware"
 
 module ActionDispatch
   class MiddlewareStack
     attr_accessor middlewares
+
+    # (Sake only) builds the middleware named klass, or nil when it is not one of its own
+    module Builder
+      def build_middleware(b, klass, args, app) = raise(NotImplementedError)
+    end
+    class NoBuilder
+      include Builder
+      def build_middleware(b, klass, args, app) = nil
+    end
+    def builders = once { Builder[NoBuilder.new] }
+    def add_builder(b) = Array.push(MiddlewareStack.builders, b)
     include Enum
 
     class Middleware
@@ -49,7 +61,9 @@ module ActionDispatch
         in "ActionDispatch::RemoteIp"
           check = @args[0]
           proxies = @args[1]
-          RemoteIp.make(app, check != false, (proxies in Array) ? proxies : nil)
+          # (the args are one Array type for every middleware: the proxies are narrowed to IPAddr here)
+          ips = (proxies in Array) ? Array.filter_map(proxies) { |x| (x in IPAddr) ? x : nil } : nil
+          RemoteIp.make(app, check != false, ips)
         in "ActionDispatch::ContentSecurityPolicy::Middleware" then ContentSecurityPolicy::Middleware.new(app)
         in "ActionDispatch::PermissionsPolicy::Middleware" then PermissionsPolicy::Middleware.new(app)
         in "ActionDispatch::Cookies" then Cookies.new(app)
@@ -73,7 +87,23 @@ module ActionDispatch
           redirect = Hash.key?(o, :redirect) ? o[:redirect] : Hash.new
           h = o[:hsts]
           SSL.build(app, redirect: (redirect in Hash) ? redirect : nil, hsts: (h in Hash) ? h : (h == false ? false : nil))
-        else raise ArgumentError, "unknown middleware #{@klass} (this port builds only ActionDispatch's own)"
+        in "Rack::MethodOverride" then ::Rack::MethodOverride.new(app)
+        in "Rack::Head" then ::Rack::Head.new(app)
+        in "Rack::ConditionalGet" then ::Rack::ConditionalGet.new(app)
+        in "Rack::ETag"
+          nc = @args[0]
+          ::Rack::ETag.make(app, (nc in String) ? nc : nil)
+        in "Rack::Runtime"
+          n = @args[0]
+          ::Rack::Runtime.make(app, (n in String) ? n : nil)
+        else
+          # (Sake only) a middleware of another library (railties' Rails::Rack::Logger, an app's own): the builders
+          # registered with MiddlewareStack.add_builder, Ruby's klass.new(app, *args) on a class this file cannot name
+          built = nil
+          Array.each(MiddlewareStack.builders) do |b|
+            built ||= Builder.build_middleware(b, @klass, @args, app)
+          end
+          built || raise(ArgumentError, "unknown middleware #{@klass} (this port builds ActionDispatch's own, Rack's in rack_middleware.sake, and those of MiddlewareStack.builders)")
         end
       end
 

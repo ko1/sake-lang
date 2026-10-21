@@ -82,3 +82,19 @@ Rails の移植で同じ形が出るかを見ることにした。
   直すと sakelib のテスト 24 本が、これまで検査されていなかったコードで level 2 に落ちる（httparty、tempfile、net_http、
   time_with_zone、json、actionpack のコントローラのテストの大半）。**ここまでの検査時間の数字は、この穴で飛ばされた分だけ
   短く出ている可能性がある。** 仕分けと移植の修正を別の作業ツリーで進めている。
+
+## 4. railties とブログ（第 4 段、part 12）
+
+Rails ガイドのブログ（記事・コメント・検証・レイアウト・flash・Rails 8 の authentication 生成器による has_secure_password
+とセッション）を移植した railties の上で `rails new` 型の配置に組み、WEBrick で 127.0.0.1 のランダムポートに立てて curl で 26
+リクエストを歩いた（`walk.sh`、`blog/run.sh`）。同じアプリを本物の `rails new` / `rails generate` で `blog_rb/` に作り（オフラインで
+`--skip-bundle` 後 `bundle install --local` が通った）、同じ walk を流した。**差は 404 の 2 ページだけ**（Rails の開発用エラーページは
+HTML、移植の DebugExceptions は text/plain）。`walk.diff` が差分。
+
+**全体の検査時間**: `bin/sake -c --strict blog/bin/rails.sake` は 18.7 秒・476 MB（ローカル、2 回、負荷 0.5〜0.8）。ただし
+**これはアプリ全体の検査ではない**。検査器が `ActionDispatch::Response.create`（全リクエストが通る）で黙って解析を打ち切り、
+アクション・ビュー・リクエストから届くモデルのコードは解析されない（アクションやテンプレートに `String.upcase(42)` を入れても OK、
+実行すると TypeError）。最初に測った 7 秒も同じ理由（自分の Configuration の initialize で打ち切られていた）で、撤回する。
+再現: `bugs/railties_initialize_call_ends_check.sake`（initialize 内で new に渡されたフィールドへの呼び出しがあると、その new
+以降が解析されない）、`bugs/railties_response_create_ends_check.sake`。第 3 段のコントローラ経由のテストの時間も同じ影響を受けて
+いる可能性がある。詳細と移植の内容は `sakelib/notes/rails_railties.md`、`blog/README.md`。

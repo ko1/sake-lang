@@ -1,0 +1,55 @@
+# Port of railties-8.1.3/lib/rails/application/bootstrap.rb (partial: no autoloaders, error/event reporters, cache store (ActiveSupport::Cache is not ported), BroadcastLogger)
+
+require "../application"   # Rails::Application is declared there (its fields), before this file reopens it
+module Rails
+  class Application
+    module Bootstrap
+      module_function
+
+      def initializers
+        list = Initializable::Initializer[]
+        Initializable.add(list, :load_environment_hook, :bootstrap, group: :all)
+        Initializable.add(list, :load_active_support, :bootstrap, group: :all)
+        Initializable.add(list, :set_eager_load, :bootstrap, group: :all)
+        Initializable.add(list, :initialize_logger, :bootstrap, group: :all)
+        Initializable.add(list, :initialize_cache, :bootstrap, group: :all)
+        Initializable.add(list, :bootstrap_hook, :bootstrap, group: :all)
+        list
+      end
+
+      def run(config, name)
+        case name
+        in :load_environment_hook | :load_active_support | :bootstrap_hook then nil
+        in :set_eager_load
+          if Configuration.eager_load(config) == nil
+            warn("config.eager_load is set to nil. Please update your config/environments/*.rb files accordingly:\n" \
+                 "  * development - set it to false\n" \
+                 "  * test - set it to false (unless you use a tool that preloads your test environment)\n" \
+                 "  * production - set it to true\n")
+            config.Configuration.eager_load = !Configuration.reloading_enabled?(config)
+          end
+        in :initialize_logger then initialize_logger(config)
+        in :initialize_cache then nil   # Ruby: Rails.cache = ActiveSupport::Cache.lookup_store(*config.cache_store)
+        else raise ArgumentError, "no bootstrap initializer #{name}"
+        end
+        nil
+      end
+
+      # Ruby: Rails.logger ||= config.logger || ActiveSupport::Logger.new(config.default_log_file) (TaggedLogging, then a BroadcastLogger)
+      def initialize_logger(config)
+        return nil if Rails.logger != nil
+        logger = Configuration.logger(config)
+        if logger == nil
+          path = Configuration.default_log_file(config)
+          FileUtils.mkdir_p(File.dirname(path))
+          logger = ActiveSupport::Logger.new(path)
+          logger.ActiveSupport::Logger.formatter = Configuration.log_formatter(config)
+        end
+        logger => ActiveSupport::Logger
+        ActiveSupport::Logger.set_level(logger, ::Logger.coerce_level(Configuration.log_level(config) || :debug))
+        Rails.set_logger(logger)
+        nil
+      end
+    end
+  end
+end

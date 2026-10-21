@@ -1,0 +1,242 @@
+# Port of railties-8.1.3/lib/rails/application.rb and engine.rb (partial: one application, no engines or plugins, no reloader/executor, no message_verifiers/deprecators; the app's generated parts (routes, seeds, migrations) are hooks the boot generator overrides)
+#
+# Ruby's app is `class Blog::Application < Rails::Application`, a singleton whose class body sets config, whose
+# initializers are blocks collected from every Railtie, and whose `call(env)` is Engine#call. Here:
+#
+#   Ruby                                             Sake
+#   class Application < Rails::Application           the same (`<` pastes Rails::Application into Blog::Application)
+#     config.load_defaults 8.1                       Rails.application.configure do |config| ... end, a top-level
+#   end                                              statement of config/application.sake (Ruby runs the class body)
+#   Rails.application.configure do ... end           Rails.application.Blog::Application.configure(:development) do |config|
+#     (config/environments/development.rb)             (only the current environment's runs: Ruby loads one file)
+#   initializer "x" do ... end (stored blocks)       Rails::Initializable::Initializer values; run_initializer is a `case`
+#   Rails.application.routes.draw do ... end        config/routes.sake reopens the Mapper (`def application_routes(map)`);
+#                                                    the generated draw_routes draws them
+#   Rails.application.call(env)                      Rack::App.call(app, env): env_config into the request, the stack
+#
+# The hooks the app's generated source defines (`def Application.draw_routes(app, set)` inside `module Blog`):
+# draw_routes, load_seed, migrations, and the app's name; a pasted default here makes railties check without an app.
+
+require "rack"
+require "rails/activesupport/active_support/key_generator"
+require "rails/activesupport/active_support/parameter_filter"
+require "rails/actionpack/action_dispatch/middleware/stack"
+require "rails/actionpack/action_dispatch/routing"
+require "securerandom"
+require "fileutils"
+require "../rails"
+require "initializable"
+require "paths"
+require "railtie"
+require "application/credentials"
+require "commands"
+
+module Rails
+  class Application
+    attr_reader name, config, routes_, initialized, initializers_
+    attr_accessor app_, env_config_, key_generators, credentials_, middleware_stack_
+    include Rack::App
+    include ActionDispatch::App
+    include Rails::Commands
+
+    # Ruby: Rails::Application.instance (the app class's one instance); root is find_root(called_from)
+    def make(name, root)
+      Rails.set_root(root)
+      app = new(name: name, config: Configuration.make(root), routes_: nil, initialized: false, initializers_: Initializable::Initializer[])
+      app
+    end
+
+    def initialize(app)
+      @key_generators = Hash.new
+      @credentials_ = nil
+    end
+
+    # --- hooks of the app's generated source ---
+    def draw_routes(app, set) = nil
+    def load_seed(app) = nil
+    def migrations(app) = Any[]
+    def load_schema(app) = raise(ArgumentError, "#{Rails.root}/db/schema.rb doesn't exist yet. Run `bin/rails db:migrate` to create it, then try again.")
+    def railtie_name(app) = ActiveSupport::Inflector.underscore(String.sub(@name, /::Application\z/, ""))
+
+    # Ruby: Rails.application.configure(&block) is class_eval on the instance; `env` names the environment file
+    # that block came from (config/environments/development.rb), which Ruby loads only in that environment.
+    def configure(app, env = nil)
+      return nil if env != nil && Kernel.to_s(env) != Rails.env
+      yield(@config)
+      nil
+    end
+
+    def initialized?(app) = @initialized == true
+
+    # Ruby: run_initializers(group, self) over Bootstrap + railties + Finisher, sorted by before:/after:
+    def initialize!(app, group = :default)
+      raise "Application has been already initialized." if @initialized
+      Initializable.run_initializers(initializers(app), group) { |i| run_initializer(app, i) }
+      @initialized = true
+      app
+    end
+
+    def initializers(app)
+      return @initializers_ unless Array.empty?(@initializers_)
+      Array.concat(@initializers_, Bootstrap.initializers)
+      Array.concat(@initializers_, Railtie.framework_initializers)
+      Array.concat(@initializers_, Railtie.engine_initializers)
+      Array.concat(@initializers_, Finisher.initializers)
+      @initializers_
+    end
+
+    # Ruby: initializer.run(app), the stored block run with instance_exec on its railtie
+    def run_initializer(app, i)
+      case Initializable::Initializer.owner(i)
+      in :bootstrap then Bootstrap.run(@config, Initializable::Initializer.name(i))
+      in :finisher
+        # the Finisher's initializers that need the app are here (the modules take the config: the app's class is the app's)
+        case Initializable::Initializer.name(i)
+        in :setup_default_session_store
+          Configuration.session_store(@config, :cookie_store, key: "_#{railtie_name(app)}_session") unless Configuration.session_store?(@config)
+        in :build_middleware_stack then app(app)
+        in :set_routes_reloader_hook then reload_routes!(app)
+        else Finisher.run(@config, Initializable::Initializer.name(i))
+        end
+      else Railtie.run(@config, Initializable::Initializer.owner(i), Initializable::Initializer.name(i))
+      end
+      nil
+    end
+
+    # --- Engine ---
+
+    def routes(app)
+      r = @routes_
+      return r if r
+      set = ActionDispatch::Routing::RouteSet.new_with_config(api_only: Configuration.api_only(@config), relative_url_root: Configuration.relative_url_root(@config))
+      @routes_ = set
+      set
+    end
+
+    # Ruby: the routes reloader loads config/routes.rb (Finisher's set_routes_reloader_hook)
+    def reload_routes!(app)
+      draw_routes(app, routes(app))
+      nil
+    end
+
+    # Ruby: Engine#app, the default stack with config.middleware merged into it, built on the routes
+    def app(app)
+      a = @app_
+      return a if a
+      stack = middleware_stack(app)
+      built = ActionDispatch::MiddlewareStack.build(stack, routes(app))
+      @app_ = built
+      built
+    end
+
+    # Ruby: config.middleware after the app is built (the default stack with config.middleware's operations)
+    def middleware_stack(app)
+      m = @middleware_stack_
+      return m if m
+      stack = default_middleware_stack(app)
+      Rails::Configuration::MiddlewareStackProxy.merge_into(Configuration.middleware(@config), stack)
+      @middleware_stack_ = stack
+      stack
+    end
+
+    def default_middleware_stack(app) = DefaultMiddlewareStack.build_stack(DefaultMiddlewareStack.new(@config))
+
+    # Ruby: Engine#call(env): build_request (env merged with env_config), then the stack
+    def call(app, env)
+      req = build_request(app, env)
+      ActionDispatch::App.call(app(app), req)
+    end
+    # ActionDispatch's protocol: the request is made by the RackApp in front (tests call the app with a Request)
+    def call_request(app, req)
+      merge_env_config(app, req)
+      ActionDispatch::App.call(app(app), req)
+    end
+
+    def build_request(app, env)
+      req = ActionDispatch::Request.new(env)
+      merge_env_config(app, req)
+      env["ORIGINAL_FULLPATH"] = ActionDispatch::Request.fullpath(req)
+      env["ORIGINAL_SCRIPT_NAME"] = ActionDispatch::Request.script_name(req)
+      req
+    end
+
+    def merge_env_config(app, req)
+      c = ActionDispatch::Request.env_config(req)
+      Hash.each(env_config(app)) { |k, v| c[k] = v }
+      nil
+    end
+
+    # Ruby: Application#env_config, the env keys of the Rails config each request reads
+    def env_config(app)
+      e = @env_config_
+      return e if e
+      ad = Configuration.action_dispatch(@config)
+      h = Hash.new
+      h["action_dispatch.parameter_filter"] = filter_parameters(app)
+      h["action_dispatch.redirect_filter"] = Configuration.filter_redirect(@config)
+      h["action_dispatch.secret_key_base"] = secret_key_base(app)
+      h["action_dispatch.show_exceptions"] = ad[:show_exceptions]
+      h["action_dispatch.show_detailed_exceptions"] = Configuration.consider_all_requests_local(@config)
+      h["action_dispatch.log_rescued_responses"] = ad[:log_rescued_responses]
+      h["action_dispatch.debug_exception_log_level"] = ad[:debug_exception_log_level]
+      h["action_dispatch.key_generator"] = key_generator(app)
+      h["action_dispatch.http_auth_salt"] = ad[:http_auth_salt]
+      h["action_dispatch.signed_cookie_salt"] = ad[:signed_cookie_salt]
+      h["action_dispatch.encrypted_cookie_salt"] = ad[:encrypted_cookie_salt]
+      h["action_dispatch.encrypted_signed_cookie_salt"] = ad[:encrypted_signed_cookie_salt]
+      h["action_dispatch.authenticated_encrypted_cookie_salt"] = ad[:authenticated_encrypted_cookie_salt]
+      h["action_dispatch.use_authenticated_cookie_encryption"] = ad[:use_authenticated_cookie_encryption]
+      h["action_dispatch.encrypted_cookie_cipher"] = ad[:encrypted_cookie_cipher]
+      h["action_dispatch.signed_cookie_digest"] = ad[:signed_cookie_digest]
+      h["action_dispatch.cookies_serializer"] = ad[:cookies_serializer]
+      h["action_dispatch.cookies_digest"] = ad[:cookies_digest]
+      h["action_dispatch.cookies_same_site_protection"] = ad[:cookies_same_site_protection]
+      h["action_dispatch.use_cookies_with_metadata"] = ad[:use_cookies_with_metadata]
+      h["action_dispatch.content_security_policy"] = Configuration.content_security_policy(@config)
+      h["action_dispatch.content_security_policy_report_only"] = Configuration.content_security_policy_report_only(@config)
+      h["action_dispatch.permissions_policy"] = Configuration.permissions_policy(@config)
+      @env_config_ = h
+      h
+    end
+
+    def filter_parameters(app)
+      # Ruby: precompile_filter_parameters joins them into regexps (ParameterFilter.precompile_filters, not ported:
+      # the same filtering, uncompiled)
+      Configuration.filter_parameters(@config)
+    end
+
+    # --- secrets ---
+
+    # Ruby: credentials (config.credentials.content_path / key_path, per environment first) and encrypted(path)
+    def credentials(app)
+      c = @credentials_
+      return c if c
+      content_path, key_path = Rails::Credentials.credentials_defaults(Configuration.root(@config), Rails.env)
+      c = Rails::Credentials.encrypted(Configuration.root(@config), content_path, key_path: key_path, require_master_key: Configuration.require_master_key(@config) == true)
+      @credentials_ = c
+      c
+    end
+    def encrypted(app, path, key_path: "config/master.key", env_key: "RAILS_MASTER_KEY")
+      Rails::Credentials.encrypted(Configuration.root(@config), path, key_path: key_path, env_key: env_key, require_master_key: Configuration.require_master_key(@config) == true)
+    end
+
+    # Ruby: config.secret_key_base: SECRET_KEY_BASE_DUMMY, ENV, credentials, or (development/test) tmp/local_secret.txt
+    def secret_key_base(app)
+      s = Configuration.secret_key_base(@config)
+      return s if s
+      v = Rails::Credentials.secret_key_base(Configuration.root(@config), Rails.env, credentials(app))
+      Configuration.set_secret_key_base(@config, v)
+      v
+    end
+
+    # Ruby: key_generator(secret_key_base): a CachingKeyGenerator over 1000 PBKDF2 iterations, one per secret
+    def key_generator(app, secret = nil)
+      s = secret || secret_key_base(app)
+      g = @key_generators[s]
+      return g if g
+      g = ActiveSupport::CachingKeyGenerator.new(ActiveSupport::KeyGenerator.new(s, iterations: 1000))
+      @key_generators[s] = g
+      g
+    end
+  end
+end

@@ -1,0 +1,171 @@
+# Port of activesupport-8.1.3/lib/active_support/encrypted_file.rb (partial: Marshal only for a String; paths are Strings, not Pathnames)
+#
+#   Ruby                                                         Sake
+#   f = EncryptedFile.new(content_path: "config/x.yml.enc",      f = EncryptedFile.new(content_path: "config/x.yml.enc",
+#         key_path: "config/x.key", env_key: "X_KEY",                  key_path: "config/x.key", env_key: "X_KEY",
+#         raise_if_missing_key: true)                                  raise_if_missing_key: true)
+#   f.read / f.write(s) / f.change { |path| ... }                EncryptedFile.read(f) / write(f, s) / change(f) { |path| ... }
+#
+# Ruby's encryptor is MessageEncryptor.new(key, cipher: "aes-128-gcm", serializer: Marshal): the plaintext is
+# Marshal.dump(contents). The port's MessageEncryptor serializes with JSON only, so this file dumps and loads the
+# one value it ever holds, a String, in Marshal's format (`\x04\bI"<len><bytes>\x06:\x06ET`), and calls the
+# encryptor's encrypt/decrypt on the bytes (what encrypt_and_sign does without metadata).
+
+require "message_encryptor"
+require "core_ext/object/blank"
+require "securerandom"
+
+module ActiveSupport
+  class EncryptedFile
+    attr_reader content_path, key_path, env_key, raise_if_missing_key
+    private attr_accessor key_file_contents, encryptor_or_nil
+
+    class MissingContentError < StandardError
+    end
+
+    class MissingKeyError < StandardError
+    end
+
+    class InvalidKeyLengthError < StandardError
+    end
+
+    def CIPHER = "aes-128-gcm"
+
+    def generate_key = SecureRandom.hex(MessageEncryptor.key_len(EncryptedFile.CIPHER))
+
+    def expected_key_length = once { String.length(EncryptedFile.generate_key) }
+
+    def missing_content_error(content_path) = MissingContentError.new("Missing encrypted content file in #{content_path}.")
+
+    def missing_key_error(key_path, env_key)
+      MissingKeyError.new("Missing encryption key to decrypt file with. " +
+                          "Ask your team for your master key and write it to #{key_path} or put it in the ENV['#{env_key}'].")
+    end
+
+    def initialize(f)
+      @content_path = File.realpath(@content_path) if File.symlink?(@content_path)
+    end
+
+    def key(f) = read_env_key(f) || read_key_file(f) || handle_missing_key(f)
+
+    def key?(f) = read_env_key(f) || read_key_file(f)
+
+    def read(f) = encrypted_file_read(f)
+
+    # (the body of EncryptedFile#read, which EncryptedConfiguration#read calls as its super)
+    def encrypted_file_read(f)
+      if key(f) != nil && File.exist?(@content_path)
+        decrypt(f, String.strip(File.read(@content_path)))
+      else
+        raise EncryptedFile.missing_content_error(@content_path)
+      end
+    end
+
+    def write(f, contents)
+      File.write("#{@content_path}.tmp", encrypt(f, contents))
+      File.rename("#{@content_path}.tmp", @content_path)
+    end
+
+    def change(f)
+      writing(f, read(f)) { |tmp_path| yield(tmp_path) }
+    end
+
+    # private
+
+    # Ruby: Tempfile.create(["", "-credentials.yml"]); here a file of its own in Dir.tmpdir, deleted after
+    def writing(f, contents)
+      tmp_path = File.join(Dir.tmpdir, "#{Process.pid}-#{SecureRandom.hex(4)}-#{String.chomp(File.basename(@content_path), ".enc")}")
+      File.write(tmp_path, contents)
+      begin
+        yield(tmp_path)
+        updated_contents = File.read(tmp_path)
+        write(f, updated_contents) if updated_contents != contents
+      ensure
+        File.delete(tmp_path) if File.exist?(tmp_path)
+      end
+      nil
+    end
+
+    def encrypt(f, contents)
+      check_key_length(f)
+      e = encryptor(f)
+      MessageEncryptor.sign(e, MessageEncryptor.encrypt(e, EncryptedFile.marshal_dump_string(contents)))
+    end
+
+    # Ruby's decrypt_and_verify: a broken or foreign message is InvalidMessage
+    def decrypt(f, contents)
+      e = encryptor(f)
+      EncryptedFile.marshal_load_string(MessageEncryptor.decrypt(e, MessageEncryptor.verify(e, contents)))
+    rescue Messages::InvalidMessageFormat, Messages::InvalidMessageSerialization => error
+      raise MessageEncryptor::InvalidMessage, Exception.message(error)
+    end
+
+    def encryptor(f)
+      e = @encryptor_or_nil
+      return e if e
+      k = key(f) || ""
+      made = MessageEncryptor.new(secret: Array.pack(Any[k], "H*"), cipher: EncryptedFile.CIPHER)
+      @encryptor_or_nil = made
+      made
+    end
+
+    def read_env_key(f) = String.presence(ENV.get(@env_key) || "")
+
+    def read_key_file(f)
+      return @key_file_contents if @key_file_contents
+      @key_file_contents = String.strip(File.read(@key_path)) if File.exist?(@key_path)
+      @key_file_contents
+    end
+
+    def handle_missing_key(f)
+      raise EncryptedFile.missing_key_error(@key_path, @env_key) if @raise_if_missing_key
+      nil
+    end
+
+    def check_key_length(f)
+      k = key(f)
+      raise InvalidKeyLengthError, "Encryption key must be exactly #{EncryptedFile.expected_key_length} characters." if k == nil || String.length(k) != EncryptedFile.expected_key_length
+    end
+
+    # --- Marshal of a String (Ruby's serializer: Marshal) ---
+
+    # Ruby's w_long for a length (0, 1..122 as n + 5, else the byte count and the little-endian bytes)
+    def marshal_long(n)
+      return Integer.chr(0) if n == 0
+      return Integer.chr(n + 5) if n < 123
+      bytes = String.b("")
+      while n > 0
+        bytes += Integer.chr(n & 255)
+        n = n >> 8
+      end
+      Integer.chr(String.bytesize(bytes)) + bytes
+    end
+
+    def marshal_dump_string(s)
+      utf8 = String.encoding(s) != "ASCII-8BIT"
+      body = String.b("\"") + marshal_long(String.bytesize(s)) + String.b(s)
+      utf8 ? String.b("\x04\bI") + body + String.b("\x06:\x06ET") : String.b("\x04\b") + body
+    end
+
+    # [value, the index after it]
+    def marshal_read_long(s, i)
+      c = String.getbyte(s, i) || raise(Messages::InvalidMessageSerialization, "marshal data too short")
+      return [0, i + 1] if c == 0
+      return [c - 5, i + 1] if c > 5 && c < 128
+      raise Messages::InvalidMessageSerialization, "a negative length in marshal data" if c >= 128
+      n = 0
+      Integer.times(c) { |k| n |= (String.getbyte(s, i + 1 + k) || 0) << (8 * k) }
+      [n, i + 1 + c]
+    end
+
+    def marshal_load_string(s)
+      raise Messages::InvalidMessageSerialization, "incompatible marshal file format" unless String.byteslice(s, 0, 2) == String.b("\x04\b")
+      ivars = String.getbyte(s, 2) == 73   # 'I': a String with its encoding
+      i = ivars ? 3 : 2
+      raise Messages::InvalidMessageSerialization, "only a marshaled String is supported" unless String.getbyte(s, i) == 34
+      len, start = marshal_read_long(s, i + 1)
+      body = String.byteslice(s, start, len) || ""
+      String.force_encoding(dup(body), ivars ? "UTF-8" : "ASCII-8BIT")
+    end
+  end
+end

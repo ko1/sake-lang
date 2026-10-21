@@ -1,0 +1,110 @@
+# Port of railties-8.1.3/lib/rails/railtie.rb and engine.rb's initializers (partial: the framework railties an app loads (rails/all minus jobs, mail, cable, storage, text) are a fixed list; no rake tasks, generators, console/runner blocks, subclass tracking)
+#
+# Ruby finds the railties by subclassing (Rails::Railtie.subclasses) and each one's `initializer` blocks; here the
+# list is the frameworks this port has, in the order rails/all requires them, and each framework's initializers
+# are functions of its railtie module (active_record/railtie.sake, ...). Engine's initializers (load paths,
+# locales, view paths, environment config, config/initializers) have little to do: the app's files are read by
+# the boot generator, the environment and initializer files ran as top-level statements before initialize!.
+
+require "rails/activesupport/active_support/railtie"
+require "rails/actionpack/action_dispatch/railtie"
+require "rails/activemodel/active_model/railtie"
+require "rails/activerecord/active_record/railtie"
+require "rails/actionpack/action_controller/railtie"
+require "rails/actionview/action_view/railtie"
+
+module Rails
+  module Railtie
+    module_function
+
+    # Ruby: ordered_railties' initializers (railties_initializers), the frameworks before the app's engine
+    def framework_initializers
+      list = Rails::Initializable::Initializer[]
+      Array.each(ActiveSupport::Railtie.initializers) { |i| Array.push(list, i) }
+      Array.each(I18n::Railtie.initializers) { |i| Array.push(list, i) }
+      Array.each(ActionDispatch::Railtie.initializers) { |i| Array.push(list, i) }
+      Array.each(ActiveModel::Railtie.initializers) { |i| Array.push(list, i) }
+      Array.each(ActiveRecord::Railtie.initializers) { |i| Array.push(list, i) }
+      Array.each(ActionController::Railtie.initializers) { |i| Array.push(list, i) }
+      Array.each(ActionView::Railtie.initializers) { |i| Array.push(list, i) }
+      list
+    end
+
+    # Ruby: Rails::Engine's initializers, bound to the application
+    def engine_initializers
+      list = Rails::Initializable::Initializer[]
+      Rails::Initializable.add(list, :set_load_path, :engine, before: :bootstrap_hook)
+      Rails::Initializable.add(list, :set_autoload_paths, :engine, before: :bootstrap_hook)
+      Rails::Initializable.add(list, :add_routing_paths, :engine)
+      Rails::Initializable.add(list, :add_locales, :engine)
+      Rails::Initializable.add(list, :add_view_paths, :engine)
+      Rails::Initializable.add(list, :load_environment_config, :engine, before: :load_environment_hook, group: :all)
+      Rails::Initializable.add(list, :load_config_initializers, :engine)
+      list
+    end
+
+    def run(config, owner, name)
+      case owner
+      in :active_support then ActiveSupport::Railtie.run(config, name)
+      in :i18n then I18n::Railtie.run(config, name)
+      in :action_dispatch then ActionDispatch::Railtie.run(config, name)
+      in :active_model then ActiveModel::Railtie.run(config, name)
+      in :active_record then ActiveRecord::Railtie.run(config, name)
+      in :action_controller then ActionController::Railtie.run(config, name)
+      in :action_view then ActionView::Railtie.run(config, name)
+      in :engine then run_engine(config, name)
+      else raise ArgumentError, "no railtie #{owner}"
+      end
+      nil
+    end
+
+    def run_engine(config, name)
+      case name
+      # Ruby: $LOAD_PATH and the autoloaders; the boot generator reads app/ (Sake has no autoload)
+      in :set_load_path | :set_autoload_paths then nil
+      # Ruby: paths["config/routes.rb"] into the routes reloader; the generated draw_routes is that file
+      in :add_routing_paths then nil
+      # Ruby: config.i18n.railties_load_path << paths["config/locales"]
+      in :add_locales
+        p = Rails::Paths::Root.[](Rails::Application::Configuration.paths(config), "config/locales")
+        lp = Rails::Application::Configuration.i18n(config)[:railties_load_path]
+        Array.each(Rails::Paths::Path.existent(p)) { |f| Array.push(lp, f) } if p && (lp in Array)
+      # Ruby: ActionController::Base.prepend_view_path(paths["app/views"]); the view class was compiled from them
+      in :add_view_paths then nil
+      # Ruby: load config/environments/#{Rails.env}.rb; it ran as a top-level statement (configure(:env))
+      in :load_environment_config then nil
+      # Ruby: load each config/initializers/*.rb; they ran as top-level statements before initialize!
+      in :load_config_initializers then nil
+      else raise ArgumentError, "no engine initializer #{name}"
+      end
+      nil
+    end
+  end
+end
+
+module I18n
+  # Port of activesupport-8.1.3/lib/active_support/i18n_railtie.rb (partial: no fallbacks, no reloading)
+  module Railtie
+    module_function
+
+    def initializers
+      list = Rails::Initializable::Initializer[]
+      Rails::Initializable.add(list, :"i18n.railtie", :i18n)
+      list
+    end
+
+    # Ruby: I18n::Railtie.initialize_i18n: load_path (the railties' locales, then config.i18n.load_path), default_locale
+    def run(config, name)
+      i18n = Rails::Application::Configuration.i18n(config)
+      paths = Any[]
+      rl = i18n[:railties_load_path]
+      Array.each(rl) { |p| Array.push(paths, p) } if rl in Array
+      lp = i18n[:load_path]
+      Array.each(lp) { |p| Array.push(paths, p) } if lp in Array
+      Array.each(paths) { |p| I18n.load_yaml(Kernel.to_s(p)) if String.end_with?(Kernel.to_s(p), ".yml") }
+      l = i18n[:default_locale]
+      I18n.set_default_locale(l) if l in Symbol
+      nil
+    end
+  end
+end

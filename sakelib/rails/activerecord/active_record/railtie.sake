@@ -1,0 +1,53 @@
+# Port of activerecord-8.1.3/lib/active_record/railtie.rb (partial: the database connection from config/database.yml; no migration_error page (CheckPending), query logs, schema cache, encryption, console sandbox, rake tasks)
+#
+# Ruby: `initializer "active_record.initialize_database" do ActiveSupport.on_load(:active_record) { establish_connection } end`,
+# where establish_connection reads config/database.yml for Rails.env (DatabaseConfigurations).
+
+require "yaml"
+
+module ActiveRecord
+  module Railtie
+    module_function
+
+    def initializers
+      list = Rails::Initializable::Initializer[]
+      Rails::Initializable.add(list, :"active_record.migration_error", :active_record)
+      Rails::Initializable.add(list, :"active_record.initialize_database", :active_record)
+      list
+    end
+
+    def run(config, name)
+      case name
+      # Ruby: config.app_middleware.insert_after ::ActionDispatch::Callbacks, ActiveRecord::Migration::CheckPending (:page_load); not ported
+      in :"active_record.migration_error" then nil
+      in :"active_record.initialize_database" then establish_connection(config)
+      else raise ArgumentError, "no initializer #{name}"
+      end
+      nil
+    end
+
+    # Ruby: Rails.application.config.database_configuration[Rails.env], with relative sqlite paths under Rails.root
+    def database_configuration(config)
+      root = Kernel.to_s(Rails::Application::Configuration.root(config))
+      path = File.join(root, "config/database.yml")
+      raise ArgumentError, "Could not load database configuration. No such file - [\"config/database.yml\"]" unless File.exist?(path)
+      yaml = YAML.load(File.read(path))
+      all = (yaml in Hash) ? yaml : Hash.new
+      env = all[Rails.env]
+      raise ArgumentError, "The `#{Rails.env}` database is not configured for the `#{Rails.env}` environment." unless env in Hash
+      env
+    end
+
+    def establish_connection(config)
+      db = database_configuration(config)
+      adapter = Kernel.to_s(db["adapter"])
+      database = Kernel.to_s(db["database"])
+      if database != ":memory:" && !String.start_with?(database, "/")
+        database = File.join(Kernel.to_s(Rails::Application::Configuration.root(config)), database)
+        FileUtils.mkdir_p(File.dirname(database))
+      end
+      ActiveRecord::Base.establish_connection(adapter: adapter, database: database)
+      nil
+    end
+  end
+end

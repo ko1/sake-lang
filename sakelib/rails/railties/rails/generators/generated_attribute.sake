@@ -1,0 +1,123 @@
+# Port of railties-8.1.3/lib/rails/generators/generated_attribute.rb (partial: no dangerous_name? check (it asks a loaded ActiveRecord::Base), no rich_text/attachment form fields beyond their types, no default values (test fixtures))
+#
+# `title:string`, `body:text`, `article:references`, `email:string!:uniq`, `price:decimal{10,2}`, `views:integer:index`.
+# Ruby's attr_options Hash keeps insertion order; here an Array of [key, value-as-Ruby-text] pairs, which both the
+# Ruby class body and the Sake migration print.
+
+require "rails/activesupport/active_support/inflector"
+require "base"
+
+module Rails
+  module Generators
+    class GeneratedAttribute
+      attr_reader name, type, has_index, has_uniq_index, attr_options
+      attr_accessor required
+
+      def INDEX_OPTIONS = String["index", "uniq"]
+      def UNIQ_INDEX_OPTIONS = String["uniq"]
+      def DEFAULT_TYPES = String["attachment", "attachments", "belongs_to", "boolean", "date", "datetime", "decimal", "digest",
+                                 "float", "integer", "references", "rich_text", "string", "text", "time", "timestamp", "token",
+                                 "bigint", "binary", "primary_key", "json"]
+
+      def parse(column_definition)
+        parts = String.split(column_definition, ":")
+        name = parts[0] || ""
+        type = parts[1]
+        index_type = parts[2]
+        if type && valid_index_type?(type)
+          index_type = type
+          type = nil
+        end
+        t, opts = parse_type_and_options(type)
+        if t && !Array.include?(GeneratedAttribute.DEFAULT_TYPES, t)
+          raise Error, "Could not generate field '#{name}' with unknown type '#{t}'."
+        end
+        if index_type && !valid_index_type?(index_type)
+          raise Error, "Could not generate field '#{name}' with unknown index '#{index_type}'."
+        end
+        if t && reference_type?(t) && Array.include?(GeneratedAttribute.UNIQ_INDEX_OPTIONS, index_type || "")
+          Array.push(opts, ["index", "{ unique: true }"])
+        end
+        GeneratedAttribute.new(name, t || "string", Array.include?(GeneratedAttribute.INDEX_OPTIONS, index_type || ""),
+                               Array.include?(GeneratedAttribute.UNIQ_INDEX_OPTIONS, index_type || ""), opts, false)
+      end
+
+      def valid_index_type?(index_type) = Array.include?(GeneratedAttribute.INDEX_OPTIONS, index_type)
+      def reference_type?(type) = type == "references" || type == "belongs_to"
+
+      def parse_type_and_options(type)
+        opts = Any[]
+        return [nil, opts] if type == nil
+        if (m = String.match(type, /(text|binary)\{([a-z]+)\}/))
+          t = Kernel.to_s(m[1])
+          Array.push(opts, ["size", ":#{m[2]}"])
+        elsif (m = String.match(type, /(string|text|binary|integer)\{(\d+)\}/))
+          t = Kernel.to_s(m[1])
+          Array.push(opts, ["limit", Kernel.to_s(m[2])])
+        elsif (m = String.match(type, /decimal\{(\d+)[,.-](\d+)\}/))
+          t = "decimal"
+          Array.push(opts, ["precision", Kernel.to_s(m[1])])
+          Array.push(opts, ["scale", Kernel.to_s(m[2])])
+        elsif (m = String.match(type, /(references|belongs_to)\{(.+)\}/))
+          t = Kernel.to_s(m[1])
+          Array.each(String.split(Kernel.to_s(m[2]), /[,.-]/)) { |o| Array.push(opts, [o, "true"]) }
+        else
+          t = String.delete(type, "!")
+        end
+        Array.push(opts, ["null", "false"]) if String.end_with?(type, "!")
+        [t, opts]
+      end
+
+      def field_type(a)
+        case @type
+        in "integer" then "number_field"
+        in "float" | "decimal" then "text_field"
+        in "time" then "time_field"
+        in "datetime" | "timestamp" then "datetime_field"
+        in "date" then "date_field"
+        in "text" then "textarea"
+        in "rich_text" then "rich_textarea"
+        in "boolean" then "checkbox"
+        in "attachment" | "attachments" then "file_field"
+        else "text_field"
+        end
+      end
+
+      def plural_name(a) = ActiveSupport::Inflector.pluralize(String.delete_suffix(@name, "_id"))
+      def singular_name(a) = ActiveSupport::Inflector.singularize(String.delete_suffix(@name, "_id"))
+      def human_name(a) = ActiveSupport::Inflector.humanize(@name)
+      def column_name(a) = reference?(a) ? "#{@name}_id" : @name
+      def index_name(a) = polymorphic?(a) ? "[:#{@name}_id, :#{@name}_type]" : ":#{column_name(a)}"
+      def foreign_key?(a) = String.end_with?(@name, "_id")
+      def reference?(a) = GeneratedAttribute.reference_type?(@type)
+      def polymorphic?(a) = Array.any?(@attr_options) { |o| o[0] == "polymorphic" }
+      def password_digest?(a) = @name == "password" && @type == "digest"
+      def token?(a) = @type == "token"
+      def rich_text?(a) = @type == "rich_text"
+      def attachment?(a) = @type == "attachment"
+      def attachments?(a) = @type == "attachments"
+      def virtual?(a) = rich_text?(a) || attachment?(a) || attachments?(a)
+      def has_index?(a) = @has_index
+      def has_uniq_index?(a) = @has_uniq_index
+
+      # Ruby: options_for_migration (attr_options, null: false for a required reference, foreign_key: true)
+      def options_for_migration(a)
+        opts = Array.dup(@attr_options)
+        Array.push(opts, ["null", "false"]) if reference?(a) && @required && !Array.any?(opts) { |o| o[0] == "null" }
+        Array.push(opts, ["foreign_key", "true"]) if reference?(a) && !polymorphic?(a)
+        opts
+      end
+
+      # Ruby's inject_options (", null: false, foreign_key: true") and the Sake migration's (", Hash.of(null: false, ...)")
+      def inject_options(a) = Array.join(Array.map(options_for_migration(a)) { |o| ", #{o[0]}: #{o[1]}" }, "")
+      def sake_options(a)
+        opts = options_for_migration(a)
+        return "" if Array.empty?(opts)
+        ", Hash.of(#{Array.join(Array.map(opts) { |o| "#{o[0]}: #{sake_value(o[1])}" }, ", ")})"
+      end
+      def sake_value(v) = String.start_with?(v, "{") ? "Hash.of(#{String.strip(String.slice(v, 1...-1) || "")})" : v
+      def inject_index_options(a) = @has_uniq_index ? ", unique: true" : ""
+      def sake_index_options(a) = @has_uniq_index ? ", Hash.of(unique: true)" : ""
+    end
+  end
+end

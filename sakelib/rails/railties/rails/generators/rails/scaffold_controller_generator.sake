@@ -1,0 +1,107 @@
+# Port of railties-8.1.3/lib/rails/generators/rails/scaffold_controller/scaffold_controller_generator.rb and templates/controller.rb.tt (partial: no --api controller, no namespaces; the ORM calls are ActiveRecord's (Rails' orm_class))
+#
+#   Ruby (controller.rb.tt)                          Sake (the class body .rb + the actions .sake)
+#   before_action :set_post, only: %i[ ... ]         in posts_controller.rb, as Ruby writes it
+#   @post = Post.new(post_params)                    post = Post.build_with(ActionController::Parameters.to_hash(post_params(c)))
+#   if @post.save                                    if Post.save(post)   (a local keeps the type; @post is Post|nil)
+#     redirect_to @post, notice: "..."                 redirect_to c, post, notice: "..."
+#   params.expect(post: [ :title, :body ])           ActionController::Parameters.expect(params(c), post: Any[:title, :body])
+
+require "../named_base"
+require "resource_route_generator"
+require "helper_generator"
+require "../erb/scaffold_generator"
+
+module Rails
+  module Generators
+    module ScaffoldControllerGenerator
+      module_function
+
+      def body_source(n)
+        s = Name.singular_table_name(n)
+        "class #{Name.controller_class_name(n)}Controller < ApplicationController\n  before_action :set_#{s}, only: %i[ show edit update destroy ]\nend\n"
+      end
+
+      def permitted_params(n) = Array.join(Array.map(Name.attributes_names(n)) { |a| ":#{a}" }, ", ")
+
+      def actions_source(n)
+        s = Name.singular_table_name(n)
+        p = Name.plural_table_name(n)
+        k = Name.class_name(n)
+        url = Name.route_url(n)
+        h = Name.human_name(n)
+        params = Array.empty?(Name.attributes_names(n)) ? "ActionController::Parameters.fetch(params(c), :#{s}, Hash.new)" : "ActionController::Parameters.expect(params(c), #{s}: Any[#{permitted_params(n)}])"
+        <<~SAKE
+          class #{Name.controller_class_name(n)}Controller < ApplicationController
+            attr_reader #{p}, #{s}
+
+            # GET #{url}
+            def index(c)
+              @#{p} = #{k}.all
+            end
+
+            # GET #{url}/1
+            def show(c) = nil
+
+            # GET #{url}/new
+            def new_(c)
+              @#{s} = #{k}.build
+            end
+
+            # GET #{url}/1/edit
+            def edit(c) = nil
+
+            # POST #{url}
+            def create(c)
+              #{s} = #{k}.build_with(ActionController::Parameters.to_hash(#{s}_params(c)))
+              @#{s} = #{s}
+
+              if #{k}.save(#{s})
+                redirect_to c, #{s}, notice: "#{h} was successfully created."
+              else
+                render c, :new, status: :unprocessable_content
+              end
+            end
+
+            # PATCH/PUT #{url}/1
+            def update(c)
+              #{s} = @#{s} || raise(ArgumentError, "@#{s} is not set")
+              if #{k}.update_with(#{s}, ActionController::Parameters.to_hash(#{s}_params(c)))
+                redirect_to c, #{s}, notice: "#{h} was successfully updated.", status: :see_other
+              else
+                render c, :edit, status: :unprocessable_content
+              end
+            end
+
+            # DELETE #{url}/1
+            def destroy(c)
+              #{s} = @#{s} || raise(ArgumentError, "@#{s} is not set")
+              #{k}.destroy!(#{s})
+              redirect_to c, #{Name.index_helper(n)}_path(c), notice: "#{h} was successfully destroyed.", status: :see_other
+            end
+
+            # private
+            # Use callbacks to share common setup or constraints between actions.
+            def set_#{s}(c)
+              @#{s} = #{k}.find(ActionController::Parameters.expect(params(c), :id))
+            end
+
+            # Only allow a list of trusted parameters through.
+            def #{s}_params(c) = #{params}
+          end
+        SAKE
+      end
+
+      # Ruby: create_controller_files, then the hooks template_engine (erb), resource_route, helper
+      def run(g, n)
+        f = Name.controller_file_name(n)
+        Base.create_file(g, "app/controllers/#{f}_controller.rb", body_source(n))
+        Base.create_file(g, "app/controllers/#{f}_controller.sake", actions_source(n))
+        Base.invoke(g, "erb") { Erb::Generators::ScaffoldGenerator.run(g, n) }
+        Base.invoke(g, "resource_route") { ResourceRouteGenerator.run(g, Name.name(n)) }
+        Base.invoke(g, "helper") { HelperGenerator.run(g, Name.controller_name(n)) }
+        nil
+      end
+    end
+  end
+end

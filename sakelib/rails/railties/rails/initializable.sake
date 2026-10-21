@@ -1,0 +1,69 @@
+# Port of railties-8.1.3/lib/rails/initializable.rb (partial: initializers are data; their blocks are the functions Rails::Application.run_initializer dispatches to)
+#
+#   Ruby                                               Sake
+#   initializer :initialize_logger, group: :all do     Initializer.new(:initialize_logger, :bootstrap, before: nil, after: :set_eager_load, group: :all)
+#     Rails.logger ||= ...                             Bootstrap.run(app, config, :initialize_logger) (a `case` over the names)
+#   end
+#   initializers.tsort_each { |i| i.run(app) }         Initializable.run_initializers(list, group) { |i| ... } (TSort's order)
+#
+# `after:` defaults to the previous initializer of the same railtie, as Ruby's `initializer` does.
+
+module Rails
+  module Initializable
+    class Initializer
+      attr_reader name, owner, before, after, group
+      def belongs_to?(i, group) = @group == group || @group == :all
+      def inspect(i) = "#<Rails::Initializable::Initializer #{@owner}:#{@name}>"
+    end
+
+    module_function
+
+    # Ruby's `initializer name, opts`: after the previous one of the list unless before: names one already there
+    def add(list, name, owner, before: nil, after: nil, group: :default)
+      last = Array.last(list)
+      a = after
+      if a == nil && last != nil && !Array.any?(list) { |x| Initializer.name(x) == before }
+        a = Initializer.name(last)
+      end
+      Array.push(list, Initializer.new(name, owner, before, a, group))
+      nil
+    end
+
+    # TSort#tsort_each over Collection: each initializer after those it must follow (its after:, and the ones
+    # whose before: names it), in the collection's order otherwise.
+    def tsort(list)
+      order = Hash.new
+      Array.each(list) do |i|
+        b = Initializer.before(i)
+        if b != nil
+          order[b] = Any[] if order[b] == nil
+          Array.push(order[b] || Any[], Initializer.name(i))
+        end
+        a = Initializer.after(i)
+        if a != nil
+          order[Initializer.name(i)] = Any[] if order[Initializer.name(i)] == nil
+          Array.push(order[Initializer.name(i)] || Any[], a)
+        end
+      end
+      out = Initializer[]
+      seen = Set.new
+      Array.each(list) { |i| visit(list, order, i, seen, out) }
+      out
+    end
+
+    def visit(list, order, i, seen, out)
+      return nil if Set.include?(seen, i)
+      Set.add(seen, i)
+      Array.each(order[Initializer.name(i)] || Any[]) do |name|
+        Array.each(Array.select(list) { |x| Initializer.name(x) == name }) { |dep| visit(list, order, dep, seen, out) }
+      end
+      Array.push(out, i)
+      nil
+    end
+
+    def run_initializers(list, group = :default)
+      Array.each(tsort(list)) { |i| yield(i) if Initializer.belongs_to?(i, group) }
+      nil
+    end
+  end
+end

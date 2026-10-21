@@ -1,0 +1,49 @@
+# Port of railties-8.1.3/lib/rails/generators/rails/controller/controller_generator.rb, templates/controller.rb.tt and erb/controller/controller_generator.rb with templates/view.html.erb.tt (partial: no namespaces, no --skip-routes/--helper options)
+#
+# A controller is two files in the Sake app: the class body (controller.rb, Ruby's class without its methods: the
+# before_action lines go there) and the actions (controller.sake; `def home(c) = nil`, the action `new` is `new_`).
+
+require "../named_base"
+require "helper_generator"
+
+module Rails
+  module Generators
+    module ControllerGenerator
+      module_function
+
+      def action_function(action) = action == "new" ? "new_" : action
+
+      def body_source(class_name) = "class #{class_name}Controller < ApplicationController\nend\n"
+
+      def actions_source(class_name, actions)
+        s = "class #{class_name}Controller < ApplicationController\n"
+        Array.each_with_index(actions) do |action, i|
+          s += "  def #{action_function(action)}(c) = nil\n"
+          s += "\n" unless i == Array.size(actions) - 1
+        end
+        s + "end\n"
+      end
+
+      def run(g, name, actions)
+        file = String.sub(ActiveSupport::Inflector.underscore(name), /_?controller\z/i, "")
+        class_name = ActiveSupport::Inflector.camelize(file)
+        Base.create_file(g, "app/controllers/#{file}_controller.rb", body_source(class_name))
+        Base.create_file(g, "app/controllers/#{file}_controller.sake", actions_source(class_name, actions))
+        unless Array.empty?(actions)
+          Base.route(g, Array.join(Array.map(actions) { |a| "get \"#{file}/#{a}\"" }, "\n"),
+                     Array.join(Array.map(actions) { |a| "get map, \"#{file}/#{a}\"" }, "\n"))
+        end
+        Base.invoke(g, "erb") do
+          base_path = "app/views/#{file}"
+          Base.empty_directory(g, base_path)
+          Array.each(actions) do |action|
+            path = "#{base_path}/#{action}.html.erb"
+            Base.create_file(g, path, "<h1>#{class_name}##{action}</h1>\n<p>Find me in #{path}</p>\n")
+          end
+        end
+        Base.invoke(g, "helper") { HelperGenerator.run(g, file) }
+        nil
+      end
+    end
+  end
+end
