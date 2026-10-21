@@ -1,0 +1,18 @@
+# A call in a branch that a nil-only value never takes still gives a type: in headers() last_modified is only nil,
+# so `if last_modified` narrows it to nothing, but Time.httpdate runs on the empty value, its `case x in Time ...
+# in String then Core.parse_httpdate(x)` runs the String branch anyway (parse_httpdate makes a Time from the regexp's
+# captures), and the Time lands in the Hash: "String.size: argument 1 must be String, but can be Time".
+# Ruby: the branch is not run; this prints 2. Not caused by 04cea37b (the same with fbfd2733).
+# Seen in test/sakelib/rails/actionpack/controller_conditional_get.sake once the checker got past the construction:
+# ActionController::ConditionalGet#fresh_when's `response.last_modified = last_modified if last_modified` with no
+# last_modified put a Time among the response headers, and ActionDispatch::SSL's flag_cookies_as_secure! read it as
+# a set-cookie value (ssl.sake:65, 67). No natural workaround: the test is left failing.
+require "time"
+def headers(last_modified = nil)
+  h = Hash.new
+  h["etag"] = "v1"
+  h["last-modified"] = Time.httpdate(last_modified) if last_modified
+  h
+end
+v = headers()["etag"]
+p(String.size(v)) if v
