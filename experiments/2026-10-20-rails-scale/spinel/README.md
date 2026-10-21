@@ -178,3 +178,11 @@ controllers 6）。models の行は合成されたコードを `class Article < 
   Sake は型の誤りを報告する検査器。Spinel の時間には C の生成（約 8 秒）が入り、C のコンパイル（15 秒）は別に書いた。
 - 「Spinel は Rails 規模で 10 時間」という伝聞（`../README.md` の冒頭）が何を指すかは分からない。roundhouse で Rails を
   除いた後のこの経路では、ブログの解析は 1 分強だった。Rails そのものを Spinel に通すことは試していない。
+
+## sp4 での計測（2026-10-21 03:10 UTC = JST 12:10）
+
+`../sp4/spinel_check.sh`: run3 の out-spinel（roundhouse 3196e43f の出力）を sp4 に写し、Spinel 922ad15a を sp4 で `make`
+（gcc 15.2.0）して `spinel -c`（解析と C 生成、C のコンパイルなし）を 3 回。bench-lease で占有、governor performance。開始時の
+負荷 2.16（直前の Spinel の make の名残。3 回の時間はそろっている）。**50.8 秒（50.88 / 50.82 / 50.80）、最大 RSS 318 MB**、
+`--timing` の analysis 45.5 秒（codegen_program の 50.4 秒は analysis を含む累計に見える）。C は 129,886 行でローカルと同じ。
+生の出力は `../sp4/spinel_check-922ad15a.out`。同じ sp4 で Sake のブログ全体の検査は 60.2 秒・約 1.0 GB（`../README.md` 4 節）。
