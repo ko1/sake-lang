@@ -91,10 +91,21 @@ Rails ガイドのブログ（記事・コメント・検証・レイアウト�
 `--skip-bundle` 後 `bundle install --local` が通った）、同じ walk を流した。**差は 404 の 2 ページだけ**（Rails の開発用エラーページは
 HTML、移植の DebugExceptions は text/plain）。`walk.diff` が差分。
 
-**全体の検査時間**: `bin/sake -c --strict blog/bin/rails.sake` は 18.7 秒・476 MB（ローカル、2 回、負荷 0.5〜0.8）。ただし
-**これはアプリ全体の検査ではない**。検査器が `ActionDispatch::Response.create`（全リクエストが通る）で黙って解析を打ち切り、
-アクション・ビュー・リクエストから届くモデルのコードは解析されない（アクションやテンプレートに `String.upcase(42)` を入れても OK、
-実行すると TypeError）。最初に測った 7 秒も同じ理由（自分の Configuration の initialize で打ち切られていた）で、撤回する。
-再現: `bugs/railties_initialize_call_ends_check.sake`（initialize 内で new に渡されたフィールドへの呼び出しがあると、その new
-以降が解析されない）、`bugs/railties_response_create_ends_check.sake`。第 3 段のコントローラ経由のテストの時間も同じ影響を受けて
-いる可能性がある。詳細と移植の内容は `sakelib/notes/rails_railties.md`、`blog/README.md`。
+**全体の検査時間**: `bin/sake -c --strict blog/bin/rails.sake` は **92 秒・1.0 GB**（ローカル、2 回 91.8/93.9 秒、最大 RSS
+1,026/1,012 MB、負荷 1.1〜1.4。branch rails-blog-check = main + checker-init-callee の検査器）。目安であり、本計測は sp4 で行う。
+今度はアプリ全体を検査している: ArticlesController#show と articles/show.html.erb にそれぞれ `String.upcase(42)` を入れると、
+両方がエラーとして報告される。時間のほぼ全部は型検査器（`phases.rb`: 120 秒中 typer 114 秒。generate 2.8、resolve 3.8、
+lower 1.7）。stackprof では Sake::Typer#struct_hooks 配下が 44%、struct_groups 10%、shape_key 9%、GC 14%。
+
+**撤回**: 以前の「18.7 秒・476 MB」（その前の 7 秒も）は全体の検査ではなかった。検査器が `ActionDispatch::Response.create`
+（全リクエストが通る）で、その前は自分の Configuration の initialize で黙って解析を打ち切り、アクション・ビュー・リクエストから届く
+モデルのコードは解析されていなかった（`String.upcase(42)` を入れても OK、実行すると TypeError）。再現:
+`bugs/railties_initialize_call_ends_check.sake`、`bugs/railties_response_create_ends_check.sake`。
+
+穴が塞がった検査器で出た 9 個のエラーはすべて直した（詳細は `blog/README.md`）。移植側: User の `password=`（Rails も empty? の
+無い値で NoMethodError）、ActionDispatch::SSL の set-cookie（Ruby の `Array(cookies)` と Regexp#match? のとおり TypeError）、
+ActionFilter#match?（全クラスのコールバック連鎖が一つの生成地点の容器なので、モデルの連鎖にも ActionFilter が入って見える:
+`bugs/blogcheck_callback_chain_shared.sake`。controller 以外なら Ruby の `controller.action_name` どおり NoMethodError）。
+ブログ側: articles/index の `@articles`（他のテンプレートと同じく `|| raise`）、`article_params`/`comment_params`（`expect` の結果は
+フィルタの値に依存するが Sake の関数の結果型は一つ: `bugs/blogcheck_expect_result_by_filter.sake`、`=> ActionController::Parameters`）。
+`ruby -Ilib test/test_sakelib.rb` は 209 runs, 0 failures（15 skips）、walk の出力（`blog/run.out`）は変わらず、`walk.diff` も同じ。

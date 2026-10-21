@@ -24,7 +24,36 @@ Sake-side differences in form (each forced; see sakelib/notes/rails_railties.md)
 reopened Mapper, `Rails.application.configure(:development)` naming its environment, database.yml without YAML anchors,
 the cookie chain `permanent.signed` for `signed.permanent`, migrations in Sake (db/migrate/*.sake), seeds as `def seed`.
 
-Check: `bin/sake -c --strict bin/rails.sake` 18.7 s, 476 MB (two runs 18.7/19.3 s, local, load 0.5-0.8). **Not a
-full check**: the checker stops silently at ActionDispatch::Response.create, so actions, views and the models' code
-reached from a request are not analyzed (an injected `String.upcase(42)` in an action or a template still says OK);
-repros in ../bugs/railties_initialize_call_ends_check.sake and ../bugs/railties_response_create_ends_check.sake.
+Check: `bin/sake -c --strict bin/rails.sake` **92 s, 1.0 GB** (two runs 91.8/93.9 s, max RSS 1,026/1,012 MB, local,
+load 1.1-1.4; on branch rails-blog-check = main + checker-init-callee, whose checker no longer stops after a
+construction). Orientation only: the measurement proper is to be made on sp4. The whole app is checked: an injected
+`String.upcase(42)` in ArticlesController#show and in articles/show.html.erb are each reported. Nearly all the time
+is the type checker (ruby ../phases.rb: typer 114 s of 120 s; generate 2.8, resolve 3.8, lower 1.7); in it, a
+stackprof sample puts 44% under Sake::Typer#struct_hooks, 10% struct_groups, 9% shape_key, 14% GC.
+`./run.sh` now takes ~5.5 min: each of its three `--strict` runs checks the app first (its wait for the server was
+raised from 60 s to 10 min, and it makes log/ and storage/, which git does not keep). run.out is unchanged.
+
+Withdrawn: "18.7 s, 476 MB" (and before it 7 s). The checker stopped silently at ActionDispatch::Response.create
+(and before that at the Configuration's initialize), so actions, views and the models' code reached from a request
+were not analyzed; an injected `String.upcase(42)` said OK. Repros: ../bugs/railties_initialize_call_ends_check.sake,
+../bugs/railties_response_create_ends_check.sake.
+
+What the full check found (9 errors, all fixed; `rails-blog-check`):
+- `@articles.each` in articles/index (`Relation.each(@articles)`, nil in the views of the controllers that never set
+  it; any controller's view may render any template to the checker, and Ruby's nil.each raises): now
+  `@articles || raise(ArgumentError, "@articles is not set")`, as the other templates already did for @article.
+- `article_params` / `comment_params` (Parameters.to_hash of any parameter value): Rails' `expect(article: [...])`
+  is a Parameters or raises, but a function's result is one type for every filter; the two say
+  `ps => ActionController::Parameters` (../bugs/blogcheck_expect_result_by_filter.sake).
+- User's `password=` (`String.empty?` of any permitted scalar, from authenticate_by's `new(passwords)`): Rails raises
+  NoMethodError for a value without empty? (JSON `"password": 5`); ActiveModel::SecurePassword.password_string does.
+- AbstractController::Callbacks::ActionFilter#match? on a model (one container site for every class's callback
+  chains: ../bugs/blogcheck_callback_chain_shared.sake): raises NoMethodError unless the target is a controller, as
+  Ruby's `controller.action_name` would.
+- ActionDispatch::SSL#flag_cookies_as_secure! (String.match? of whatever a header value may be): Ruby's
+  `Array(cookies)` and Regexp#match?, so a value other than a String, Symbol or nil is a TypeError.
+Warnings left (not new; also in test/sakelib/rails/actionpack/controller_view's check): unused-rescue at
+base64.sake:20 and param_builder.sake:34 (neither warns on its own: the order-dependent raise set of
+../bugs/actionpack_controller_unused_rescue_order, presumably), ipaddr.sake:247/257 (../bugs/actionpack_dispatch_ipaddr_unused_rescue.sake),
+cookies_encrypted.sake:88 (true of the port: its verify raises InvalidMessageFormat, not InvalidSignature; the
+rescue list is Rails' EncryptedKeyRotatingCookieJar#parse's).
