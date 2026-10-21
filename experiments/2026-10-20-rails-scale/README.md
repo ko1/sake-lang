@@ -109,3 +109,8 @@ ActionFilter#match?（全クラスのコールバック連鎖が一つの生成�
 ブログ側: articles/index の `@articles`（他のテンプレートと同じく `|| raise`）、`article_params`/`comment_params`（`expect` の結果は
 フィルタの値に依存するが Sake の関数の結果型は一つ: `bugs/blogcheck_expect_result_by_filter.sake`、`=> ActionController::Parameters`）。
 `ruby -Ilib test/test_sakelib.rb` は 209 runs, 0 failures（15 skips）、walk の出力（`blog/run.out`）は変わらず、`walk.diff` も同じ。
+
+**sp4 での計測**（2026-10-21 01:37 UTC = JST 10:37、`sp4/blog_check.sh`、d6fd7ed9 の `git archive`、Ruby 4.0.6 +PRISM
+（`~/ruby/install/bench-40`）、bench-lease で占有、governor performance、負荷 0.00）: **60.2 秒（62.4 / 60.0 / 60.2）、最大 RSS
+976〜1,038 MB**、3 回とも OK。同じ木で articles/show.html.erb に `String.upcase(42)` を足すと 18 行目のエラーが出る（検査が
+テンプレートまで届いている）。生の出力は `sp4/blog_check-d6fd7ed9.out`。
