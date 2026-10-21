@@ -62,11 +62,24 @@ module ActionDispatch
     def flag_cookies_as_secure!(mw, headers)
       cookies = headers["set-cookie"]
       return nil unless cookies
-      list = (cookies in Array) ? cookies : String[cookies]
-      headers["set-cookie"] = Array.map(list) do |cookie|
-        String.match?(cookie, /;\s*secure\s*(;|$)/i) ? cookie : "#{cookie}; secure"
-      end
+      list = case cookies
+             in Array then cookies
+             in Hash then Hash.to_a(cookies)
+             else Any[cookies]
+             end
+      headers["set-cookie"] = Array.map(list) { |cookie| secure_cookie(cookie) }
       nil
+    end
+
+    # Ruby's `/;\s*secure\s*(;|$)/i.match?(cookie)`: a value other than a String, a Symbol or nil is a TypeError
+    def secure_cookie(cookie)
+      s = case cookie
+          in String | nil then cookie
+          in Symbol then Symbol.to_s(cookie)
+          in true | false then raise TypeError, "no implicit conversion of #{cookie} into String"
+          else raise TypeError, "no implicit conversion of #{Kernel.class_name(cookie)} into String"
+          end
+      s && String.match?(s, /;\s*secure\s*(;|$)/i) ? cookie : "#{cookie}; secure"
     end
 
     def redirect_to_https(mw, request, r)
