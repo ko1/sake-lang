@@ -22,6 +22,8 @@ unicode_display_width. mini_mime, public_suffix and unicode_display_width read t
 Sinatra 4.2.1 (2026-10-12): sinatra and mustermann, served by rackup/webrick; a demo app and a Rails-shaped
 framework with a blog are in `experiments/2026-10-12-web/`.
 `openssl.sake` is Ruby's OpenSSL::HMAC only (2026-10-13), over digest.sake.
+Rails 8.1.3 (2026-10-20): activesupport, activemodel, activerecord with arel and SQLite, actionpack, actionview and
+railties in `rails/` ([rails/README.md](rails/README.md)); the guide's blog on it is `examples/apps/rails_blog/`.
 Libraries not ported, with the reason: `notes/not-ported.md`.
 
 `minitest.sake` is a test framework for programs written in Sake; Sake's own test suite written in Sake is

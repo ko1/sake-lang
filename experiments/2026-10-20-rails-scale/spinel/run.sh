@@ -1,7 +1,7 @@
 #!/bin/bash
 # The Rails guide's blog (blog_rb, Rails 8.1.3) through roundhouse --target spinel and Spinel:
 # transpile, Spinel analysis+codegen (-c), the full build (C compile included), the widen counts,
-# then serve the binary and drive it with ../walk.sh.
+# then serve the binary and drive it with examples/apps/rails_blog/walk.sh.
 # usage: run.sh WORK ROUNDHOUSE SPINEL_DIR [N]
 #   WORK        a new directory for the copy of blog_rb and every output (must not exist)
 #   ROUNDHOUSE  the roundhouse binary (cargo build --release --bin roundhouse)
@@ -92,7 +92,7 @@ port=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.cl
 pid=$!
 trap 'kill $pid 2>/dev/null; wait $pid 2>/dev/null' EXIT
 for i in $(seq 1 100); do curl -s -o /dev/null "http://127.0.0.1:$port/up" && break; sleep 0.1; done
-"$exp/walk.sh" "http://127.0.0.1:$port" > ../walk.out
+"$exp/../../examples/apps/rails_blog/walk.sh" "http://127.0.0.1:$port" > ../walk.out
 kill $pid; wait $pid 2>/dev/null || true
 trap - EXIT
 cd ..

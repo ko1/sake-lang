@@ -8,4 +8,4 @@ bin/rails server -b 127.0.0.1 -p "$port" > log/server.out 2>&1 &
 pid=$!
 trap 'kill $pid 2>/dev/null; wait $pid 2>/dev/null' EXIT
 for i in $(seq 1 100); do curl -s -o /dev/null "http://127.0.0.1:$port/up" && break; sleep 0.1; done
-../walk.sh "http://127.0.0.1:$port"
+../../../examples/apps/rails_blog/walk.sh "http://127.0.0.1:$port"

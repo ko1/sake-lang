@@ -3,7 +3,7 @@
 `rails new`, and `rails generate` for scaffold, model, migration, controller, resource, scaffold_controller, helper
 and resource_route, ported from railties-8.1.3/lib/rails/generators/ and activerecord's
 lib/rails/generators/active_record/. They write the app's files in the Sake layout of
-experiments/2026-10-20-rails-scale/blog/: config/*.sake, a model's class body as Rails writes it
+examples/apps/rails_blog/: config/*.sake, a model's class body as Rails writes it
 (app/models/article.rb, which the boot generator reads), Sake migrations, a controller as its class body
 (articles_controller.rb: `before_action` lines) plus its actions (articles_controller.sake), helpers as Sake
 modules, and the scaffold's views in Sake ERB. Logs are Thor's (`      create    app/models/article.rb`), in Rails'

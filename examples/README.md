@@ -3,7 +3,9 @@
 Example programs in Sake, one directory per category. Each `NAME.sake` has a header comment that
 says what it does and which features of the language it shows, and a `NAME.expected` with exactly
 what `bin/sake NAME.sake` prints. [first.sake](first.sake) is the smallest tour; the SQL engine in
-[apps/sql/](apps/sql/README.md) is the largest program.
+[apps/sql/](apps/sql/README.md) is the largest program. [apps/rails_blog/](apps/rails_blog/README.md) is a
+web application on the port of Rails 8.1.3 ([sakelib/rails/](../sakelib/rails/README.md)): the Rails guide's
+blog, run as a server and walked with curl (`run.sh`) rather than compared with an `.expected` file.
 
 Run one with
 

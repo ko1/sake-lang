@@ -10,15 +10,15 @@ middleware, version, credentials:show, db:migrate/rollback/migrate:status/versio
 setup/reset/drop), the generators (a fork: `rails_railties_generators.md`), and **the app's boot as one
 generate step** (`rails/generate/application.sake`). Then the guide's blog (articles with comments, validations,
 the scaffold's views in the application layout, flash, Rails 8's authentication generator with has_secure_password,
-sessions and Current) in `experiments/2026-10-20-rails-scale/blog/`, and its Ruby twin made by the real
-`rails new`/`rails generate` in `blog_rb/`.
+sessions and Current) in `examples/apps/rails_blog/`, and its Ruby twin made by the real
+`rails new`/`rails generate` in `experiments/2026-10-20-rails-scale/blog_rb/`.
 
 ## The result
 
-`experiments/2026-10-20-rails-scale/walk.sh` walks a running server with curl (26 requests: sign-in failure and
+`examples/apps/rails_blog/walk.sh` walks a running server with curl (26 requests: sign-in failure and
 success, the scaffold's CRUD with a failed validation, PATCH and DELETE through `_method`, nested comments, sign-out,
-an unauthenticated delete, 404s), replacing CSRF tokens and the port. `blog/run.sh` (WEBrick, `bin/sake --strict
-bin/rails.sake server`) and `blog_rb/run.sh` (Puma, `bin/rails server`) both start from `db:schema:load db:seed` on
+an unauthenticated delete, 404s), replacing CSRF tokens and the port. `examples/apps/rails_blog/run.sh` (WEBrick, `bin/sake --strict
+bin/rails.sake server`) and `experiments/2026-10-20-rails-scale/blog_rb/run.sh` (Puma, `bin/rails server`) both start from `db:schema:load db:seed` on
 127.0.0.1 and a free port and stop their server. **The two outputs are identical** (status, content-type,
 location, and the whole body of every 2xx/3xx/422 response, with the development mode's
 `<!-- BEGIN app/views/... -->` annotations) **except the two 404 pages**: Rails' development page is HTML
@@ -26,30 +26,20 @@ location, and the whole body of every 2xx/3xx/422 response, with the development
 ported, actionpack's left-out list). `bin/sake bin/rails.sake routes` prints what `bin/rails routes` prints;
 `about` and `middleware` print Rails' formats over the port's stack.
 
-## Check time of the whole blog — read this first
+## Check time of the whole blog
 
-`bin/sake -c --strict bin/rails.sake` (the whole app: every gem, WEBrick, the generated source; 3,100 generated
-lines, 576 lines of the app's own files) takes **18.7 s, 476 MB** (18.7/19.3 s; load 0.5-0.8, local machine), and
-**that is not a check of the whole app**. The checker silently stops analyzing at
-`ActionDispatch::Response.create`, which every request passes (ActionController's make_response!): everything after
-it (the actions, the views, the models' code a request reaches) is never analyzed, and the check says OK. I verified
-by putting `String.upcase(42)` into an action and into a template: OK, then a TypeError at run time. Calling the
-action directly from a test program reports it. Repros:
+`bin/sake -c --strict bin/rails.sake` checks the whole app (every gem, WEBrick, the 3,100 generated lines and the
+app's own files) in **60.2 s and about 1.0 GB on sp4** (62.4/60.0/60.2 s, d6fd7ed9;
+experiments/2026-10-20-rails-scale/README.md section 4). An injected `String.upcase(42)` in an action and in a
+template is reported, so the check reaches the app.
 
-- `bugs/railties_initialize_call_ends_check.sake` (14 lines): a call in `initialize` on a field `new` was given
-  ends the analysis of everything after the `new`, with no message.
-- `bugs/railties_response_create_ends_check.sake` (3 lines): the same through actionpack's Response.create
-  (its initialize builds the body Buffer from the given fields).
-
-Before I found it the number was 7 s ("OK" too): my own Configuration's initialize had the same shape, and the check
-stopped there, before the request path. With Configuration built outside initialize the check went on to the
-request path and found real errors (nil reads, IPAddr reached with Strings through the middleware stack's shared
-args Array, below); those are fixed. So the 18.7 s covers boot, configuration, initializers, the middleware stack
-and routing, and not the controllers, views and models. The third-wave tests that render through a controller may be
-affected the same way (controller_view's last line is still reported, so not all of it); the lead should look at
-`Response.create` first. Earlier runtime TypeErrors that "passed" the check (HWIA where a Hash is expected in
-authenticate_by, `::Logger.set_level` on an ActiveSupport::Logger, `Array.each` on a Relation in a template) were
-this, not separate checker holes.
+**Withdrawn**: the figures first written here, 18.7 s / 476 MB and before that 7 s, were not whole-app checks. The
+checker silently stopped at `ActionDispatch::Response.create` (and before that at the port's own Configuration's
+initialize): a function that `initialize` passed the new instance to read its fields empty, so it "never
+returned" and nothing after the `new` was analyzed (repros: `bugs/railties_initialize_call_ends_check.sake`,
+`bugs/railties_response_create_ends_check.sake` under experiments/2026-10-20-rails-scale/). The checker was fixed
+(04cea37b and the commits after it), and what the full check then found was fixed in the ports and the blog
+(examples/apps/rails_blog/README.md).
 
 ## The shape
 
@@ -163,7 +153,7 @@ Head, ConditionalGet, ETag and Runtime on ActionDispatch's protocol (`action_dis
   Cache, AssumeSSL, ActiveRecord's CheckPending (so `bin/rails middleware` lists 17 where Rails lists 26).
 - In the blog: `allow_browser` (needs the useragent gem), `rate_limit` (needs Rails.cache and a lambda),
   `normalizes` (a lambda), PasswordsController (needs Action Mailer); the twin drops them too, as listed in
-  `experiments/2026-10-20-rails-scale/blog/README.md`.
+  `examples/apps/rails_blog/README.md`.
 - A model generated but not migrated: the boot generator leaves it out (a warning) because its attributes come from
   db/schema.rb; its controller then fails the check until `db:migrate`. Ruby defines attributes lazily.
 

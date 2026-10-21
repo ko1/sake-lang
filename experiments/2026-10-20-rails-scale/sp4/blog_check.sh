@@ -3,7 +3,7 @@
 # usage: blog_check.sh <sake tree> <ruby> [N]   (output: one line per run, then "DONE")
 set -eu
 tree=$1 ruby=$2 n=${3:-3}
-cd "$tree/experiments/2026-10-20-rails-scale/blog"
+cd "$tree/examples/apps/rails_blog"
 mkdir -p log storage tmp
 echo "# $(date -u +%FT%TZ) $(hostname) $($ruby -v) tree=$tree load=$(cut -d' ' -f1-3 /proc/loadavg)"
 for i in $(seq $n); do

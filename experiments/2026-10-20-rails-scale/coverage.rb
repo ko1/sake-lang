@@ -23,15 +23,19 @@ files.each do |f|
     next
   end
   head = head.lines.take_while { _1.start_with?("#") }.join
+  # A name that resolves to nothing is a problem only in the first paragraph: later lines also name the port's
+  # own files (health_controller_decl.rb) and the app's (posts_controller.rb).
+  spec_re = %r{(?:[\w-]+-8\.1\.3/lib/)?[\w/*{},]+\.rb(?:\.tt)?}
+  named = head.lines.take_while { _1.strip != "#" }.join.scan(spec_re)
   first = head[%r{[\w-]+-8\.1\.3/lib/[\w/]+\.rb}] or (problems << "#{f}: no 'Port of <gem>-8.1.3/lib/...' header"; next)
   # The directories a relative path may start from: the first file's, then each one up to lib/.
   bases = [File.dirname(first)]
   bases << File.dirname(bases.last) until bases.last.end_with?("/lib")
   r[:partial] += 1 if head.include?("(partial")
   # Paths after the first are relative to the same lib/ (`... methods.rb and inflector/*.rb`); globs expand.
-  head.scan(%r{(?:[\w-]+-8\.1\.3/lib/)?[\w/*]+\.rb}).each do |spec|
+  head.scan(spec_re).each do |spec|
     found = spec.include?("-8.1.3/") ? Dir.glob(File.join(GEMS, spec)) : bases.lazy.map { Dir.glob(File.join(GEMS, _1, spec)) }.find(&:any?) || []
-    problems << "#{f}: cannot find #{spec}" if found.empty?
+    problems << "#{f}: cannot find #{spec}" if found.empty? && named.include?(spec)
     found.each { r[:rb][_1] ||= code_lines(_1) }
   end
 end

@@ -85,6 +85,9 @@ Rails の移植で同じ形が出るかを見ることにした。
 
 ## 4. railties とブログ（第 4 段、part 12）
 
+（2026-10-21: ブログは利用例として `examples/apps/rails_blog/` に、`walk.sh` もその中に移した。移植は `sakelib/rails/`
+（`sakelib/rails/README.md`）。以下の `blog/` はそこを指す。）
+
 Rails ガイドのブログ（記事・コメント・検証・レイアウト・flash・Rails 8 の authentication 生成器による has_secure_password
 とセッション）を移植した railties の上で `rails new` 型の配置に組み、WEBrick で 127.0.0.1 のランダムポートに立てて curl で 26
 リクエストを歩いた（`walk.sh`、`blog/run.sh`）。同じアプリを本物の `rails new` / `rails generate` で `blog_rb/` に作り（オフラインで
