@@ -95,17 +95,7 @@ module Sake
       when While then loop_node(n, env)
       when And, Or
         return or_assign(n, env) if n.origin.is_a?(Prism::LocalVariableOrWriteNode)
-        l = ev(n.left, env)
-        right_env = env.dup_level
-        narrow(right_env, n.left, n.is_a?(And))
-        r = right_env.void ? [] : ev(n.right, right_env) # `x && f(x)` with x only nil: f is not called
-        # The path that skips the right side knows the left's truthiness too (`@x ||= v` in initialize).
-        left_env = env.dup_level
-        narrow(left_env, n.left, n.is_a?(Or))
-        join_into(env, left_env, right_env)
-        # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
-        left = n.is_a?(And) ? l & (NILS + ["Boolean"]) : l - NILS
-        u(of_atoms(left), r)
+        logic_parts(n, env)[0]
       when MakeTuple then tuple(n.elems.map { ev(_1, env) })
       when MakeRecord then record_type(n.keys.zip(n.values.map { ev(_1, env) }))
       when MakePairs then Typer.intern([[:pairs, n.keys.zip(n.values).map { |k, v| [ev(k, env), ev(v, env)] }]].freeze)
@@ -209,6 +199,28 @@ module Sake
       when Unresolved then unknown("unresolved")
       else unknown("node #{n.class}")
       end
+    end
+
+    # [the value of n, the part of it that may be truthy, the part that may be falsy]. A Boolean is one type,
+    # so the parts of `a && b || c` are followed through the operators: the left of `||` there is truthy only
+    # when b is (`a && b` gives a only when it is falsy), and a false from `a` does not reach the result.
+    def logic_parts(n, env)
+      unless (n.is_a?(And) || n.is_a?(Or)) && !n.origin.is_a?(Prism::LocalVariableOrWriteNode)
+        ty = ev(n, env)
+        return [ty, of_atoms(ty - NILS), of_atoms(ty & (NILS + ["Boolean"]))]
+      end
+      and_ = n.is_a?(And)
+      _, lt, lf = logic_parts(n.left, env)
+      right_env = env.dup_level
+      narrow(right_env, n.left, and_)
+      # `x && f(x)` with x only nil: f is not called
+      r, rt, rf = right_env.void ? [[], [], []] : logic_parts(n.right, right_env)
+      # The path that skips the right side knows the left's truthiness too (`@x ||= v` in initialize).
+      left_env = env.dup_level
+      narrow(left_env, n.left, !and_)
+      join_into(env, left_env, right_env)
+      # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
+      and_ ? [u(lf, r), rt, u(lf, rf)] : [u(lt, r), u(lt, rt), rf]
     end
 
     def lit_of(n) = n.is_a?(Lit) && n.value.is_a?(Integer) ? n.value : nil
