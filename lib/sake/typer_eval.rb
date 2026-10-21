@@ -71,7 +71,7 @@ module Sake
         r = t("Nil")
         n.body.each do |st|
           # After return/next/break (or a branch block_given? rules out), the rest does not run.
-          break r = [] if env.dead
+          break r = [] if env.dead || env.void
           r = ev(st, env)
         end
         r
@@ -95,17 +95,7 @@ module Sake
       when While then loop_node(n, env)
       when And, Or
         return or_assign(n, env) if n.origin.is_a?(Prism::LocalVariableOrWriteNode)
-        l = ev(n.left, env)
-        right_env = env.dup_level
-        narrow(right_env, n.left, n.is_a?(And))
-        r = ev(n.right, right_env)
-        # The path that skips the right side knows the left's truthiness too (`@x ||= v` in initialize).
-        left_env = env.dup_level
-        narrow(left_env, n.left, n.is_a?(Or))
-        join_into(env, left_env, right_env)
-        # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
-        left = n.is_a?(And) ? l & (NILS + ["Boolean"]) : l - NILS
-        u(of_atoms(left), r)
+        logic_parts(n, env)[0]
       when MakeTuple then tuple(n.elems.map { ev(_1, env) })
       when MakeRecord then record_type(n.keys.zip(n.values.map { ev(_1, env) }))
       when MakePairs then Typer.intern([[:pairs, n.keys.zip(n.values).map { |k, v| [ev(k, env), ev(v, env)] }]].freeze)
@@ -211,6 +201,28 @@ module Sake
       end
     end
 
+    # [the value of n, the part of it that may be truthy, the part that may be falsy]. A Boolean is one type,
+    # so the parts of `a && b || c` are followed through the operators: the left of `||` there is truthy only
+    # when b is (`a && b` gives a only when it is falsy), and a false from `a` does not reach the result.
+    def logic_parts(n, env)
+      unless (n.is_a?(And) || n.is_a?(Or)) && !n.origin.is_a?(Prism::LocalVariableOrWriteNode)
+        ty = ev(n, env)
+        return [ty, of_atoms(ty - NILS), of_atoms(ty & (NILS + ["Boolean"]))]
+      end
+      and_ = n.is_a?(And)
+      _, lt, lf = logic_parts(n.left, env)
+      right_env = env.dup_level
+      narrow(right_env, n.left, and_)
+      # `x && f(x)` with x only nil: f is not called
+      r, rt, rf = right_env.void ? [[], [], []] : logic_parts(n.right, right_env)
+      # The path that skips the right side knows the left's truthiness too (`@x ||= v` in initialize).
+      left_env = env.dup_level
+      narrow(left_env, n.left, !and_)
+      join_into(env, left_env, right_env)
+      # `a && b` yields a only when a is falsy; `a || b` yields a only when a is truthy.
+      and_ ? [u(lf, r), rt, u(lf, rf)] : [u(lt, r), u(lt, rt), rf]
+    end
+
     def lit_of(n) = n.is_a?(Lit) && n.value.is_a?(Integer) ? n.value : nil
 
     def self.fread?(slot) = slot.is_a?(Array) && slot[0] == :fread
@@ -277,17 +289,8 @@ module Sake
     end
 
     # Paths that ended in return/next/break do not reach the join point.
-    # A void path (no value takes it) adds no variable types either, unless every path is void.
-    def join_into(env, a, b)
-      live = [a, b].reject(&:dead)
-      if live.empty?
-        env.dead = true
-        live = [a, b]
-      end
-      live = live.reject(&:void) if live.any?(&:void) && !live.all?(&:void)
-      join_vars(env, live)
-      env.links = common_links(live)
-    end
+    # A void path (no value takes it) adds no variable types either; when every path is void, so is the join.
+    def join_into(env, a, b) = join_many(env, [a, b])
 
     def branch(env, pred, then_node, else_node)
       # Whether a block was given is known for each call (a yielding function is analyzed per call).
@@ -304,13 +307,9 @@ module Sake
       e2 = env.dup_level
       narrow(e1, pred, true)
       narrow(e2, pred, false)
-      # A branch the test leaves no value for (`if x in String` when x is a String: the else) adds no result.
-      # Its body is still analyzed: in an early pass of a fixpoint, "no value yet" looks the same.
-      d1 = e1.void
-      d2 = e2.void
-      r1 = ev(then_node, e1)
-      r2 = ev(else_node, e2)
-      r = u(d1 ? [] : r1, d2 ? [] : r2)
+      # A branch the test leaves no value for (`if x in String` when x is a String: the else) is not run:
+      # its calls would run on the empty value and add types (a later pass that gives x a type runs it).
+      r = u(e1.void ? [] : ev(then_node, e1), e2.void ? [] : ev(else_node, e2))
       join_into(env, e1, e2)
       r
     end
@@ -331,7 +330,7 @@ module Sake
         body = env.dup_level
         narrow(body, n.cond, !n.until_)
         @jumps[-1] = []
-        ev(n.body, body)
+        ev(n.body, body) unless body.void
         join_many(env, [env.dup_level, body, *@jumps[-1]])
         env.dead = false # the loop may not run at all
         next unless env.chain_snapshot == before
@@ -444,7 +443,6 @@ module Sake
       narrow(e2, pred.left, !truthy)
       narrow(e2, pred.right, truthy)
       join_into(env, e1, e2)
-      env.void = true if e1.void && e2.void
     end
 
     # `x == :sym` / `x != :sym` (either side): x is that Symbol on one path, any other value on the other.
@@ -592,14 +590,14 @@ module Sake
         set_narrowed(e, var, of_atoms(m)) if var
         narrow_by_position(e, tuple_var, pos, m) if tuple_var
         bind_pattern(e, pat, m)
-        results << ev(body, e)
+        results << (e.void ? [] : ev(body, e))
         envs << e
       end
       if n.else_ && (!remaining.empty? || v.empty?) # an else no value reaches is not analyzed
         e = env.dup_level
         set_narrowed(e, var, of_atoms(remaining)) if var
         narrow_by_position(e, tuple_var, pos, remaining) if tuple_var
-        results << ev(n.else_, e)
+        results << (e.void ? [] : ev(n.else_, e))
         envs << e
       elsif !n.else_ && !remaining.empty? && !unknown?(v)
         # Values a literal pattern may leave (some String, any Symbol not written as a literal) are not
@@ -631,6 +629,10 @@ module Sake
       if live.empty?
         env.dead = true
         live = envs
+      elsif live.all?(&:void) # `raise if x == nil` with x only nil: no value goes on
+        env.void = true
+      else
+        live = live.reject(&:void)
       end
       join_vars(env, live)
       env.links = common_links(live)
@@ -701,8 +703,8 @@ module Sake
     # Sets a narrowed type of a local variable on this path (an enclosing variable's is kept in this
     # env's vars), then narrows the variables taken from the same Tuple variants.
     def set_narrowed(env, slot, ty, follow: true)
-      # No type is left on this path (`if x in String` when x is an Integer): no value takes it, so its
-      # result is left out. Not `dead`: joins keep its variables (in an early pass, "no value yet" looks the same).
+      # No type is left on this path (`if x in String` when x is an Integer): no value takes it, so its code
+      # is not run. Not `dead`: when every path is void, joins keep its variables.
       env.void = true if ty.empty? && !(env.lookup(slot) || []).empty?
       env.vars[slot] = ty
       return unless follow && (link = env.level(slot).links[slot])
@@ -767,6 +769,31 @@ module Sake
         return xs.size == 4 ? index_set(o, xs[0], xs[1], lit, xs[3], xs[2]) : index_set(o, xs[0], xs[1], lit, xs[2])
       end
       args = arg_types(n.args, env)
+      overlay = init_overlay_for_call(env, n)
+      return with_init_overlay(overlay) { call_after_args(n, env, args, o) } if overlay
+      call_after_args(n, env, args, o)
+    end
+
+    # While initialize passes the new instance to a function, the function reads the fields as they are at that
+    # point (as when it runs), besides what they ever hold: else a field it reads is still empty, the call never
+    # returns, and nothing after the construction is checked. The fields themselves keep what initialize leaves.
+    def init_overlay_for_call(env, n)
+      return nil unless @init_frames&.key?(env.frame) && [CallUser, CallDispatch, CallUnion].include?(n.class)
+      return nil unless n.args.any? { _1.is_a?(LVarGet) && _1.slot.zero? }
+      key = fields_key(@init_site.fetch(env.frame).first)
+      fields = @program.struct_types.fetch(env.frame.fn.namespace).fields.filter_map { |f| (v = env.lookup([:field, f])) && [f, v] }.to_h
+      [key, fields]
+    end
+
+    def with_init_overlay((key, fields))
+      saved = (@init_overlay ||= {})[key]
+      @init_overlay[key] = saved ? saved.merge(fields) { |_, a, b| u(a, b) } : fields
+      yield
+    ensure
+      saved ? @init_overlay[key] = saved : @init_overlay.delete(key)
+    end
+
+    def call_after_args(n, env, args, o)
       init_escape(env, n)
       if n.block.is_a?(BlockPass) # its breaks go to its own call
         given = env.frame&.block
@@ -943,7 +970,8 @@ module Sake
       return unless @init_frames&.key?(env.frame) && [CallUser, CallDispatch, CallUnion].include?(n.class)
       return unless n.args.any? { _1.is_a?(LVarGet) && _1.slot.zero? }
       dt = env.frame.fn.namespace
-      key = fields_key(@init_site.fetch(env.frame).first) # the new instance's own site
+      me = @init_site.fetch(env.frame)
+      key = fields_key(me.first) # the new instance's own site
       @program.struct_types.fetch(dt).fields.each do |f|
         cur = env.lookup([:field, f]) or next
         read(field_cell(key, f))
